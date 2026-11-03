@@ -1,0 +1,15 @@
+services:
+  minimap:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      RESET_AT: ${RESET_AT:-05:00}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - minimap-data:/app/data
+
+volumes:
+  minimap-data:

@@ -1,0 +1,35 @@
+{
+  "name": "team-minimap",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A cute 2D and 3D map showing where your team is working today.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "vite build && node server/server.ts",
+    "dev": "vite",
+    "dev:api": "node --watch server/server.ts",
+    "build": "vite build",
+    "test": "node --test",
+    "test-members": "node scripts/sample-team.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json"
+  },
+  "dependencies": {
+    "qrcode-generator": "^1.4.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "styled-components": "^6.6.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.170.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

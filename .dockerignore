@@ -1,0 +1,10 @@
+.env
+.git
+.claude
+data
+dist
+node_modules
+scripts
+server/*.test.ts
+src/**/*.test.ts
+README.md
