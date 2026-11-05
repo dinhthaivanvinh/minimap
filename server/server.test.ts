@@ -530,3 +530,63 @@ test('a malformed token is refused instead of crashing', async (t) => {
   const { me } = await setup(t);
   assert.equal((await me('%E0%A4%A.1.abc', { status: 'x' })).status, 401);
 });
+
+test('the admin can export everything and import it into a new server', async (t) => {
+  const first = await setup(t);
+  await first.addUser('a');
+  const token = await first.claim('a');
+  await first.me(token, { place: 'main', status: 'Here', look: DESIGN });
+  assert.equal((await first.api('GET', '/api/admin/data')).status, 401);
+  const backup = (await first.api('GET', '/api/admin/data', undefined, ADMIN)).json;
+  assert.ok(backup.secret && backup.users[0].pinHash, 'a backup keeps PINs and the secret');
+
+  const second = await setup(t);
+  await second.addUser('someone-else');
+  assert.equal((await second.api('PUT', '/api/admin/data', backup)).status, 401);
+  const res = await second.api('PUT', '/api/admin/data', backup, ADMIN);
+  assert.deepEqual([res.status, res.json.users], [200, 1]);
+
+  const { users } = (await second.api('GET', '/api/state')).json;
+  assert.deepEqual(users.map((u: TeamUser) => [u.username, u.place, u.status, u.look?.color]), [['a', 'main', 'Here', DESIGN.color]]);
+  assert.equal((await second.me(token, { status: 'Still logged in' })).status, 200, 'old logins keep working');
+  assert.equal((await second.api('POST', '/api/login', { username: 'a', pin: '1234' })).status, 200, 'old PINs keep working');
+  assert.equal(JSON.parse(fs.readFileSync(second.dataFile, 'utf8')).users[0].username, 'a', 'the import is saved');
+});
+
+test('an import from an earlier day gets the morning reset it missed', async (t) => {
+  const { api, clock } = await setup(t);
+  const user = { username: 'a', nickname: 'A', place: 'main', status: 'x', updatedAt: null, pinHash: null, pinVersion: 1 };
+  clock.now = new Date(2026, 10, 5, 12, 0);
+  assert.equal((await api('PUT', '/api/admin/data', { lastResetDate: '2026-11-03', users: [user] }, ADMIN)).status, 200);
+  const [a] = (await api('GET', '/api/state')).json.users;
+  assert.deepEqual([a.nickname, a.place, a.status], ['A', null, '']);
+});
+
+test('broken backups are refused and change nothing', async (t) => {
+  const { api, addUser } = await setup(t);
+  await addUser('keep');
+  const user = { username: 'a', nickname: 'a', place: null, status: '', updatedAt: null, pinHash: null, pinVersion: 1 };
+  const bad = [
+    {},
+    { users: 'nope' },
+    { users: [{ ...user, username: 'bad name' }] },
+    { users: [user, { ...user, username: 'A' }] },
+    { users: [{ ...user, pinVersion: 0 }] },
+    { users: [{ ...user, pinHash: 'nohash' }] },
+    { users: [{ ...user, look: { color: 'red', strokes: [] } }] },
+    { users: [user], places: [] },
+    { users: [user], settings: { clocks: [] } },
+    { users: [user], lastResetDate: 'yesterday' },
+  ];
+  for (const body of bad) {
+    assert.equal((await api('PUT', '/api/admin/data', body, ADMIN)).status, 400, JSON.stringify(body).slice(0, 80));
+  }
+  assert.deepEqual((await api('GET', '/api/state')).json.users.map((u: TeamUser) => u.username), ['keep']);
+});
+
+test('people in an office that is gone count as not checked in after an import', async (t) => {
+  const { api } = await setup(t);
+  const user = { username: 'a', nickname: 'a', place: 'old-office', status: '', updatedAt: null, pinHash: null, pinVersion: 1 };
+  assert.equal((await api('PUT', '/api/admin/data', { lastResetDate: '2026-11-03', users: [user] }, ADMIN)).status, 200);
+  assert.equal((await api('GET', '/api/state')).json.users[0].place, null);
+});

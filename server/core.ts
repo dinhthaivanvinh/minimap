@@ -48,7 +48,7 @@ export interface ApiRequest {
   method: string;
   url: URL;
   header(name: string): string | undefined;
-  readJson(): Promise<JsonBody>;
+  readJson(maxBytes?: number): Promise<JsonBody>; // maxBytes defaults to MAX_BODY.
 }
 
 export interface ApiResponse {
@@ -72,6 +72,8 @@ const FIXED_PLACES = ['wfh', 'off', 'out']; // Offices come from data.places.
 const MAX_NICKNAME = 24;
 const MAX_STATUS = 140;
 export const MAX_BODY = 16 * 1024;
+// A whole backup. Cloudflare stores the data as one value, which can be at most 2 MB.
+const MAX_BACKUP = 2 * 1024 * 1024;
 const LOCK_AFTER = 5;
 const LOCK_MS = 60 * 1000;
 const USERNAME_RE = /^[a-zA-Z0-9._-]{1,32}$/;
@@ -222,6 +224,73 @@ function cleanLook(value: unknown): CharacterDesign | null {
   return { color, wearing: WORN_ITEMS.filter((item) => wearing.includes(item)), strokes: cleaned as Stroke[] };
 }
 
+// ---- Backups ------------------------------------------------------------
+
+const DEFAULT_PLACES: Place[] = [
+  { id: 'main', name: 'Main Office', kind: 'office' },
+  { id: 'other', name: 'Other Office', kind: 'office' },
+];
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Checks a data.json backup before it replaces everything, and returns a clean copy.
+// Leaves out the secret when the backup has none, so the current one is kept.
+function checkBackup(value: unknown): Partial<Data> {
+  const invalid = (why: string) => new ApiError(400, `That backup can't be imported: ${why}`);
+  if (!isObject(value) || !Array.isArray(value.users)) throw invalid('it has no list of users.');
+
+  const places = value.places ?? DEFAULT_PLACES;
+  const validPlace = (p: unknown) => isObject(p) && typeof p.id === 'string' && p.id !== '' && typeof p.name === 'string' && p.kind === 'office';
+  if (!Array.isArray(places) || places.length === 0 || !places.every(validPlace)) throw invalid('its list of offices is not valid.');
+  const placeIds = new Set([...places.map((p: Place) => p.id), ...FIXED_PLACES]);
+
+  const seen = new Set<string>();
+  const users = value.users.map((u: unknown, i: number): StoredUser => {
+    if (!isObject(u) || typeof u.username !== 'string' || !USERNAME_RE.test(u.username)) {
+      throw invalid(`user ${i + 1} has no valid username.`);
+    }
+    const name = u.username;
+    if (seen.has(name.toLowerCase())) throw invalid(`the username ${name} appears twice.`);
+    seen.add(name.toLowerCase());
+    const pinVersion = u.pinVersion ?? 1;
+    if (!Number.isInteger(pinVersion) || (pinVersion as number) < 1) throw invalid(`${name} has a broken PIN version.`);
+    if (u.pinHash != null && (typeof u.pinHash !== 'string' || !u.pinHash.includes(':'))) throw invalid(`${name} has a broken PIN.`);
+    let look: CharacterDesign | null = null;
+    try {
+      look = u.look == null ? null : cleanLook(u.look);
+    } catch {
+      throw invalid(`${name}'s character is not valid.`);
+    }
+    return {
+      username: name,
+      nickname: typeof u.nickname === 'string' && u.nickname.trim() ? u.nickname.trim() : name,
+      // Places that no longer exist count as not checked in.
+      place: typeof u.place === 'string' && placeIds.has(u.place) ? u.place : null,
+      status: typeof u.status === 'string' ? u.status : '',
+      updatedAt: typeof u.updatedAt === 'string' ? u.updatedAt : null,
+      pinHash: typeof u.pinHash === 'string' ? u.pinHash : null,
+      pinVersion: pinVersion as number,
+      look,
+    };
+  });
+
+  const saved = isObject(value.settings) ? value.settings : {};
+  const settings: Settings = { ...DEFAULT_SETTINGS };
+  if ('publicUrl' in saved) settings.publicUrl = cleanPublicUrl(saved.publicUrl);
+  if ('clocks' in saved) settings.clocks = cleanClocks(saved.clocks);
+  if ('office' in saved) settings.office = cleanOffice(saved.office);
+
+  const lastResetDate = value.lastResetDate;
+  if (lastResetDate !== undefined && (typeof lastResetDate !== 'string' || !/^(\d{4}-\d{2}-\d{2})?$/.test(lastResetDate))) {
+    throw invalid('its last reset date is not valid.');
+  }
+  const backup: Partial<Data> = { places: places as Place[], users, settings, lastResetDate: lastResetDate ?? '' };
+  if (typeof value.secret === 'string' && value.secret) backup.secret = value.secret;
+  return backup;
+}
+
 // ---- Core ---------------------------------------------------------------
 
 export function createCore({
@@ -240,10 +309,7 @@ export function createCore({
 
   const data: Data = {
     secret: saved?.secret || crypto.randomBytes(32).toString('hex'),
-    places: saved?.places || [
-      { id: 'main', name: 'Main Office', kind: 'office' },
-      { id: 'other', name: 'Other Office', kind: 'office' },
-    ],
+    places: saved?.places || DEFAULT_PLACES,
     users: saved?.users || [],
     settings: { ...DEFAULT_SETTINGS, ...saved?.settings },
     // A new install has nothing to reset, so start the clock from today.
@@ -473,6 +539,25 @@ export function createCore({
       commit();
       if ('office' in next) void refreshWeather();
       return jsonResponse(200, { ok: true });
+    }
+
+    // The whole data file, PINs and secret included, for backups and moving servers.
+    if (route === 'GET /api/admin/data') {
+      requireAdmin(req);
+      return jsonResponse(200, data, { 'Content-Disposition': 'attachment; filename="data.json"' });
+    }
+
+    if (route === 'PUT /api/admin/data') {
+      requireAdmin(req);
+      const backup = checkBackup(await req.readJson(MAX_BACKUP));
+      Object.assign(data, backup);
+      failures.clear();
+      weather = null;
+      // Logins from the backup keep working when it brings its secret; a backup from
+      // an earlier day gets the morning reset it missed.
+      if (!runResetIfDue()) commit();
+      void refreshWeather();
+      return jsonResponse(200, { ok: true, users: data.users.length });
     }
 
     if (route === 'GET /api/admin/places') {

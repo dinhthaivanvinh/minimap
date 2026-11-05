@@ -53,13 +53,13 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
     },
   });
 
-  function readJson(req: Req): Promise<JsonBody> {
+  function readJson(req: Req, maxBytes = MAX_BODY): Promise<JsonBody> {
     return new Promise((resolve, reject) => {
       let size = 0;
       const chunks: Buffer[] = [];
       req.on('data', (c: Buffer) => {
         size += c.length;
-        if (size > MAX_BODY) {
+        if (size > maxBytes) {
           reject(new ApiError(413, 'Request too large.'));
           req.destroy();
           return;
@@ -100,7 +100,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
         const value = req.headers[name.toLowerCase()];
         return Array.isArray(value) ? value[0] : value;
       },
-      readJson: () => readJson(req),
+      readJson: (maxBytes) => readJson(req, maxBytes),
     });
     res.writeHead(status, headers);
     res.end(JSON.stringify(body));
