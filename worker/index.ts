@@ -40,10 +40,10 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function readJson(request: Request): Promise<JsonBody> {
-  if (Number(request.headers.get('content-length')) > MAX_BODY) throw new ApiError(413, 'Request too large.');
+async function readJson(request: Request, maxBytes = MAX_BODY): Promise<JsonBody> {
+  if (Number(request.headers.get('content-length')) > maxBytes) throw new ApiError(413, 'Request too large.');
   const bytes = await request.arrayBuffer();
-  if (bytes.byteLength > MAX_BODY) throw new ApiError(413, 'Request too large.');
+  if (bytes.byteLength > maxBytes) throw new ApiError(413, 'Request too large.');
   try {
     const body: unknown = bytes.byteLength ? JSON.parse(new TextDecoder().decode(bytes)) : {};
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error();
@@ -89,7 +89,7 @@ export class Minimap extends DurableObject<Env> {
       method: request.method,
       url,
       header: (name) => request.headers.get(name) ?? undefined,
-      readJson: () => readJson(request),
+      readJson: (maxBytes) => readJson(request, maxBytes),
     });
     return new Response(JSON.stringify(body), { status, headers });
   }

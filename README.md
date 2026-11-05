@@ -141,12 +141,30 @@ npm run dev:cf
 
 **Good to know on Cloudflare**
 
-- **Data:** it lives in the Durable Object, not in `data.json`, and starts empty. Cloudflare can [restore it to any point in the last 30 days](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api).
+- **Data:** it lives in the Durable Object, not in `data.json`, and starts empty. To bring over an existing `data.json`, or to keep backups, see [Back up and move data](#back-up-and-move-data). Cloudflare can also [restore it to any point in the last 30 days](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api).
 - **Morning reset:** runs on time while a map is open, and otherwise when someone next opens the app, so nobody ever sees yesterday's places.
 - **Weather:** refreshed every 15 minutes while someone is looking.
 - **Logs:** run `npx wrangler tail`, or open the Worker's **Logs** in the Cloudflare dashboard.
 - **Custom domain:** add one under the Worker's **Settings → Domains & Routes**, then update **Team address**.
 - **Anyone with the address can see the map**, as on an office network. Put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) in front if the map should stay private.
+
+## Back up and move data
+
+These commands work with any copy of the app: on Cloudflare, in Docker or on your own computer. Run them from this folder after `npm install`. They ask for the admin password, or read `ADMIN_PASSWORD` from `.env`.
+
+Save everything, PINs included, to a file:
+
+```bash
+npm run data -- export https://minimap.<your-subdomain>.workers.dev backup.json
+```
+
+Replace everything with a backup, such as the `data.json` from the office server:
+
+```bash
+npm run data -- import https://minimap.<your-subdomain>.workers.dev data.json
+```
+
+An import replaces all users and settings. Usernames, nicknames, PINs, characters, offices, clocks and the weather location come across, and people stay logged in. If the backup is from before the last morning reset, places and statuses are cleared, as on any morning. Keep backups private: with the file, anyone could work out every PIN and log in as anyone.
 
 ## Home page settings
 

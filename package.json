@@ -14,6 +14,7 @@
     "build": "vite build",
     "test": "node --test",
     "test-members": "node scripts/sample-team.ts",
+    "data": "node scripts/data.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json && tsc -p worker/tsconfig.json",
     "dev:cf": "wrangler dev",
     "deploy": "wrangler deploy"
