@@ -14,7 +14,9 @@
     "build": "vite build",
     "test": "node --test",
     "test-members": "node scripts/sample-team.ts",
-    "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json && tsc -p worker/tsconfig.json",
+    "dev:cf": "vite build && wrangler dev",
+    "deploy": "vite build && wrangler deploy"
   },
   "dependencies": {
     "qrcode-generator": "^1.4.4",
@@ -24,12 +26,14 @@
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261104.1",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/three": "^0.170.0",
     "@vitejs/plugin-react": "^6.2.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "wrangler": "^4.157.0"
   }
 }

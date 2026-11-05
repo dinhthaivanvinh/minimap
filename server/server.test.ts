@@ -142,6 +142,10 @@ test('latestResetDate picks today after the reset time, yesterday before it', ()
   assert.equal(latestResetDate(new Date(2026, 10, 3, 5, 0), '05:00'), '2026-11-03');
   assert.equal(latestResetDate(new Date(2026, 10, 3, 4, 59), '05:00'), '2026-11-02');
   assert.equal(latestResetDate(new Date(2026, 10, 1, 1, 0), '05:00'), '2026-10-31');
+  // Cloudflare runs on UTC, so it passes the team's time zone instead.
+  assert.equal(latestResetDate(new Date('2026-11-02T22:00:00Z'), '05:00', 'Asia/Ho_Chi_Minh'), '2026-11-03');
+  assert.equal(latestResetDate(new Date('2026-11-02T21:59:00Z'), '05:00', 'Asia/Ho_Chi_Minh'), '2026-11-02');
+  assert.equal(latestResetDate(new Date('2026-01-01T03:00:00Z'), '05:00', 'UTC'), '2025-12-31');
 });
 
 test('the daily reset clears place and status but keeps nickname and PIN', async (t) => {

@@ -1,6 +1,6 @@
 # Team Minimap
 
-A cute 2D and 3D map showing where your team is working today. It's a React and TypeScript frontend (built with Vite and styled with styled-components) and one small Node.js server with no dependencies. There's no database: data is kept in a JSON file.
+A cute 2D and 3D map showing where your team is working today. It's a React and TypeScript frontend (built with Vite and styled with styled-components) and one small Node.js server with no dependencies. There's no database: data is kept in a JSON file. It can also run on Cloudflare Workers instead (see [Deploy to Cloudflare](#deploy-to-cloudflare)).
 
 | Page | Address | Who uses it |
 |---|---|---|
@@ -65,14 +65,15 @@ npm test
 
 | Folder | What's in it |
 |---|---|
-| `server/` | The API, data file, daily reset and weather, plus their tests |
+| `server/` | The API, daily reset and weather (`core.ts`), the Node.js server and data file (`server.ts`), plus their tests |
+| `worker/` | The Cloudflare Worker and Durable Object that run the same API |
 | `shared/` | Types used by both the server and the frontend |
 | `src/pages/` | The Monitor, User and Admin pages |
 | `src/components/` | Badge, detail card, characters and the clocks, weather and QR panel |
 | `src/map/` | The 2D map, and the 3D map with its three.js scene |
 | `src/lib/` | API calls, React hooks, and where rooms and seats go |
 | `src/styles/` | Colors and fonts (`theme.ts`), page-wide styles, and shared buttons and form pieces. Other styles sit in the component that uses them |
-| `public/` | Fonts, copied as they are into the build |
+| `public/` | Fonts and Cloudflare's cache rules (`_headers`), copied as they are into the build |
 
 ## Run on the office server (Docker)
 
@@ -100,6 +101,64 @@ The container restarts by itself after a crash or reboot. Data is kept in the Do
 ```bash
 docker compose cp minimap:/app/data/data.json ./backup.json
 ```
+
+## Deploy to Cloudflare
+
+The app also runs on [Cloudflare Workers](https://developers.cloudflare.com/workers/), with no server to look after and HTTPS included. Cloudflare serves the pages, and one [Durable Object](https://developers.cloudflare.com/durable-objects/) runs the same API as the Node.js server: it keeps the data in its own storage and sends live updates to every open map. The Workers Free plan is enough for a team.
+
+**Deploy from your computer**
+
+1. Log in to Cloudflare (this opens a browser):
+
+   ```bash
+   npx wrangler login
+   ```
+
+2. Set `RESET_AT` and `TZ` under `vars` in `wrangler.jsonc`.
+3. Set the admin password. It's stored as an encrypted secret, never in the code:
+
+   ```bash
+   npx wrangler secret put ADMIN_PASSWORD
+   ```
+
+   The first time, Wrangler offers to create the Worker so it can store the secret. Say yes.
+
+4. Build and deploy:
+
+   ```bash
+   npm run deploy
+   ```
+
+5. Open the `https://team-minimap.<your-subdomain>.workers.dev` address it prints, go to `/admin`, and set **Team address** to it so the QR code points there.
+
+**Deploy from GitHub**
+
+`.github/workflows/deploy.yml` checks, tests and deploys on every push to `main`. In the repository's **Settings → Secrets and variables → Actions**, add:
+
+| Secret | Value |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | A token made from the **Edit Cloudflare Workers** template at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) |
+| `CLOUDFLARE_ACCOUNT_ID` | Shown on the Workers & Pages overview in the Cloudflare dashboard |
+| `ADMIN_PASSWORD` | The admin password |
+
+Then push to `main`, or run **Deploy to Cloudflare** from the Actions tab.
+
+**Try it locally first**
+
+Put `ADMIN_PASSWORD=change-me` in a file named `.dev.vars`, then run this and open http://localhost:8787. Local data is kept in `.wrangler/`.
+
+```bash
+npm run dev:cf
+```
+
+**Good to know on Cloudflare**
+
+- **Data:** it lives in the Durable Object, not in `data.json`, and starts empty. Cloudflare can [restore it to any point in the last 30 days](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api).
+- **Morning reset:** runs on time while a map is open, and otherwise when someone next opens the app, so nobody ever sees yesterday's places.
+- **Weather:** refreshed every 15 minutes while someone is looking.
+- **Logs:** run `npx wrangler tail`, or open the Worker's **Logs** in the Cloudflare dashboard.
+- **Custom domain:** add one under the Worker's **Settings → Domains & Routes**, then update **Team address**.
+- **Anyone with the address can see the map**, as on an office network. Put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) in front if the map should stay private.
 
 ## Home page settings
 
@@ -133,4 +192,4 @@ Avoid `$` in `ADMIN_PASSWORD` when using Docker, because Docker Compose treats i
 - **More offices:** stop the server and add an entry to `places` in `data.json`. The first entry is the main office, and both maps make room for the rest. In Docker, copy the file out and back with `docker compose cp`.
 - **Weather:** the server gets it from [Open-Meteo](https://open-meteo.com) every 15 minutes, sending only the office coordinates. Browsers never contact it. The server needs internet access for this, and everything else works without it. If updates fail, the last reading stays for up to 3 hours, then the map shows "Weather unavailable". Check [Open-Meteo's terms](https://open-meteo.com/en/terms) for your use, because its free service is for non-commercial use. Its data license requires the credit line shown under the weather, so keep that in place.
 - **Working from home:** teammates can only update their status if they can reach the server, for example over your VPN.
-- **Security:** this is built for a trusted office network. It uses plain HTTP, so passwords and PINs are not encrypted on the network. Put a reverse proxy with HTTPS in front before exposing it more widely.
+- **Security:** this is built for a trusted office network. The Node.js server uses plain HTTP, so passwords and PINs are not encrypted on the network. Put a reverse proxy with HTTPS in front before exposing it more widely, or deploy to Cloudflare, which uses HTTPS.
