@@ -108,11 +108,11 @@ The app also runs on [Cloudflare Workers](https://developers.cloudflare.com/work
 
 **Deploy from GitHub (Workers Builds)**
 
-This repository is connected to the `minimap` Worker with [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), so Cloudflare deploys every push to `main` by itself, and uploads a preview version for other branches.
+This repository is connected to the `minimap` Worker with [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), so Cloudflare deploys every push to `main` by itself. Other branches are not built or deployed on Cloudflare; GitHub Actions checks them instead.
 
 1. Set `RESET_AT` and `TZ` under `vars` in `wrangler.jsonc`.
 2. In the Cloudflare dashboard, open **Workers & Pages → minimap → Settings → Variables and Secrets**, and add a **Secret** named `ADMIN_PASSWORD`. It stays in place through every deploy.
-3. In **Settings → Build**, keep the deploy command as `npx wrangler deploy`. The build command can stay empty: Wrangler builds the pages itself (`build` in `wrangler.jsonc`).
+3. In **Settings → Build**, keep the deploy command as `npx wrangler deploy`. The build command can stay empty: Wrangler builds the pages itself (`build` in `wrangler.jsonc`). On the **Previews Base** tab of the same section, turn off **Builds for Preview branches**.
 4. Push to `main`. Then open `https://minimap.<your-subdomain>.workers.dev/admin` and set **Team address** to that address so the QR code points there.
 
 `.github/workflows/check.yml` runs the typecheck, tests and build on every pull request. It doesn't deploy.
