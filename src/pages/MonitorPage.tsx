@@ -397,6 +397,12 @@ export function MonitorPage() {
     setMode(next);
   }
 
+  // Not saved, so the next visit tries 3D again.
+  function fallBackTo2D() {
+    closeCard();
+    setMode('2d');
+  }
+
   function chooseFilter(next: Filter) {
     closeCard();
     setFilter(next);
@@ -476,9 +482,9 @@ export function MonitorPage() {
           <MapHost>
             {mapProps && mode === '2d' && <Map2D {...mapProps} />}
             {mapProps && mode === '3d' && (
-              <Map3DGuard onFail={() => setMode('2d')}>
+              <Map3DGuard onFail={fallBackTo2D}>
                 <Suspense fallback={null}>
-                  <Map3D {...mapProps} />
+                  <Map3D {...mapProps} onFail={fallBackTo2D} />
                 </Suspense>
               </Map3DGuard>
             )}

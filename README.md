@@ -4,7 +4,7 @@ A cute 2D and 3D map showing where your team is working today. It's a React and 
 
 | Page | Address | Who uses it |
 |---|---|---|
-| Map | `/` | Everyone. Add `?mode=3d` for a wall TV |
+| Map | `/` | Everyone. Add `?mode=3d` for a wall TV. If the browser takes away 3D graphics and doesn't give them back within 10 seconds, the screen switches to the 2D map until it's reloaded |
 | My status | `/me` | Team members claim a username, then set their nickname, place and status |
 | Admin | `/admin` | The admin creates usernames, and sets the team address, clocks and office location |
 
