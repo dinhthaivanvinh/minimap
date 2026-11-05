@@ -12,7 +12,7 @@
     "dev": "vite",
     "dev:api": "node --watch server/server.ts",
     "build": "vite build",
-    "test": "node --test",
+    "test": "node scripts/run-tests.ts",
     "test-members": "node scripts/sample-team.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json && tsc -p worker/tsconfig.json",
     "dev:cf": "wrangler dev",

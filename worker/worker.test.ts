@@ -1,0 +1,232 @@
+// Runs the real Worker and Durable Object in workerd, Cloudflare's runtime, using the
+// settings in wrangler.jsonc. The API's rules are tested in server/server.test.ts, so
+// these cover what only the Worker does.
+
+import test, { type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { createTestHarness, experimental_readRawConfig } from 'wrangler';
+import { MAX_BODY } from '../server/core.ts';
+import type { TeamState, TeamUser } from '../shared/types.ts';
+
+const ADMIN = { 'x-admin-password': 'secret' };
+const PAGE = '<div id="root"></div>';
+const ROOT = path.join(import.meta.dirname, '..');
+
+// A morning reset 12 hours away, so that none happens in the middle of a test.
+function distantResetAt(): string {
+  return new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString().slice(11, 16);
+}
+
+function workerConfig(dir: string, vars: Record<string, string>) {
+  // `build` is left out because these tests use a small page instead of the built ones.
+  const { build: _build, ...config } = experimental_readRawConfig({ config: path.join(ROOT, 'wrangler.jsonc') }).rawConfig;
+  return {
+    ...config,
+    main: path.join(ROOT, 'worker', 'index.ts'),
+    assets: { ...config.assets, directory: path.join(dir, 'dist') },
+    vars: { TZ: 'UTC', RESET_AT: distantResetAt(), ...vars },
+  };
+}
+
+async function setup(t: TestContext, vars: Record<string, string> = { ADMIN_PASSWORD: 'secret' }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'minimap-worker-'));
+  fs.mkdirSync(path.join(dir, 'dist', 'assets'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'dist', 'index.html'), PAGE);
+  fs.writeFileSync(path.join(dir, 'dist', 'assets', 'app-abc.js'), 'console.log(1)');
+
+  // The root is the empty folder, so a real .env or .dev.vars can't change the settings.
+  const server = createTestHarness({ root: dir, workers: [{ config: workerConfig(dir, vars) }] });
+  const { url } = await server.listen();
+  const stopListening = new AbortController();
+  t.after(async () => {
+    stopListening.abort();
+    await server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function api(method: string, address: string, body?: unknown, headers: Record<string, string> = {}) {
+    const res = await fetch(new URL(address, url), {
+      method,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    return { status: res.status, headers: res.headers, json, text };
+  }
+
+  // Adds a person who has claimed their username, and returns their login token.
+  async function join(username: string): Promise<string> {
+    assert.equal((await api('POST', '/api/admin/users', { username }, ADMIN)).status, 201);
+    return (await api('POST', '/api/claim', { username, pin: '1234' })).json.token;
+  }
+  const me = (token: string, body: unknown) => api('PATCH', '/api/me', body, { Authorization: `Bearer ${token}` });
+  const person = async (username: string): Promise<TeamUser | undefined> => {
+    const state = (await api('GET', '/api/state')).json as TeamState;
+    return state.users.find((u) => u.username === username);
+  };
+  // Throws away the running object, as Cloudflare does when nobody has used it for a while.
+  const evict = () => server.getWorker().evictDurableObject('MINIMAP', { name: 'team' });
+
+  const events = () => openEvents(stopListening.signal, url);
+
+  return { server, url, dir, api, join, me, person, evict, events };
+}
+
+// Reads the live updates. It gives up after 20 seconds, so an update that never comes
+// fails the test, and that is sooner than the 25 seconds the map's own timer waits.
+async function openEvents(signal: AbortSignal, url: URL) {
+  const res = await fetch(new URL('/api/events', url), { signal: AbortSignal.any([signal, AbortSignal.timeout(20 * 1000)]) });
+  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+
+  async function nextState(): Promise<TeamState> {
+    for (;;) {
+      const end = buffer.indexOf('\n\n');
+      if (end >= 0) {
+        const message = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        if (message.startsWith('data: ')) return JSON.parse(message.slice(6));
+        continue;
+      }
+      const { value, done } = await reader.read();
+      if (done) throw new Error('The live updates stopped.');
+      buffer += value;
+    }
+  }
+  return { res, nextState };
+}
+
+test('every page serves the React app, built files come from the assets, and the rest is 404', async (t) => {
+  const { api } = await setup(t);
+  for (const page of ['/', '/me', '/admin']) {
+    const res = await api('GET', page);
+    assert.equal(res.status, 200, page);
+    assert.equal(res.text, PAGE, page);
+  }
+  assert.equal((await api('GET', '/assets/app-abc.js')).text, 'console.log(1)');
+
+  const missing = await api('GET', '/nope');
+  assert.equal(missing.status, 404);
+  assert.equal(missing.text, 'Not found');
+});
+
+test('the API explains that it needs ADMIN_PASSWORD, while the pages still load', async (t) => {
+  const { api } = await setup(t, {});
+  const res = await api('GET', '/api/state');
+  assert.equal(res.status, 500);
+  assert.match(res.json.error, /ADMIN_PASSWORD/);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  assert.equal((await api('GET', '/me')).status, 200);
+});
+
+test('requests reach the shared API, with its status codes and headers', async (t) => {
+  const { api, join, me, person } = await setup(t);
+  assert.equal((await api('POST', '/api/admin/users', { username: 'a' })).status, 401);
+  assert.equal((await api('GET', '/api/nope')).status, 404);
+
+  const token = await join('a');
+  assert.equal((await me(token, { place: 'main', status: 'Hello' })).status, 200);
+  assert.equal((await person('a'))?.status, 'Hello');
+
+  for (let i = 0; i < 5; i++) await api('GET', '/api/admin/check', undefined, { 'x-admin-password': 'nope' });
+  const locked = await api('GET', '/api/admin/check', undefined, ADMIN);
+  assert.equal(locked.status, 429);
+  assert.ok(Number(locked.headers.get('retry-after')) > 0);
+});
+
+test('a body that is not a JSON object is refused', async (t) => {
+  const { url } = await setup(t);
+  for (const body of ['{nope', '[1]', 'null']) {
+    const res = await fetch(new URL('/api/admin/users', url), { method: 'POST', headers: ADMIN, body });
+    assert.equal(res.status, 400, body);
+    assert.equal(((await res.json()) as { error: string }).error, 'Invalid JSON.', body);
+  }
+});
+
+test('a body that is too large is refused, even when it does not say its size', async (t) => {
+  const { url } = await setup(t);
+  const body = JSON.stringify({ username: 'a'.repeat(MAX_BODY) });
+
+  const sized = await fetch(new URL('/api/admin/users', url), { method: 'POST', headers: ADMIN, body });
+  assert.equal(sized.status, 413);
+
+  const unsized = await fetch(new URL('/api/admin/users', url), {
+    method: 'POST',
+    headers: ADMIN,
+    body: new Blob([body]).stream(),
+    duplex: 'half',
+  } as RequestInit);
+  assert.equal(unsized.status, 413);
+});
+
+test('data and logins survive the object being thrown away', async (t) => {
+  const { join, me, person, evict } = await setup(t);
+  const token = await join('a');
+  assert.equal((await me(token, { place: 'main', status: 'Still here' })).status, 200);
+
+  await evict();
+
+  assert.equal((await person('a'))?.status, 'Still here');
+  assert.equal((await me(token, { status: 'Back' })).status, 200);
+  assert.equal((await person('a'))?.status, 'Back');
+});
+
+test('live updates start with the current state and then follow every change', async (t) => {
+  const { events, join, me } = await setup(t);
+  const token = await join('a');
+
+  const live = await events();
+  assert.equal(live.res.headers.get('content-type'), 'text/event-stream');
+  assert.equal(live.res.headers.get('cache-control'), 'no-store');
+  assert.equal((await live.nextState()).users[0]!.status, '');
+
+  const update = live.nextState();
+  await me(token, { status: 'Live' });
+  assert.equal((await update).users[0]!.status, 'Live');
+});
+
+test('an alarm moves someone at the scheduled time, with no request to wake the object', async (t) => {
+  const { events, join, me } = await setup(t);
+  const token = await join('a');
+  await me(token, { place: 'main' });
+
+  // Only the alarm can send this update: the map's own timer waits 25 seconds.
+  const live = await events();
+  await live.nextState();
+  const at = new Date(Date.now() + 1000).toISOString();
+  const update = live.nextState();
+  assert.equal((await me(token, { scheduled: { at, status: 'Dentist' } })).status, 200);
+  assert.equal((await update).users[0]!.scheduled?.at, at);
+
+  const moved = await live.nextState();
+  assert.equal(moved.users[0]!.place, 'out');
+  assert.equal(moved.users[0]!.status, 'Dentist');
+  assert.equal(moved.users[0]!.scheduled, null);
+});
+
+test(
+  'the morning reset that passed while the object was asleep runs when it wakes',
+  // The two reset times below land on different dates except in the last minute of the day.
+  { skip: new Date().toISOString().slice(11, 16) === '23:59' && 'too close to midnight' },
+  async (t) => {
+    const { server, dir, join, me, person } = await setup(t, { ADMIN_PASSWORD: 'secret', RESET_AT: '23:59' });
+    await me(await join('a'), { place: 'main', status: 'Yesterday' });
+
+    // Today's reset hasn't happened at 23:59. Moving it to 00:00 means it was missed.
+    await server.update({
+      root: dir,
+      workers: [{ config: workerConfig(dir, { ADMIN_PASSWORD: 'secret', RESET_AT: '00:00' }) }],
+    });
+
+    const user = await person('a');
+    assert.equal(user?.place, null);
+    assert.equal(user?.status, '');
+  },
+);
