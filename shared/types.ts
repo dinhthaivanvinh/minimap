@@ -40,6 +40,14 @@ export interface PublicSettings {
   publicUrl: string;
   clocks: Clock[];
   officeName: string;
+  /** Whether the map shows the office's daylight and weather. */
+  mapWeather: boolean;
+}
+
+/** When the sun rises and sets at the office on one day, as ISO instants. */
+export interface SunTimes {
+  rise: string;
+  set: string;
 }
 
 export interface Weather {
@@ -47,6 +55,14 @@ export interface Weather {
   code: number;
   isDay: boolean;
   updatedAt: string;
+  /** Yesterday, today and tomorrow at the office, so the map can light the town. Missing in polar day or night. */
+  sun?: SunTimes[];
+  /** Share of the sky covered by cloud, 0 to 100. */
+  cloudCover?: number;
+  /** Rain and snow in the last hour, in mm. */
+  precipitation?: number;
+  /** Wind at 10 m, in km/h. */
+  windSpeed?: number;
 }
 
 export interface TeamState {

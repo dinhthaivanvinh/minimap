@@ -71,7 +71,7 @@ npm test
 | `src/pages/` | The Monitor, User and Admin pages |
 | `src/components/` | Badge, detail card, characters and the clocks, weather and QR panel |
 | `src/map/` | The 2D map, and the 3D map with its three.js scene |
-| `src/lib/` | API calls, React hooks, and where rooms and seats go |
+| `src/lib/` | API calls, React hooks, where rooms and seats go, and the time-of-day look (`ambience.ts`) |
 | `src/styles/` | Colors and fonts (`theme.ts`), page-wide styles, and shared buttons and form pieces. Other styles sit in the component that uses them |
 | `public/` | Fonts and Cloudflare's cache rules (`_headers`), copied as they are into the build |
 
@@ -171,6 +171,17 @@ Set these on the Admin page. They apply straight away and are saved with the res
 - **Team address:** the address the QR code opens, such as `http://192.168.1.20:8080`. Set it for each deployment. If it's empty, the QR code uses the address the map was opened on. On `localhost` there is no QR code, because a phone couldn't open that address.
 - **Clocks:** a name and time zone for each of the two clocks.
 - **Main office location:** search for a city and pick it to show its weather. Remove it to hide the weather.
+- **Show the office's daylight and weather on the map:** on by default. Turn it off to keep the map in its plain daytime look for everyone.
+
+### Daylight and weather on the map
+
+Once the main office location is set, the 2D and 3D maps follow the time of day there, using the office's real sunrise and sunset. The town gets warm light around sunrise and sunset, and a starry sky at night with glowing street lamps and lit office windows. Names, statuses and characters stay as readable as in the daytime. In the middle of the day, and without an office location, the map looks just as it always has.
+
+The map also shows the office's current weather: drifting clouds (with their shadows passing over the 3D town), fog, drizzle, rain and snow, and thunderstorms with an occasional soft flash of lightning (never a strobe). Rain and snow fall behind people and their names, so everyone stays easy to read. People outdoors (in **Out of Office** and **Off today**) open umbrellas in rain and snow, puddles shine on the street while it rains, snow settles on the room tops, roofs and trees, and trees sway in the wind. With reduced motion turned on in the device's settings, the weather is shown as a still picture, with no lightning or swaying.
+
+Each screen can turn the effects off with the **Weather** button on the map's toolbar, which the browser remembers. The button shows when an office location is set and the setting above is on.
+
+To preview another time of day on one screen, add `?time=dawn`, `day`, `dusk`, `night` or a time such as `?time=21:30` (in the time zone of the screen showing the map, not the office's) to the map's address (for example `/?mode=3d&time=dusk`). To preview weather, add `?weather=` with `clear`, `partly`, `windy`, `cloudy`, `fog`, `drizzle`, `rain`, `downpour`, `snow` or `storm`. Previews show even when the effects are turned off. They can be combined, as in `/?weather=storm&time=night`, and only change that screen. Without an office location, the preview uses a 06:00 sunrise and an 18:00 sunset.
 
 ## Settings
 
@@ -195,6 +206,6 @@ Avoid `$` in `ADMIN_PASSWORD` when using Docker, because Docker Compose treats i
 - **Forgotten PIN:** the admin clicks Release on that username, and the person claims it again with a new PIN.
 - **Morning reset:** clears place, status and scheduled changes for everyone. Nicknames and PINs stay. If the server was off at reset time, the reset runs when it next starts, and it goes before any overdue scheduled changes, so nobody starts the day in Out of Office.
 - **More offices:** stop the server and add an entry to `places` in `data.json`. The first entry is the main office, and both maps make room for the rest. In Docker, copy the file out and back with `docker compose cp`.
-- **Weather:** the server gets it from [Open-Meteo](https://open-meteo.com) every 15 minutes, sending only the office coordinates. Browsers never contact it. The server needs internet access for this, and everything else works without it. If updates fail, the last reading stays for up to 3 hours, then the map shows "Weather unavailable". Check [Open-Meteo's terms](https://open-meteo.com/en/terms) for your use, because its free service is for non-commercial use. Its data license requires the credit line shown under the weather, so keep that in place.
+- **Weather:** the server gets it from [Open-Meteo](https://open-meteo.com) every 15 minutes, sending only the office coordinates. It also gets the sunrise and sunset times, cloud cover, rain amount and wind speed for the map's daylight and weather. Browsers never contact it. The server needs internet access for this, and everything else works without it. If updates fail, the last reading stays for up to 3 hours, then the map shows "Weather unavailable". Check [Open-Meteo's terms](https://open-meteo.com/en/terms) for your use, because its free service is for non-commercial use. Its data license requires the credit line shown under the weather, so keep that in place.
 - **Working from home:** teammates can only update their status if they can reach the server, for example over your VPN.
 - **Security:** this is built for a trusted office network. The Node.js server uses plain HTTP, so passwords and PINs are not encrypted on the network. Put a reverse proxy with HTTPS in front before exposing it more widely, or deploy to Cloudflare, which uses HTTPS.

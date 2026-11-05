@@ -14,7 +14,7 @@ import {
   type CharacterDesign,
   type Stroke,
 } from '../shared/look.ts';
-import type { AuthResult, Clock, OfficeLocation, Place, ScheduledChange, TeamState, Weather } from '../shared/types.ts';
+import type { AuthResult, Clock, OfficeLocation, Place, ScheduledChange, SunTimes, TeamState, Weather } from '../shared/types.ts';
 
 export type JsonBody = Record<string, unknown>;
 
@@ -34,6 +34,7 @@ interface Settings {
   publicUrl: string;
   clocks: Clock[];
   office: OfficeLocation | null;
+  mapWeather: boolean;
 }
 
 export interface Data {
@@ -89,6 +90,28 @@ const WEATHER_STALE_MS = 3 * 60 * 60 * 1000;
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Pairs the weather service's sunrise and sunset times (seconds since 1970) by day.
+ * Days without a real sunrise and sunset, as in polar day or night, are left out.
+ */
+export function sunTimes(rises: unknown[] = [], sets: unknown[] = []): SunTimes[] {
+  const days: SunTimes[] = [];
+  rises.forEach((rise, i) => {
+    const set = sets[i];
+    if (typeof rise !== 'number' || typeof set !== 'number') return;
+    const length = (set - rise) * 1000;
+    if (!(length > 0 && length < DAY_MS)) return;
+    days.push({ rise: new Date(rise * 1000).toISOString(), set: new Date(set * 1000).toISOString() });
+  });
+  return days;
+}
+
+function optionalNumber<K extends string>(key: K, value: unknown): { [key in K]?: number } {
+  return typeof value === 'number' && Number.isFinite(value) ? ({ [key]: value } as { [key in K]: number }) : {};
+}
+
 const DEFAULT_SETTINGS: Settings = {
   publicUrl: '',
   clocks: [
@@ -96,6 +119,7 @@ const DEFAULT_SETTINGS: Settings = {
     { label: 'UTC', timeZone: 'UTC' },
   ],
   office: null,
+  mapWeather: true,
 };
 
 export class ApiError extends Error {
@@ -163,6 +187,11 @@ function cleanStatus(value: unknown): string {
   const status = String(value ?? '').trim();
   if ([...status].length > MAX_STATUS) throw new ApiError(400, `Statuses can be at most ${MAX_STATUS} characters.`);
   return status;
+}
+
+function cleanSwitch(value: unknown, name: string): boolean {
+  if (typeof value !== 'boolean') throw new ApiError(400, `${name} must be on or off.`);
+  return value;
 }
 
 function cleanPublicUrl(value: unknown): string {
@@ -300,6 +329,7 @@ function checkBackup(value: unknown): Partial<Data> {
   if ('publicUrl' in saved) settings.publicUrl = cleanPublicUrl(saved.publicUrl);
   if ('clocks' in saved) settings.clocks = cleanClocks(saved.clocks);
   if ('office' in saved) settings.office = cleanOffice(saved.office);
+  if ('mapWeather' in saved) settings.mapWeather = saved.mapWeather !== false;
 
   const lastResetDate = value.lastResetDate;
   if (lastResetDate !== undefined && (typeof lastResetDate !== 'string' || !/^(\d{4}-\d{2}-\d{2})?$/.test(lastResetDate))) {
@@ -343,10 +373,10 @@ export function createCore({
   }
 
   function publicState(): TeamState {
-    const { publicUrl, clocks, office } = data.settings;
+    const { publicUrl, clocks, office, mapWeather } = data.settings;
     return {
       places: data.places,
-      settings: { publicUrl, clocks, officeName: office?.name || '' },
+      settings: { publicUrl, clocks, officeName: office?.name || '', mapWeather },
       weather,
       users: data.users.map((u) => ({
         username: u.username,
@@ -389,12 +419,25 @@ export function createCore({
     const params = new URLSearchParams({
       latitude: String(office.latitude),
       longitude: String(office.longitude),
-      current: 'temperature_2m,weather_code,is_day',
+      current: 'temperature_2m,weather_code,is_day,cloud_cover,precipitation,wind_speed_10m',
+      // Sunrise and sunset around today, so the map can show daylight between refreshes.
+      daily: 'sunrise,sunset',
+      past_days: '1',
+      forecast_days: '2',
+      timeformat: 'unixtime',
       timezone: 'auto',
     });
     try {
-      const { current } = await fetchJson<{
-        current?: { temperature_2m: number; weather_code: number; is_day: number };
+      const { current, daily } = await fetchJson<{
+        current?: {
+          temperature_2m: number;
+          weather_code: number;
+          is_day: number;
+          cloud_cover?: unknown;
+          precipitation?: unknown;
+          wind_speed_10m?: unknown;
+        };
+        daily?: { sunrise?: unknown[]; sunset?: unknown[] };
       }>(`${FORECAST_URL}?${params}`);
       if (run !== weatherRun) return; // The location changed while this was running.
       if (typeof current?.temperature_2m !== 'number') throw new Error('unexpected reply');
@@ -403,6 +446,11 @@ export function createCore({
         code: current.weather_code,
         isDay: current.is_day === 1,
         updatedAt: now().toISOString(),
+        sun: sunTimes(daily?.sunrise, daily?.sunset),
+        // Extra detail for the map's weather; left out if the service doesn't send it.
+        ...optionalNumber('cloudCover', current.cloud_cover),
+        ...optionalNumber('precipitation', current.precipitation),
+        ...optionalNumber('windSpeed', current.wind_speed_10m),
       };
     } catch (err) {
       if (run !== weatherRun) return;
@@ -591,6 +639,7 @@ export function createCore({
       if ('publicUrl' in body) next.publicUrl = cleanPublicUrl(body.publicUrl);
       if ('clocks' in body) next.clocks = cleanClocks(body.clocks);
       if ('office' in body) next.office = cleanOffice(body.office);
+      if ('mapWeather' in body) next.mapWeather = cleanSwitch(body.mapWeather, 'Daylight and weather on the map');
       Object.assign(data.settings, next);
       if ('office' in next) weather = null;
       commit();

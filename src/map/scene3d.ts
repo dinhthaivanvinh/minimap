@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
+import { CLEAR, mixColor, type Ambience, type Conditions } from '../lib/ambience.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
 import { computeLayout, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { box, clampTo, contains, grow, pickSpot, steer, type Box } from '../lib/wander.ts';
@@ -39,6 +40,8 @@ export interface Scene3D {
   focus(username: string): void;
   /** Lets people wander around their room, or sends everyone back to their spot. */
   setWandering(on: boolean): void;
+  /** Lights the town for the time of day: sun and sky, moonlight, lamps and windows. */
+  setAmbience(look: Ambience): void;
   destroy(): void;
 }
 
@@ -72,6 +75,8 @@ interface Character {
   goal: THREE.Vector3;
   zoneId: string;
   zoneKind: ZoneKind;
+  /** Held outdoors in the rain or snow. */
+  umbrella: THREE.Group;
   /** Where they may wander, or null when the room is too crowded to. */
   area: Box | null;
   /** travel: hurrying to a new room. walk: wandering. idle: standing still. */
@@ -110,6 +115,57 @@ interface Point {
 }
 
 const FRAME_MS = 1000 / 30; // 30 fps is plenty, and kinder to an always-on TV.
+
+// ---- Daylight ----------------------------------------------------------------
+// In the daytime the town is lit exactly as it always has been. Around sunrise the
+// sun comes up low on one side, around sunset it goes down on the other, and at night
+// a cool moon lights the town while lamps and windows glow.
+const NOON = new THREE.Vector3(-34, 80, 44);
+const SUNRISE = new THREE.Vector3(-110, 18, 30);
+const SUNSET = new THREE.Vector3(70, 18, 30);
+const MOON = new THREE.Vector3(40, 90, 30);
+const UMBRELLA_COLOURS = [0xff8fb3, 0x8fc9ff, 0xffe27a, 0xb7a6ff, 0x9fe89a];
+
+/** Each person always carries the same colour of umbrella. */
+function umbrellaColour(username: string): number {
+  let hash = 0;
+  for (const ch of username) hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  return UMBRELLA_COLOURS[hash % UMBRELLA_COLOURS.length]!;
+}
+
+const LIGHT = {
+  sun: '#fff4dc', warmSun: '#ffb27a', moon: '#a9b8ff',
+  sky: '#ffffff', nightSky: '#6d7ad0',
+  ground: '#cfc2ff', nightGround: '#3d3a78',
+  glass: '#8fddf5', nightGlass: '#2c3770',
+};
+
+/** A soft round dot for snowflakes. */
+function flakeTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 32;
+  const ctx = canvas.getContext('2d')!;
+  const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.8)');
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(canvas);
+}
+
+function glowTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(255, 226, 122, 0.9)');
+  gradient.addColorStop(0.4, 'rgba(255, 226, 122, 0.3)');
+  gradient.addColorStop(1, 'rgba(255, 226, 122, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(canvas);
+}
 const WALK_SPEED = 16;
 const WANDER_SPEED = 4.2;
 const CROWDED_CELL = 6; // Below this, people stay put: there's no room to wander.
@@ -164,6 +220,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     return m;
   }
 
+  // Windows and lamp bulbs have their own materials, so they can glow at night.
+  const windowGlass = new THREE.MeshToonMaterial({ color: LIGHT.glass, gradientMap: ramp });
+  const lampBulb = new THREE.MeshToonMaterial({ color: 0xffe27a, gradientMap: ramp });
+  const lampGlow = new THREE.SpriteMaterial({ map: glowTexture(), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+
   // ---- Scene ------------------------------------------------------------
 
   const scene = new THREE.Scene();
@@ -179,9 +240,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   Object.assign(labels.domElement.style, { position: 'absolute', inset: '0', pointerEvents: 'none' });
   root.append(labels.domElement);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xcfc2ff, 1.9));
+  const sky = new THREE.HemisphereLight(0xffffff, 0xcfc2ff, 1.9);
+  scene.add(sky);
   const sun = new THREE.DirectionalLight(0xfff4dc, 1.35);
-  sun.position.set(-34, 80, 44);
+  sun.position.copy(NOON);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 60, bottom: -60, near: 1, far: 220 });
@@ -220,6 +282,183 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
 
   const toWorld = (x: number, y: number): Point => ({ x: x - center.x, z: y - center.z });
 
+  // ---- Lights that come on after dark ------------------------------------
+  // Office and lobby ceiling lights, the light at home and the street lamps all light
+  // what's around them at night, like the lit rooms and lamp glow in the 2D map.
+  // They're switched off in the daytime, so they cost nothing then.
+  let nightLights: { light: THREE.PointLight; strength: number }[] = [];
+  let lampLevel = 0;
+
+  function addNightLight(parent: THREE.Group, x: number, y: number, z: number, { color = 0xffd9a0, strength, distance }: { color?: number; strength: number; distance: number }) {
+    // No decay, just a soft edge at `distance`, so the strengths sit beside the sun and sky's.
+    const light = new THREE.PointLight(color, 0, distance, 0);
+    light.position.set(x, y, z);
+    parent.add(light);
+    nightLights.push({ light, strength });
+  }
+
+  function applyNightLights() {
+    for (const { light, strength } of nightLights) {
+      light.intensity = strength * lampLevel;
+      light.visible = lampLevel > 0.01;
+    }
+  }
+
+  // ---- Weather ------------------------------------------------------------
+  // Rain or snow falls over the whole island; people's names are drawn on top of the
+  // scene, so they stay readable. The clouds themselves drift across the sky behind
+  // the canvas (Map3D.tsx); here, invisible ones sail over the town, so only their
+  // shadows pass over the rooms and nobody is hidden.
+  let weather: Conditions = CLEAR;
+  let skyLight = 1.9;
+  let flashAt = 0;
+  const FALL_FROM = 45;
+  // Phones get fewer drops; a TV or desktop gets more.
+  const maxDrops = Math.min(1500, Math.round((root.clientWidth || 1000) * 1.4));
+  const drops = Array.from({ length: maxDrops }, () => ({ x: 0, y: Math.random() * FALL_FROM, z: 0, depth: 0.6 + Math.random() * 0.4, phase: Math.random() * 6.3 }));
+  const dropArea = () => ({ w: layout.width + 12, d: layout.height + 12 });
+  const scatter = (drop: (typeof drops)[number]) => {
+    const { w, d } = dropArea();
+    drop.x = (Math.random() - 0.5) * w;
+    drop.z = (Math.random() - 0.5) * d;
+  };
+
+  const rainPositions = new Float32Array(maxDrops * 6);
+  const rainGeometry = new THREE.BufferGeometry();
+  rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3).setUsage(THREE.DynamicDrawUsage));
+  const rain = new THREE.LineSegments(rainGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false }));
+  const snowPositions = new Float32Array(maxDrops * 3);
+  const snowGeometry = new THREE.BufferGeometry();
+  snowGeometry.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3).setUsage(THREE.DynamicDrawUsage));
+  const snow = new THREE.Points(snowGeometry, new THREE.PointsMaterial({ color: 0xffffff, size: 1.3, map: flakeTexture(), transparent: true, depthWrite: false }));
+  for (const fall of [rain, snow]) {
+    fall.frustumCulled = false;
+    fall.visible = false;
+    scene.add(fall);
+  }
+
+  // Draws nothing, but still casts a shadow.
+  const shadowOnly = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  const puff = new THREE.IcosahedronGeometry(1, 1);
+  const PUFFS: [number, number, number, number][] = [[0, 0, 0, 4], [3.6, -0.6, 0.4, 3], [-3.6, -0.7, 0, 3.2], [1.4, 1.5, -0.4, 2.8], [-1.6, 1, 0.6, 2.4]];
+  function makeCloud() {
+    const cloud = new THREE.Group();
+    for (const [x, y, z, size] of PUFFS) {
+      const part = new THREE.Mesh(puff, shadowOnly);
+      part.position.set(x, y, z);
+      part.scale.set(size, size * 0.72, size * 0.85);
+      part.castShadow = true;
+      cloud.add(part);
+    }
+    scene.add(cloud);
+    return cloud;
+  }
+  const clouds = Array.from({ length: 6 }, (_, i) => ({
+    shadow: makeCloud(),
+    speed: 1.2 + (i % 3) * 0.5,
+    start: i / 6 + Math.random() * 0.1,
+    size: 0.8 + ((i * 7) % 5) * 0.12,
+    lane: i,
+  }));
+
+  function placeClouds(time: number) {
+    const { w, d } = dropArea();
+    const span = w + 40;
+    const shown = Math.round(weather.clouds * clouds.length);
+    for (const [i, cloud] of clouds.entries()) {
+      const visible = i < shown;
+      cloud.shadow.visible = visible;
+      if (!visible) continue;
+      const moved = reducedMotion ? 0 : time * cloud.speed;
+      const x = ((((cloud.start * span + moved) % span) + span) % span) - span / 2;
+      cloud.shadow.scale.setScalar(cloud.size * 1.5);
+      cloud.shadow.position.set(x * 0.8, 42, -d / 2 + ((cloud.lane * 0.37) % 1) * d);
+    }
+  }
+
+  // Snow on walls, roofs and trees, puddles on the road, umbrellas and swaying trees.
+  const snowMaterial = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: ramp });
+  const puddleMaterial = new THREE.MeshBasicMaterial({ color: 0xcfe0ff, transparent: true, opacity: 0, depthWrite: false });
+  let snowCaps: THREE.Mesh[] = [];
+  let trees: { tree: THREE.Group; phase: number }[] = [];
+
+  function addSnow(parent: THREE.Object3D, geometry: THREE.BufferGeometry, { x = 0, y = 0, z = 0, squash = 1, turn = 0 } = {}) {
+    const cap = mesh(geometry, snowMaterial, { x, y, z, shadow: false });
+    cap.scale.y = squash;
+    cap.rotation.y = turn;
+    cap.visible = weather.precipitation === 'snow';
+    parent.add(cap);
+    snowCaps.push(cap);
+  }
+
+  function makeUmbrella(colour: number) {
+    const umbrella = new THREE.Group();
+    umbrella.add(mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.2, 6), INK, { x: 0.8, y: 2.3, z: 0.3 }));
+    umbrella.add(mesh(new THREE.ConeGeometry(2, 0.9, 12), colour, { x: 0.8, y: 4.25, z: 0.3 }));
+    umbrella.add(mesh(new THREE.SphereGeometry(0.12, 8, 6), INK, { x: 0.8, y: 4.75, z: 0.3 }));
+    umbrella.rotation.z = -0.12;
+    umbrella.visible = false;
+    return umbrella;
+  }
+
+  function showWeatherDetails() {
+    const snowing = weather.precipitation === 'snow';
+    for (const cap of snowCaps) cap.visible = snowing;
+    const wet = weather.precipitation === 'rain' || weather.precipitation === 'drizzle';
+    puddleMaterial.opacity = wet ? 0.35 + weather.intensity * 0.35 : 0;
+    puddleMaterial.visible = wet;
+  }
+
+  function animateWeather(dt: number, time: number) {
+    placeClouds(time);
+    // People outdoors open their umbrellas.
+    const raining = weather.precipitation !== 'none';
+    for (const c of characters.values()) c.umbrella.visible = raining && (c.zoneKind === 'street' || c.zoneKind === 'off');
+    const sway = reducedMotion ? 0 : weather.wind;
+    for (const { tree, phase } of trees) tree.rotation.z = sway ? Math.sin(time * (1.1 + sway) + phase) * 0.05 * sway : 0;
+    // A rare, soft brightening of the sky in a storm: never a strobe.
+    let flash = 0;
+    if (weather.storm && !reducedMotion) {
+      if (time > flashAt + 1.2) flashAt = time + 15 + Math.random() * 15;
+      const since = time - flashAt;
+      if (since > 0) flash = since < 0.25 ? since / 0.25 : Math.max(0, 1 - (since - 0.25) / 0.9);
+    }
+    sky.intensity = skyLight + flash * 1.4;
+
+    const kind = weather.precipitation;
+    rain.visible = kind === 'rain' || kind === 'drizzle';
+    snow.visible = kind === 'snow';
+    if (kind === 'none') return;
+    const count = Math.round(maxDrops * weather.intensity);
+    const snowing = kind === 'snow';
+    const speed = snowing ? 3.5 : kind === 'drizzle' ? 26 : 40;
+    const blow = snowing ? weather.wind * 3 : 1.5 + weather.wind * 9;
+    const length = kind === 'drizzle' ? 0.8 : 1.7;
+    const { w } = dropArea();
+    for (let i = 0; i < count; i++) {
+      const drop = drops[i]!;
+      if (!drop.x && !drop.z) scatter(drop);
+      if (!reducedMotion) {
+        drop.y -= speed * drop.depth * dt;
+        drop.x += (blow + (snowing ? Math.sin(time * 1.3 + drop.phase) * 0.8 : 0)) * dt;
+        if (drop.y < 0) {
+          drop.y += FALL_FROM;
+          scatter(drop);
+        }
+        if (drop.x > w / 2) drop.x -= w;
+      }
+      if (snowing) {
+        snowPositions.set([drop.x, drop.y, drop.z], i * 3);
+      } else {
+        const lean = (blow / speed) * length;
+        rainPositions.set([drop.x - lean, drop.y + length, drop.z, drop.x, drop.y, drop.z], i * 6);
+      }
+    }
+    const geometry = snowing ? snowGeometry : rainGeometry;
+    geometry.attributes.position!.needsUpdate = true;
+    geometry.setDrawRange(0, snowing ? count : count * 2);
+  }
+
   // ---- Building the rooms -----------------------------------------------
 
   function addPlant(parent: THREE.Group, x: number, z: number) {
@@ -232,9 +471,16 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
 
   function addTree(parent: THREE.Group, x: number, z: number) {
     block(x, z, 1.2, 1.2);
-    parent.add(mesh(new THREE.CylinderGeometry(0.55, 0.75, 3, 8), 0xc99467, { x, y: 2.5, z }));
-    parent.add(mesh(new THREE.IcosahedronGeometry(2.5, 1), 0x63c96c, { x, y: 5.6, z }));
-    parent.add(mesh(new THREE.IcosahedronGeometry(1.7, 1), 0x7ad67f, { x: x + 1, y: 7, z: z + 0.4 }));
+    // Built around the foot of its trunk, so it sways from there in the wind.
+    const tree = new THREE.Group();
+    tree.position.set(x, 1, z);
+    tree.add(mesh(new THREE.CylinderGeometry(0.55, 0.75, 3, 8), 0xc99467, { y: 1.5 }));
+    tree.add(mesh(new THREE.IcosahedronGeometry(2.5, 1), 0x63c96c, { y: 4.6 }));
+    tree.add(mesh(new THREE.IcosahedronGeometry(1.7, 1), 0x7ad67f, { x: 1, y: 6, z: 0.4 }));
+    addSnow(tree, new THREE.IcosahedronGeometry(2.1, 1), { y: 6.1, squash: 0.45 });
+    addSnow(tree, new THREE.IcosahedronGeometry(1.4, 1), { x: 1, y: 7.1, z: 0.4, squash: 0.45 });
+    parent.add(tree);
+    trees.push({ tree, phase: x * 0.37 + z * 0.21 });
   }
 
   function addOffice(group: THREE.Group, z: Zone, c: Point) {
@@ -247,15 +493,18 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     const backWall = mesh(new THREE.BoxGeometry(z.w, WALL_H, 0.7), 0xfff4fa, { x: c.x, y: 1 + WALL_H / 2, z: c.z - z.h / 2 + 0.35 });
     const sideWall = mesh(new THREE.BoxGeometry(0.7, WALL_H, z.h), 0xf8ebff, { x: c.x - z.w / 2 + 0.35, y: 1 + WALL_H / 2, z: c.z });
     group.add(backWall, sideWall);
+    addSnow(group, new THREE.BoxGeometry(z.w + 0.3, 0.4, 1.1), { x: c.x, y: 1 + WALL_H + 0.2, z: c.z - z.h / 2 + 0.35 });
+    addSnow(group, new THREE.BoxGeometry(1.1, 0.4, z.h), { x: c.x - z.w / 2 + 0.35, y: 1 + WALL_H + 0.2, z: c.z });
 
     // Windows along the back wall.
     const windows = Math.max(1, Math.floor(z.w / 11));
     for (let i = 0; i < windows; i++) {
       const wx = c.x - z.w / 2 + ((i + 0.5) * z.w) / windows;
-      group.add(mesh(new THREE.BoxGeometry(5, 2.6, 0.2), 0x8fddf5, { x: wx, y: 3.9, z: c.z - z.h / 2 + 0.75, shadow: false }));
+      group.add(mesh(new THREE.BoxGeometry(5, 2.6, 0.2), windowGlass, { x: wx, y: 3.9, z: c.z - z.h / 2 + 0.75, shadow: false }));
     }
     addPlant(group, c.x + z.w / 2 - 2.2, c.z - z.h / 2 + 2.4);
     addPlant(group, c.x - z.w / 2 + 2.4, c.z + z.h / 2 - 2.4);
+    addNightLight(group, c.x, WALL_H + 4, c.z - z.h * 0.1, { strength: 2.6, distance: Math.max(z.w, z.h) * 0.72 });
   }
 
   function addWfh(group: THREE.Group, z: Zone, c: Point) {
@@ -267,7 +516,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     const roof = mesh(new THREE.ConeGeometry(6.8, 3.8, 4), 0xff8fb3, { x: hx, y: 7.5, z: hz });
     roof.rotation.y = Math.PI / 4;
     group.add(roof);
+    addSnow(group, new THREE.ConeGeometry(3.6, 2, 4), { x: hx, y: 8.5, z: hz, turn: Math.PI / 4 });
     group.add(mesh(new THREE.BoxGeometry(1.8, 3, 0.2), 0xb7a6ff, { x: hx, y: 2.5, z: hz + 3.55, shadow: false }));
+    // Lights up at night like the office windows.
+    group.add(mesh(new THREE.BoxGeometry(1.6, 1.4, 0.2), windowGlass, { x: hx + 2.4, y: 3.6, z: hz + 3.55, shadow: false }));
+    addNightLight(group, hx, 4.5, hz + 6, { strength: 1.6, distance: 13 });
     addTree(group, c.x - z.w / 2 + 3, c.z + z.h / 2 - 3);
   }
 
@@ -287,12 +540,18 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   function addLobby(group: THREE.Group, z: Zone, c: Point) {
     group.add(mesh(new THREE.BoxGeometry(z.w, 1, z.h), 0xffe0ec, { ...c, y: 0.5, shadow: false }));
     group.add(mesh(new THREE.BoxGeometry(9, 0.2, 3.6), 0xffe27a, { x: c.x + z.w / 2 - 7, y: 1.1, z: c.z + z.h / 2 - 3, shadow: false }));
+    addNightLight(group, c.x, 7, c.z, { strength: 1.8, distance: Math.max(z.w, z.h) * 0.75 });
   }
 
   function addLampPost(group: THREE.Group, x: number, z: number) {
     block(x, z, 0.5, 0.5);
     group.add(mesh(new THREE.CylinderGeometry(0.16, 0.2, 6, 8), INK, { x, y: 4, z }));
-    group.add(mesh(new THREE.SphereGeometry(0.6, 12, 8), 0xffe27a, { x, y: 7.2, z }));
+    group.add(mesh(new THREE.SphereGeometry(0.6, 12, 8), lampBulb, { x, y: 7.2, z }));
+    const glow = new THREE.Sprite(lampGlow);
+    glow.position.set(x, 7.2, z);
+    glow.scale.setScalar(6);
+    group.add(glow);
+    addNightLight(group, x, 6.6, z + 0.6, { color: 0xffd27a, strength: 2.8, distance: 17 });
   }
 
   function addCar(group: THREE.Group, x: number, z: number) {
@@ -328,6 +587,15 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
       group.add(mesh(new THREE.BoxGeometry(4, 0.06, 0.7), paint, { x: crosswalkX, y: 1.04, z: stripeZ, shadow: false }));
     }
 
+    // Puddles, which shine while it rains.
+    for (const [px, pz, size] of [[-0.16, -0.25, 3.2], [0.08, 0.3, 2.4], [0.27, -0.1, 2.8]] as const) {
+      const puddle = mesh(new THREE.CircleGeometry(1, 20), puddleMaterial, { x: width * px, y: 1.02, z: roadZ + roadDepth * pz, shadow: false });
+      puddle.rotation.x = -Math.PI / 2;
+      puddle.scale.set(size, size * 0.45, 1);
+      puddle.receiveShadow = false;
+      group.add(puddle);
+    }
+
     addLampPost(group, -width * 0.32, pavementZ);
     addLampPost(group, width * 0.24, pavementZ);
     addCar(group, width * 0.4, roadZ + 1);
@@ -341,6 +609,9 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
 
   function buildWorld() {
     disposeGroup(world);
+    nightLights = [];
+    snowCaps = [];
+    trees = [];
     zoneLabels.clear();
     scenery = [];
     center = { x: layout.width / 2, z: layout.height / 2 };
@@ -384,6 +655,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     }
 
     buildPresets();
+    applyNightLights();
   }
 
   function buildDesks() {
@@ -409,16 +681,19 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   function disposeGroup(group: THREE.Group) {
     for (const child of [...group.children]) {
       group.remove(child);
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose();
-        // Tiled floors have their own material and texture; the rest are shared.
-        const material = child.material as THREE.MeshToonMaterial;
-        if (material.map) {
-          material.map.dispose();
-          material.dispose();
+      // Trees are groups of their own, so look inside everything.
+      child.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.geometry.dispose();
+          // Tiled floors have their own material and texture; the rest are shared.
+          const material = node.material as THREE.MeshToonMaterial;
+          if (material.map) {
+            material.map.dispose();
+            material.dispose();
+          }
         }
-      }
-      if (child instanceof CSS2DObject) child.element.remove();
+        if (node instanceof CSS2DObject) node.element.remove();
+      });
     }
   }
 
@@ -441,9 +716,12 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     label.position.set(0, 3.3, 0);
     label.center.set(0.5, 1);
     group.add(label);
+    const umbrella = makeUmbrella(umbrellaColour(user.username));
+    group.add(umbrella);
     scene.add(group);
 
     return {
+      umbrella,
       username: user.username,
       designKey: JSON.stringify(user.look),
       bodyMaterial,
@@ -486,6 +764,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     scene.remove(character.group);
     character.label.element.remove();
     clearBody(character);
+    character.umbrella.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      node.geometry.dispose();
+      (node.userData.fadeMaterial as THREE.Material | undefined)?.dispose();
+    });
   }
 
   // Someone saved a new look, so swap it in without moving them.
@@ -864,6 +1147,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     last = now;
     lastFrame = now;
     animate(dt, now / 1000);
+    animateWeather(dt, now / 1000);
     renderer.render(scene, camera);
     labels.render(scene, camera);
   }
@@ -886,6 +1170,42 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   return {
     update: apply,
     applyPreset: (id) => applyPreset(id),
+    setAmbience({ daylight, warmth, phase, lamps, sky: skyColours, weather: now }) {
+      weather = now;
+      showWeatherDetails();
+      sky.color.set(mixColor(LIGHT.nightSky, LIGHT.sky, daylight));
+      sky.groundColor.set(mixColor(LIGHT.nightGround, LIGHT.ground, daylight));
+      skyLight = 1.4 + 0.5 * daylight;
+      sky.intensity = skyLight;
+
+      sun.color.set(mixColor(LIGHT.moon, mixColor(LIGHT.sun, LIGHT.warmSun, warmth), daylight));
+      // Grey skies soften the sunlight and its shadows.
+      sun.intensity = (0.65 + 0.7 * daylight) * (1 - now.gloom * 0.55);
+
+      (rain.material as THREE.LineBasicMaterial).color.set(mixColor('#ffffff', '#b8c4ff', 1 - daylight));
+      if (now.fog > 0) {
+        const colour = mixColor(skyColours.bottom, '#dfe5ee', 0.5 * daylight);
+        if (scene.fog instanceof THREE.FogExp2) scene.fog.color.set(colour);
+        else scene.fog = new THREE.FogExp2(colour);
+        (scene.fog as THREE.FogExp2).density = now.fog * 0.009;
+      } else {
+        scene.fog = null;
+      }
+      // Low on the rising or setting side, swinging up to midday as it gets light.
+      const low = phase === 'dusk' ? SUNSET : SUNRISE;
+      const daySun = low.clone().lerp(NOON, daylight);
+      sun.position.copy(MOON).lerp(daySun, Math.min(1, daylight * 3));
+
+      windowGlass.color.set(mixColor(LIGHT.glass, LIGHT.nightGlass, lamps * 0.7));
+      windowGlass.emissive.set(0xffc861);
+      windowGlass.emissiveIntensity = lamps * 0.9;
+      lampBulb.emissive.set(0xffe27a);
+      lampBulb.emissiveIntensity = lamps * 0.8;
+      lampGlow.opacity = lamps * 0.85;
+      lampLevel = lamps;
+      applyNightLights();
+    },
+
     setWandering(on) {
       wandering = on;
       const time = performance.now() / 1000;
@@ -917,6 +1237,18 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
       });
       for (const character of characters.values()) character.bodyMaterial.dispose();
       for (const material of materials.values()) material.dispose();
+      lampGlow.map?.dispose();
+      lampGlow.dispose();
+      for (const fall of [rain, snow]) {
+        fall.geometry.dispose();
+        const material = fall.material as THREE.PointsMaterial;
+        material.map?.dispose();
+        material.dispose();
+      }
+      puff.dispose();
+      shadowOnly.dispose();
+      snowMaterial.dispose();
+      puddleMaterial.dispose();
       ramp.dispose();
       renderer.dispose();
       renderer.forceContextLoss(); // Browsers allow only a few live 3D contexts.
