@@ -106,42 +106,30 @@ docker compose cp minimap:/app/data/data.json ./backup.json
 
 The app also runs on [Cloudflare Workers](https://developers.cloudflare.com/workers/), with no server to look after and HTTPS included. Cloudflare serves the pages, and one [Durable Object](https://developers.cloudflare.com/durable-objects/) runs the same API as the Node.js server: it keeps the data in its own storage and sends live updates to every open map. The Workers Free plan is enough for a team.
 
+**Deploy from GitHub (Workers Builds)**
+
+This repository is connected to the `minimap` Worker with [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), so Cloudflare deploys every push to `main` by itself, and uploads a preview version for other branches.
+
+1. Set `RESET_AT` and `TZ` under `vars` in `wrangler.jsonc`.
+2. In the Cloudflare dashboard, open **Workers & Pages → minimap → Settings → Variables and Secrets**, and add a **Secret** named `ADMIN_PASSWORD`. It stays in place through every deploy.
+3. In **Settings → Build**, keep the deploy command as `npx wrangler deploy`. The build command can stay empty: Wrangler builds the pages itself (`build` in `wrangler.jsonc`).
+4. Push to `main`. Then open `https://minimap.<your-subdomain>.workers.dev/admin` and set **Team address** to that address so the QR code points there.
+
+`.github/workflows/check.yml` runs the typecheck, tests and build on every pull request. It doesn't deploy.
+
 **Deploy from your computer**
 
-1. Log in to Cloudflare (this opens a browser):
+```bash
+npx wrangler login
+```
 
-   ```bash
-   npx wrangler login
-   ```
+```bash
+npx wrangler secret put ADMIN_PASSWORD
+```
 
-2. Set `RESET_AT` and `TZ` under `vars` in `wrangler.jsonc`.
-3. Set the admin password. It's stored as an encrypted secret, never in the code:
-
-   ```bash
-   npx wrangler secret put ADMIN_PASSWORD
-   ```
-
-   The first time, Wrangler offers to create the Worker so it can store the secret. Say yes.
-
-4. Build and deploy:
-
-   ```bash
-   npm run deploy
-   ```
-
-5. Open the `https://minimap.<your-subdomain>.workers.dev` address it prints, go to `/admin`, and set **Team address** to it so the QR code points there.
-
-**Deploy from GitHub**
-
-`.github/workflows/deploy.yml` checks, tests and deploys on every push to `main`. In the repository's **Settings → Secrets and variables → Actions**, add:
-
-| Secret | Value |
-|---|---|
-| `CLOUDFLARE_API_TOKEN` | A token made from the **Edit Cloudflare Workers** template at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) |
-| `CLOUDFLARE_ACCOUNT_ID` | Shown on the Workers & Pages overview in the Cloudflare dashboard |
-| `ADMIN_PASSWORD` | The admin password |
-
-Then push to `main`, or run **Deploy to Cloudflare** from the Actions tab.
+```bash
+npm run deploy
+```
 
 **Try it locally first**
 

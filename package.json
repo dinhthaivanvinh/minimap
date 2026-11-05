@@ -15,8 +15,8 @@
     "test": "node --test",
     "test-members": "node scripts/sample-team.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json && tsc -p worker/tsconfig.json",
-    "dev:cf": "vite build && wrangler dev",
-    "deploy": "vite build && wrangler deploy"
+    "dev:cf": "wrangler dev",
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "qrcode-generator": "^1.4.4",

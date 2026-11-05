@@ -5,7 +5,8 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
-  // The built pages. Run `npm run build` first; `npm run deploy` does both.
+  // Wrangler builds the pages before every deploy, upload and `wrangler dev`.
+  "build": { "command": "npm run build", "watch_dir": ["src", "shared", "public"] },
   "assets": { "directory": "./dist", "binding": "ASSETS" },
   // One Durable Object holds the team's data and the live connections.
   "durable_objects": { "bindings": [{ "name": "MINIMAP", "class_name": "Minimap" }] },
