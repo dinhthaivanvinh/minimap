@@ -129,7 +129,7 @@ The app also runs on [Cloudflare Workers](https://developers.cloudflare.com/work
    npm run deploy
    ```
 
-5. Open the `https://team-minimap.<your-subdomain>.workers.dev` address it prints, go to `/admin`, and set **Team address** to it so the QR code points there.
+5. Open the `https://minimap.<your-subdomain>.workers.dev` address it prints, go to `/admin`, and set **Team address** to it so the QR code points there.
 
 **Deploy from GitHub**
 

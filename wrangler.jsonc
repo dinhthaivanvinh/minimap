@@ -1,7 +1,7 @@
 // Cloudflare Workers settings. See "Deploy to Cloudflare" in README.md.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "team-minimap",
+  "name": "minimap",
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
