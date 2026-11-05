@@ -564,7 +564,11 @@ export function createCore({
 
   function userFromToken(req: ApiRequest): StoredUser {
     const token = (req.header('authorization') || '').replace(/^Bearer /, '');
-    const [name, , sig] = token.split('.');
+    // Read from the end, because usernames can contain dots.
+    const parts = token.split('.');
+    const sig = parts.pop();
+    parts.pop(); // The PIN version, which the signature already covers.
+    const name = parts.join('.');
     let user: StoredUser | undefined;
     try {
       user = name ? findUser(decodeURIComponent(name)) : undefined;
