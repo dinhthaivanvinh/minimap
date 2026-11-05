@@ -431,9 +431,27 @@ test('settings survive a restart, and older data files gain the defaults', async
 });
 
 test('static files cannot escape the public folder', async (t) => {
-  const { port, api } = await setup(t);
-  const res = await fetch(`http://127.0.0.1:${port}/..%2fdata.json`);
-  assert.equal(res.status, 404);
+  const { port, api, dataFile } = await setup(t);
+  // A file type the server does send, or the file type check would stop these and not the guard.
+  const dir = path.dirname(dataFile);
+  fs.writeFileSync(path.join(dir, 'outside.js'), 'outside');
+  fs.mkdirSync(path.join(dir, 'dist-private'));
+  fs.writeFileSync(path.join(dir, 'dist-private', 'outside.js'), 'outside');
+  const escapes = [
+    '/..%2foutside.js',
+    '/%2e%2e%2foutside.js',
+    '/assets/..%2f..%2foutside.js',
+    // Starts with the public folder's name, without being inside it.
+    '/..%2fdist-private%2foutside.js',
+    // Backslash only separates folders on Windows.
+    '/..%5coutside.js',
+  ];
+  for (const address of escapes) {
+    const res = await fetch(`http://127.0.0.1:${port}${address}`);
+    assert.equal(res.status, 404, address);
+    assert.doesNotMatch(await res.text(), /outside/, address);
+  }
+  assert.equal((await fetch(`http://127.0.0.1:${port}/..%2fdata.json`)).status, 404);
   assert.equal((await api('GET', '/data/data.json')).status, 404);
   assert.equal((await api('GET', '/api/nope')).status, 404);
 });
