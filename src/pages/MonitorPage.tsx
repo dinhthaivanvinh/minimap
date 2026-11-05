@@ -7,6 +7,7 @@ import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { RandomPicker } from '../components/RandomPicker.tsx';
 import { useTeamState } from '../lib/hooks.ts';
+import { supportsWebGL } from '../lib/webgl.ts';
 import { isNotWorking, placeGroup, placeName, type PlaceGroup } from '../lib/layout.ts';
 import Map2D from '../map/Map2D.tsx';
 import type { FocusRequest } from '../map/types.ts';
@@ -270,15 +271,6 @@ function saveMode(value: Mode): void {
   } catch {}
 }
 
-function supportsWebGL(): boolean {
-  try {
-    const canvas = document.createElement('canvas');
-    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'));
-  } catch {
-    return false;
-  }
-}
-
 // Falls back to the 2D map if the 3D map can't load or crashes.
 class Map3DGuard extends Component<{ onFail: () => void; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -483,7 +475,7 @@ export function MonitorPage() {
         </Side>
       </Stage>
 
-      {state && pickerOpen && <RandomPicker users={users} onClose={closePicker} />}
+      {state && pickerOpen && <RandomPicker users={users} initialView={mode} onClose={closePicker} />}
 
       {state && selection && selectedUser && (
         <DetailCard user={selectedUser} places={state.places} anchor={selection.anchor} onClose={closeCard} />

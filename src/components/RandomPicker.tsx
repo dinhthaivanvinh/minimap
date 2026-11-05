@@ -1,7 +1,7 @@
 // The random member picker: choose who's in the draw, then watch a claw machine
 // collect the winner. The winner is chosen before the claw moves (see lib/picker.ts),
 // and this file only plays the planned steps back with CSS transitions.
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { Component, lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import styled, { css, keyframes } from 'styled-components';
 import type { TeamUser } from '../../shared/types.ts';
@@ -25,8 +25,14 @@ import {
   type DrawStep,
 } from '../lib/picker.ts';
 import { media, theme } from '../styles/theme.ts';
-import { Button, FieldLabel, Input } from '../styles/ui.ts';
+import { supportsWebGL } from '../lib/webgl.ts';
+import { Button, FieldLabel, Input, Segmented } from '../styles/ui.ts';
 import { Mochi } from './Mochi.tsx';
+
+// three.js is large, so the 3D machine only loads when someone switches to it.
+const ClawMachine3D = lazy(() => import('./ClawMachine3D.tsx'));
+
+export type PickerView = '2d' | '3d';
 
 const DEFAULT_TITLE = 'Random pick';
 const EASE = { move: 'cubic-bezier(.45, 0, .3, 1)', drop: 'cubic-bezier(.5, 0, .9, .5)' } as const;
@@ -62,12 +68,12 @@ const Dialog = styled.div`
 
 const Head = styled.div`
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px 12px;
   margin-bottom: 12px;
 
-  h2 { font-size: 24px; }
+  h2 { flex: 1; font-size: 24px; }
 `;
 
 const Body = styled.div`
@@ -467,13 +473,35 @@ function trapFocus(event: KeyboardEvent<HTMLElement>) {
   }
 }
 
+// Falls back to the 2D machine if the 3D one can't load or crashes.
+class View3DGuard extends Component<{ onFail: () => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('Could not show the 3D claw machine', error);
+    this.props.onFail();
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
 interface RandomPickerProps {
   users: TeamUser[];
+  /** Starts in the same style as the map behind it. */
+  initialView?: PickerView;
   onClose: () => void;
 }
 
-export function RandomPicker({ users, onClose }: RandomPickerProps) {
+export function RandomPicker({ users, initialView = '2d', onClose }: RandomPickerProps) {
   const reduced = useReducedMotion();
+  const has3D = useMemo(supportsWebGL, []);
+  const [view, setView] = useState<PickerView>(() => (initialView === '3d' && has3D ? '3d' : '2d'));
   const headingId = useId();
   const dialog = useRef<HTMLDivElement>(null);
   const [title, setTitle] = useState('');
@@ -558,6 +586,18 @@ export function RandomPicker({ users, onClose }: RandomPickerProps) {
       <Dialog role="dialog" aria-modal="true" aria-labelledby={headingId} tabIndex={-1} ref={dialog} onKeyDown={trapFocus}>
         <Head>
           <h2 id={headingId}>Random picker</h2>
+          <Segmented role="group" aria-label="Claw machine style">
+            <button type="button" aria-pressed={view === '2d'} onClick={() => setView('2d')}>2D</button>
+            <button
+              type="button"
+              aria-pressed={view === '3d'}
+              disabled={!has3D}
+              title={has3D ? undefined : 'This browser cannot show 3D graphics'}
+              onClick={() => setView('3d')}
+            >
+              3D
+            </button>
+          </Segmented>
           <Button type="button" $small onClick={onClose}>Close</Button>
         </Head>
 
@@ -595,46 +635,66 @@ export function RandomPicker({ users, onClose }: RandomPickerProps) {
             <Cabinet>
               <Marquee>{shownTitle}</Marquee>
               <Glass $instant={instant}>
-                <Rail />
-                <ChuteBox><span>PRIZE</span></ChuteBox>
-                <Floor />
+                {view === '3d' ? (
+                  <View3DGuard onFail={() => setView('2d')}>
+                    <Suspense fallback={null}>
+                      <ClawMachine3D
+                        shown={shown}
+                        layout={layout}
+                        step={step}
+                        stepKey={`${drawCount}:${draw ? stepIndex : 'rest'}`}
+                        trayKey={`${drawCount}:${draw ? 'draw' : 'preview'}:${shown.map((user) => user.username).join(',')}`}
+                        winnerSlot={draw ? draw.winnerSlot : null}
+                        instant={instant}
+                        reduced={reduced}
+                        onFail={() => setView('2d')}
+                      />
+                    </Suspense>
+                  </View3DGuard>
+                ) : (
+                  <>
+                    <Rail />
+                    <ChuteBox><span>PRIZE</span></ChuteBox>
+                    <Floor />
 
-                {shown.map((user, i) => {
-                  const slot = layout.slots[i];
-                  if (!slot) return null;
-                  const isWinner = draw !== null && i === draw.winnerSlot;
-                  const at = isWinner ? prizeFoot(step, slot, layout.size) : slot;
-                  const style: CSSProperties & Record<'--size' | '--spacing', number> = {
-                    '--size': layout.size,
-                    '--spacing': layout.spacing,
-                    left: u(at.x - layout.size / 2),
-                    top: u(at.foot - height),
-                    width: u(layout.size),
-                    height: u(height),
-                    zIndex: isWinner && step.prize !== 'tray' ? 9 : 4 - slot.row,
-                    transition: isWinner ? transition(step, ['left', 'top']) : undefined,
-                  };
-                  return (
-                    <Character key={`${drawCount}-${user.username}`} title={user.nickname} style={style} data-held={isWinner && step.prize === 'claw'}>
-                      <div style={{ animationDelay: `${i * 35}ms` }}><Mochi user={user} /></div>
-                      <NameTag>{user.nickname}</NameTag>
-                    </Character>
-                  );
-                })}
+                    {shown.map((user, i) => {
+                      const slot = layout.slots[i];
+                      if (!slot) return null;
+                      const isWinner = draw !== null && i === draw.winnerSlot;
+                      const at = isWinner ? prizeFoot(step, slot, layout.size) : slot;
+                      const style: CSSProperties & Record<'--size' | '--spacing', number> = {
+                        '--size': layout.size,
+                        '--spacing': layout.spacing,
+                        left: u(at.x - layout.size / 2),
+                        top: u(at.foot - height),
+                        width: u(layout.size),
+                        height: u(height),
+                        zIndex: isWinner && step.prize !== 'tray' ? 9 : 4 - slot.row,
+                        transition: isWinner ? transition(step, ['left', 'top']) : undefined,
+                      };
+                      return (
+                        <Character key={`${drawCount}-${user.username}`} title={user.nickname} style={style} data-held={isWinner && step.prize === 'claw'}>
+                          <div style={{ animationDelay: `${i * 35}ms` }}><Mochi user={user} /></div>
+                          <NameTag>{user.nickname}</NameTag>
+                        </Character>
+                      );
+                    })}
 
-                <ChuteFront />
+                    <ChuteFront />
 
-                <ClawHost
-                  style={{
-                    left: u(step.x - cw / 2),
-                    width: u(cw),
-                    height: u(step.y - RAIL_Y + cw * (1 - CLAW_GRIP)),
-                    transition: transition(step, ['left', 'height']),
-                  }}
-                >
-                  <i style={{ bottom: u(cw * 0.85) }} />
-                  <ClawArt open={step.open} />
-                </ClawHost>
+                    <ClawHost
+                      style={{
+                        left: u(step.x - cw / 2),
+                        width: u(cw),
+                        height: u(step.y - RAIL_Y + cw * (1 - CLAW_GRIP)),
+                        transition: transition(step, ['left', 'height']),
+                      }}
+                    >
+                      <i style={{ bottom: u(cw * 0.85) }} />
+                      <ClawArt open={step.open} />
+                    </ClawHost>
+                  </>
+                )}
 
                 {hidden > 0 && <MoreChip>+{hidden} more in the draw</MoreChip>}
                 {!shown.length && <EmptyMachine>Nobody is in the draw yet.</EmptyMachine>}

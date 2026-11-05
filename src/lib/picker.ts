@@ -57,6 +57,8 @@ export interface DrawStep {
   x: number;
   /** The claw's grip point, where a held character's middle is. */
   y: number;
+  /** The tray slot the claw is over, or null over the chute or an empty spot. The 3D view reaches into its row. */
+  slot: number | null;
   open: boolean;
   prize: PrizeAt;
   duration: number;
@@ -156,7 +158,7 @@ export function prizeFoot(step: Pick<DrawStep, 'prize' | 'x' | 'y'>, slot: Slot,
 
 /** The resting state before and after draws. */
 export function restingStep(size: number): DrawStep {
-  return { phase: 'idle', x: CHUTE.x, y: homeY(size), open: true, prize: 'tray', duration: 0, ease: 'move' };
+  return { phase: 'idle', x: CHUTE.x, y: homeY(size), slot: null, open: true, prize: 'tray', duration: 0, ease: 'move' };
 }
 
 export function totalDuration(steps: readonly DrawStep[]): number {
@@ -174,33 +176,38 @@ export function planSteps(layout: TrayLayout, winnerSlot: number, random: () => 
   const top = travelY(size);
   const grip = target.foot - (size * CHARACTER_ASPECT) / 2;
   const steps: DrawStep[] = [];
+  // Each step keeps the claw's grip and the winner's place from the step before, unless it says otherwise.
   const add = (phase: Phase, x: number, y: number, duration: number, extra: Partial<DrawStep> = {}) => {
     const last = steps[steps.length - 1];
-    steps.push({ phase, x, y, duration, open: true, prize: 'tray', ease: 'move', ...last && { open: last.open, prize: last.prize }, ...extra });
+    steps.push({ phase, x, y, duration, slot: null, open: last?.open ?? true, prize: last?.prize ?? 'tray', ease: 'move', ...extra });
   };
 
-  add('loading', CHUTE.x, homeY(size), 600, { open: true, prize: 'tray' });
+  add('loading', CHUTE.x, homeY(size), 600);
 
   // Hover over two or three other characters first; empty spots when there's nobody else.
   const stops = 2 + Math.floor(random() * 2);
-  const others = shuffled(slots.filter((_, i) => i !== winnerSlot), random).map((slot) => slot.x);
-  while (others.length < stops) others.push(TRAY.left + 4 + random() * (TRAY.right - TRAY.left - 8));
+  const others: { x: number; slot: number | null }[] = shuffled(
+    slots.flatMap((s, i) => (i === winnerSlot ? [] : [{ x: s.x, slot: i }])),
+    random,
+  );
+  while (others.length < stops) others.push({ x: TRAY.left + 4 + random() * (TRAY.right - TRAY.left - 8), slot: null });
   const fakeAt = stops === 2 ? Math.floor(random() * stops) : -1;
-  for (const [i, x] of others.slice(0, stops).entries()) {
-    add('searching', x, top, 450);
+  for (const [i, { x, slot }] of others.slice(0, stops).entries()) {
+    add('searching', x, top, 450, { slot });
     if (i === fakeAt) {
-      add('searching', x, top + 7, 250);
-      add('searching', x, top, 250);
+      add('searching', x, top + 7, 250, { slot });
+      add('searching', x, top, 250, { slot });
     } else {
-      add('searching', x, top, 200);
+      add('searching', x, top, 200, { slot });
     }
   }
 
-  add('searching', target.x, top, 500);
-  add('searching', target.x, top, 250);
-  add('grabbing', target.x, grip, 600);
-  add('grabbing', target.x, grip, 250, { open: false });
-  add('lifting', target.x, top, 600, { prize: 'claw' });
+  const over = { slot: winnerSlot };
+  add('searching', target.x, top, 500, over);
+  add('searching', target.x, top, 250, over);
+  add('grabbing', target.x, grip, 600, over);
+  add('grabbing', target.x, grip, 250, { ...over, open: false });
+  add('lifting', target.x, top, 600, { ...over, prize: 'claw' });
   add('delivering', CHUTE.x, top, 800);
   add('delivering', CHUTE.x, top, 400, { open: true, prize: 'chute', ease: 'drop' });
   add('revealing', CHUTE.x, homeY(size), 600);

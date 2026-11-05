@@ -1,0 +1,9 @@
+/** Whether this browser can draw 3D graphics. */
+export function supportsWebGL(): boolean {
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
