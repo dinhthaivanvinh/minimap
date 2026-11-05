@@ -221,7 +221,8 @@ function portraitZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'>
   return { zones, width: 100, height: y, park: null };
 }
 
-function seatArea(z: Zone) {
+/** Where people stand in a room: clear of its name, with a little margin from its edges. */
+export function standingArea(z: Zone): Rect {
   // A short street has no room below its name, so people stand beside it instead.
   if (z.kind === 'street' && z.h < SHORT_STREET) return { x: z.x + 15, y: z.y + 1, w: z.w - 19, h: z.h - 2 };
   // These rooms are kept small, so people stand closer to the room's name.
@@ -233,7 +234,7 @@ function seatArea(z: Zone) {
 
 // Picks the grid that gives each person the most room, then centers it.
 function seatsIn(z: Zone, count: number): Omit<Seat, 'zone'>[] {
-  const area = seatArea(z);
+  const area = standingArea(z);
   let best = { cols: 1, rows: 1, score: -1, cw: MAX_CELL, ch: MAX_CELL };
   for (let cols = 1; cols <= Math.max(count, 1); cols++) {
     const rows = Math.ceil(count / cols) || 1;
