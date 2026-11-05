@@ -100,6 +100,7 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect }: Ma
   const [zoneLabels, setZoneLabels] = useState<ZoneLabelSlot[]>([]);
   const [camera, setCamera] = useState<CameraState>({ presets: [], active: 'overview' });
   const [namesOn, setNamesOn] = useState(true);
+  const [wanderOn, setWanderOn] = useState(true);
 
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
@@ -133,6 +134,10 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect }: Ma
     if (focus) sceneRef.current?.focus(focus.username);
   }, [focus]);
 
+  useEffect(() => {
+    sceneRef.current?.setWandering(wanderOn);
+  }, [wanderOn]);
+
   return (
     <View data-map-root $namesOff={!namesOn}>
       <SceneStage ref={stageRef} />
@@ -151,6 +156,9 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect }: Ma
         ))}
         <Button $small type="button" aria-pressed={namesOn} onClick={() => setNamesOn(!namesOn)}>
           Names
+        </Button>
+        <Button $small type="button" aria-pressed={wanderOn} onClick={() => setWanderOn(!wanderOn)}>
+          Wander
         </Button>
       </CameraBar>
 

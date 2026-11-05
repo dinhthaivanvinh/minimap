@@ -16,8 +16,9 @@ import {
   pointPairs,
   surfacePoint,
 } from '../lib/drawing.ts';
-import { computeLayout, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
+import { computeLayout, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { lookFor } from '../lib/look.ts';
+import { box, clampTo, contains, grow, pickSpot, steer, type Box } from '../lib/wander.ts';
 import { MUSTACHE_SMILE_DROP, wornStrokes } from '../lib/wornItems.ts';
 
 export interface CameraPreset {
@@ -47,6 +48,8 @@ export interface Scene3D {
   update(state: TeamState, isDimmed: (user: TeamUser) => boolean): SceneLabels;
   applyPreset(id: string): void;
   focus(username: string): void;
+  /** Lets people wander around their room, or sends everyone back to their spot. */
+  setWandering(on: boolean): void;
   destroy(): void;
 }
 
@@ -74,14 +77,27 @@ interface Character {
   label: CSS2DObject;
   labelElement: HTMLElement;
   phase: number;
-  target: THREE.Vector3;
+  /** Their own spot in the room, where they go back to. */
+  seat: THREE.Vector3;
+  /** Where they're walking to now. */
+  goal: THREE.Vector3;
+  zoneId: string;
+  zoneKind: ZoneKind;
+  /** Where they may wander, or null when the room is too crowded to. */
+  area: Box | null;
+  /** travel: hurrying to a new room. walk: wandering. idle: standing still. */
+  mode: 'travel' | 'walk' | 'idle';
+  goingHome: boolean;
+  stopsLeft: number;
+  waitUntil: number;
+  closest: number;
+  closerAt: number;
   placed: boolean;
   opacity: number;
   targetOpacity: number;
   scale: number;
   cell: number;
   labelScale: number;
-  strolling: boolean;
 }
 
 interface Tween {
@@ -106,7 +122,9 @@ interface Point {
 
 const FRAME_MS = 1000 / 30; // 30 fps is plenty, and kinder to an always-on TV.
 const WALK_SPEED = 16;
-const STROLL_SPEED = 0.45;
+const WANDER_SPEED = 4.2;
+const CROWDED_CELL = 6; // Below this, people stay put: there's no room to wander.
+const STUCK_SECONDS = 3;
 const WALL_H = 5;
 const INK = 0x2a2657;
 
@@ -203,12 +221,20 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   let deskKey = '';
   let presets: PresetView[] = [];
   let activePreset: string | null = 'overview';
+  let wandering = true;
+  // Things on the floor that wandering people walk around.
+  let scenery: Box[] = [];
+  let deskBoxes = new Map<string, Box>();
+
+  // Marks an area around a point, in world units, as something to walk around.
+  const block = (x: number, z: number, halfW: number, halfD: number) => scenery.push(box(x - halfW, z - halfD, halfW * 2, halfD * 2));
 
   const toWorld = (x: number, y: number): Point => ({ x: x - center.x, z: y - center.z });
 
   // ---- Building the rooms -----------------------------------------------
 
   function addPlant(parent: THREE.Group, x: number, z: number) {
+    block(x, z, 0.9, 0.9);
     parent.add(mesh(new THREE.CylinderGeometry(0.9, 0.65, 1.3, 10), 0xff9c7a, { x, y: 1.65, z }));
     const leaf = new THREE.ConeGeometry(1.2, 2.9, 7);
     parent.add(mesh(leaf, 0x63c96c, { x, y: 3.7, z }));
@@ -216,6 +242,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   }
 
   function addTree(parent: THREE.Group, x: number, z: number) {
+    block(x, z, 1.2, 1.2);
     parent.add(mesh(new THREE.CylinderGeometry(0.55, 0.75, 3, 8), 0xc99467, { x, y: 2.5, z }));
     parent.add(mesh(new THREE.IcosahedronGeometry(2.5, 1), 0x63c96c, { x, y: 5.6, z }));
     parent.add(mesh(new THREE.IcosahedronGeometry(1.7, 1), 0x7ad67f, { x: x + 1, y: 7, z: z + 0.4 }));
@@ -247,6 +274,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     const hx = c.x + z.w / 2 - 7;
     const hz = c.z - z.h / 2 + 6;
     group.add(mesh(new THREE.BoxGeometry(8, 4.6, 7), 0xfff4d6, { x: hx, y: 3.3, z: hz }));
+    block(hx, hz, 4.4, 3.9);
     const roof = mesh(new THREE.ConeGeometry(6.8, 3.8, 4), 0xff8fb3, { x: hx, y: 7.5, z: hz });
     roof.rotation.y = Math.PI / 4;
     group.add(roof);
@@ -263,6 +291,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     const px = c.x - z.w / 2 + sandW * 0.94;
     const pz = c.z - z.h / 2 + 3;
     group.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 3.4, 6), 0xffffff, { x: px, y: 2.7, z: pz }));
+    block(px, pz, 0.6, 0.6);
     group.add(mesh(new THREE.ConeGeometry(3, 1.3, 10), 0xff8fb3, { x: px, y: 4.8, z: pz }));
   }
 
@@ -272,11 +301,13 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   }
 
   function addLampPost(group: THREE.Group, x: number, z: number) {
+    block(x, z, 0.5, 0.5);
     group.add(mesh(new THREE.CylinderGeometry(0.16, 0.2, 6, 8), INK, { x, y: 4, z }));
     group.add(mesh(new THREE.SphereGeometry(0.6, 12, 8), 0xffe27a, { x, y: 7.2, z }));
   }
 
   function addCar(group: THREE.Group, x: number, z: number) {
+    block(x, z, 3.9, 1.8);
     group.add(mesh(new THREE.BoxGeometry(7.5, 1.5, 3.2), 0xff8fb3, { x, y: 2, z }));
     group.add(mesh(new THREE.BoxGeometry(4, 1.3, 2.8), 0xdfe3ff, { x: x - 0.3, y: 3.3, z }));
     for (const wheelX of [x - 2.4, x + 2.4]) {
@@ -322,6 +353,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   function buildWorld() {
     disposeGroup(world);
     zoneLabels.clear();
+    scenery = [];
     center = { x: layout.width / 2, z: layout.height / 2 };
 
     // A rounded grass island under everything.
@@ -367,10 +399,12 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
 
   function buildDesks() {
     disposeGroup(desks);
-    for (const seat of layout.seats.values()) {
+    deskBoxes = new Map();
+    for (const [username, seat] of layout.seats) {
       if (seat.zone.kind !== 'office') continue;
       const { x, z } = toWorld(seat.x, seat.y);
       const size = deskSize(seat.cell);
+      deskBoxes.set(username, box(x - 1.7 * size, z + 1.65 * size, 3.4 * size, 1.4 * size));
       // Low and in front of the body, with the laptop to one side, so the face stays visible.
       desks.add(mesh(new THREE.BoxGeometry(3.4 * size, 0.25 * size, 1.4 * size), 0xffd9a0, { x, y: 1 + 0.65 * size, z: z + 2.35 * size }));
       desks.add(mesh(new THREE.BoxGeometry(3.1 * size, 0.55 * size, 0.2 * size), 0xf0b878, { x, y: 1 + 0.3 * size, z: z + 2.85 * size }));
@@ -525,7 +559,33 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     group.add(label);
     scene.add(group);
 
-    return { username: user.username, designKey: JSON.stringify(user.look), bodyMaterial, group, inner, label, labelElement, phase, target: new THREE.Vector3(), placed: false, opacity: 1, targetOpacity: 1, scale: 1, cell: 10, labelScale: 0, strolling: false };
+    return {
+      username: user.username,
+      designKey: JSON.stringify(user.look),
+      bodyMaterial,
+      group,
+      inner,
+      label,
+      labelElement,
+      phase,
+      seat: new THREE.Vector3(),
+      goal: new THREE.Vector3(),
+      zoneId: '',
+      zoneKind: 'lobby',
+      area: null,
+      mode: 'idle',
+      goingHome: true,
+      stopsLeft: 0,
+      waitUntil: 0,
+      closest: Infinity,
+      closerAt: 0,
+      placed: false,
+      opacity: 1,
+      targetOpacity: 1,
+      scale: 1,
+      cell: 10,
+      labelScale: 0,
+    };
   }
 
   function clearBody(character: Character) {
@@ -679,6 +739,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
       buildDesks();
     }
 
+    const now = performance.now() / 1000;
     const seen = new Set<string>();
     let changed = false;
     state.users.forEach((user, i) => {
@@ -694,14 +755,28 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
       const designKey = JSON.stringify(user.look);
       if (designKey !== character.designKey) redecorate(character, user, designKey);
       const { x, z } = toWorld(seat.x, seat.y);
-      character.target = new THREE.Vector3(x, 1, z);
+      const seatMoved = character.seat.distanceTo(new THREE.Vector3(x, 1, z)) > 0.05;
+      const changedRoom = character.zoneId !== seat.zone.id;
+      character.seat.set(x, 1, z);
+      character.zoneId = seat.zone.id;
+      character.zoneKind = seat.zone.kind;
       character.scale = deskSize(seat.cell);
       character.cell = seat.cell;
-      character.strolling = seat.zone.kind === 'street';
+      character.area = seat.cell >= CROWDED_CELL ? wanderArea(seat.zone, character.scale) : null;
       character.targetOpacity = isDimmed(user) ? 0.22 : 1;
       if (!character.placed || reducedMotion) {
-        character.group.position.copy(character.target);
+        character.group.position.copy(character.seat);
+        character.goal.copy(character.seat);
+        character.mode = 'idle';
+        character.goingHome = true;
+        // Spread out when people first set off, so they don't all move at once.
+        character.waitUntil = now + Math.random() * restAtSeat(character);
         character.placed = true;
+      } else if (changedRoom || (character.goingHome && seatMoved) || !character.area || !contains(character.area, character.goal)) {
+        // Moved room, or the room changed shape: hurry to the new spot, as before.
+        character.goal.copy(character.seat);
+        character.goingHome = true;
+        if (character.group.position.distanceTo(character.seat) > 0.05) character.mode = 'travel';
       }
     });
 
@@ -737,7 +812,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
     controls.update();
 
     for (const c of characters.values()) {
-      const { group, inner, target } = c;
+      const { group, inner } = c;
       const size = c.scale;
       group.scale.setScalar(size);
 
@@ -749,33 +824,142 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
         c.labelElement.style.transform = `scale(${labelScale})`;
       }
 
-      const toTarget = target.clone().sub(group.position);
-      toTarget.y = 0;
-      const distance = toTarget.length();
-      if (distance > 0.05) {
-        const step = Math.min(distance, WALK_SPEED * dt);
-        group.position.addScaledVector(toTarget.normalize(), step);
-        const facing = Math.atan2(toTarget.x, toTarget.z);
-        inner.rotation.y += shortestAngle(facing - inner.rotation.y) * Math.min(1, dt * 12);
-        inner.position.y = Math.abs(Math.sin(time * 11 + c.phase)) * 0.75;
-      } else {
-        // On the street people amble to and fro, half turned so their faces still show.
-        const ambling = c.strolling && !reducedMotion;
-        const heading = ambling ? Math.sign(Math.cos(time * STROLL_SPEED + c.phase)) * 0.8 : 0;
-        inner.position.y = ambling ? Math.abs(Math.sin(time * 3.2 + c.phase)) * 0.14 : 0;
-        inner.rotation.y += shortestAngle(heading - inner.rotation.y) * Math.min(1, dt * 4);
+      if (c.mode === 'idle' && time >= c.waitUntil && wandering && c.area && !reducedMotion) setOff(c, time);
+
+      if (c.mode === 'idle') {
+        // Standing still: turn to face the camera and breathe.
+        inner.position.y = 0;
+        inner.rotation.y += shortestAngle(-inner.rotation.y) * Math.min(1, dt * 4);
         if (!reducedMotion) {
           const breathe = Math.sin(time * 2.2 + c.phase) * 0.025;
           inner.scale.set(1 + breathe, 1 - breathe, 1 + breathe);
         }
+      } else {
+        walk(c, dt, time);
       }
-
-      const strollX = c.strolling && !reducedMotion ? Math.sin(time * STROLL_SPEED + c.phase) * Math.min(c.cell * 0.18, 1.4) : 0;
-      inner.position.x += (strollX - inner.position.x) * Math.min(1, dt * 4);
-      c.label.position.x = inner.position.x;
 
       if (Math.abs(c.opacity - c.targetOpacity) > 0.005) {
         setOpacity(c, c.opacity + (c.targetOpacity - c.opacity) * Math.min(1, dt * 8));
+      }
+    }
+  }
+
+  // ---- Wandering ----------------------------------------------------------
+
+  // A room's floor, kept far enough in from its edges that bodies stay inside.
+  function wanderArea(z: Zone, scale: number): Box {
+    const area = standingArea(z);
+    const { x, z: top } = toWorld(area.x, area.y);
+    return grow(box(x, top, area.w, area.h), -Math.min(BODY_RADIUS * scale * 0.5, area.w / 4, area.h / 4));
+  }
+
+  // People at a desk mostly work, and only now and then get up for a stroll.
+  function restAtSeat(c: Character): number {
+    return c.zoneKind === 'office' ? 12 + Math.random() * 25 : 3 + Math.random() * 5;
+  }
+
+  function bodyRadius(c: Character): number {
+    return BODY_RADIUS * c.scale;
+  }
+
+  function obstaclesFor(c: Character): Box[] {
+    const own = deskBoxes.get(c.username);
+    return [...scenery, ...[...deskBoxes.values()].filter((d) => d !== own)];
+  }
+
+  function walkTo(c: Character, x: number, z: number, home: boolean, time: number) {
+    c.goal.set(x, 1, z);
+    c.goingHome = home;
+    c.mode = 'walk';
+    c.closest = Infinity;
+    c.closerAt = time;
+  }
+
+  function goHome(c: Character, time: number) {
+    walkTo(c, c.seat.x, c.seat.z, true, time);
+  }
+
+  // Done standing around: pick the next place to wander to, or head back.
+  function setOff(c: Character, time: number) {
+    if (!c.area) return;
+    if (c.goingHome) c.stopsLeft = c.zoneKind === 'office' ? 1 + Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 4);
+    if (c.stopsLeft <= 0) {
+      goHome(c, time);
+      return;
+    }
+    const others = [...characters.values()].filter((o) => o !== c && o.zoneId === c.zoneId).flatMap((o) => [o.group.position, o.goal]);
+    const blocked = obstaclesFor(c).map((b) => grow(b, bodyRadius(c)));
+    const spot = pickSpot(c.area, c.group.position, others, blocked);
+    if (!spot) {
+      c.waitUntil = time + 2;
+      return;
+    }
+    c.stopsLeft -= 1;
+    walkTo(c, spot.x, spot.z, false, time);
+  }
+
+  function arrive(c: Character, time: number) {
+    c.mode = 'idle';
+    c.waitUntil = time + (c.goingHome ? restAtSeat(c) : 1.5 + Math.random() * 3);
+  }
+
+  function walk(c: Character, dt: number, time: number) {
+    const { group, inner, goal } = c;
+    const position = group.position;
+    const distance = Math.hypot(goal.x - position.x, goal.z - position.z);
+    const travelling = c.mode === 'travel';
+    if (distance <= (travelling ? 0.05 : 0.3)) {
+      position.x = goal.x;
+      position.z = goal.z;
+      arrive(c, time);
+      return;
+    }
+
+    let direction = { x: (goal.x - position.x) / distance, z: (goal.z - position.z) / distance };
+    if (!travelling) {
+      const radius = bodyRadius(c);
+      direction = steer(position, goal, obstaclesFor(c), radius * 0.9 + 0.3);
+      // Step around other people in the same room.
+      for (const o of characters.values()) {
+        if (o === c || o.zoneId !== c.zoneId) continue;
+        const dx = position.x - o.group.position.x;
+        const dz = position.z - o.group.position.z;
+        const apart = Math.hypot(dx, dz);
+        const room = (radius + bodyRadius(o)) * 0.95;
+        if (apart > 1e-6 && apart < room) {
+          const push = ((room - apart) / room) * 1.5;
+          direction = { x: direction.x + (dx / apart) * push, z: direction.z + (dz / apart) * push };
+        }
+      }
+      const length = Math.hypot(direction.x, direction.z) || 1;
+      direction = { x: direction.x / length, z: direction.z / length };
+    }
+
+    const step = Math.min(distance, (travelling ? WALK_SPEED : WANDER_SPEED) * dt);
+    position.x += direction.x * step;
+    position.z += direction.z * step;
+    if (!travelling && c.area) {
+      const inside = clampTo(c.area, position);
+      // The seat itself can sit right at the edge of where people wander.
+      if (!c.goingHome || distance > 2) {
+        position.x = inside.x;
+        position.z = inside.z;
+      }
+    }
+
+    const facing = Math.atan2(direction.x, direction.z);
+    inner.rotation.y += shortestAngle(facing - inner.rotation.y) * Math.min(1, dt * (travelling ? 12 : 7));
+    inner.position.y = travelling ? Math.abs(Math.sin(time * 11 + c.phase)) * 0.75 : Math.abs(Math.sin(time * 9 + c.phase)) * 0.3;
+    inner.scale.set(1, 1, 1);
+
+    // Boxed in by furniture or people: give up on this spot.
+    if (!travelling) {
+      if (distance < c.closest - 0.5) {
+        c.closest = distance;
+        c.closerAt = time;
+      } else if (time - c.closerAt > STUCK_SECONDS) {
+        if (c.goingHome) c.mode = 'travel';
+        else goHome(c, time);
       }
     }
   }
@@ -818,11 +1002,20 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   return {
     update: apply,
     applyPreset: (id) => applyPreset(id),
+    setWandering(on) {
+      wandering = on;
+      const time = performance.now() / 1000;
+      for (const c of characters.values()) {
+        // Turned back on: set off at different times, not all at once.
+        if (on) c.waitUntil = time + Math.random() * restAtSeat(c);
+        else if (!c.goingHome) goHome(c, time);
+      }
+    },
     focus(username) {
       const c = characters.get(username);
       if (!c) return;
       activePreset = null;
-      const target = c.target.clone();
+      const target = c.group.position.clone();
       target.y = 0;
       const position = target.clone().addScaledVector(new THREE.Vector3(0, 0.6, 0.8), fitDistance(34, 26, 0.85));
       flyTo(target, position);
