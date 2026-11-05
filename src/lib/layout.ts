@@ -147,7 +147,8 @@ function landscapeZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'
   });
 
   const streetY = GAP + topHeight + GAP;
-  zones.push(zone('out', FIXED_ZONES.out, 0, streetY, MAP_WIDTH, streetHeight));
+  // The street lines up with the rooms above and below it.
+  zones.push(zone('out', FIXED_ZONES.out, GAP, streetY, MAP_WIDTH - GAP * 2, streetHeight));
 
   const bottomY = streetY + streetHeight + GAP;
   const available = MAP_WIDTH - GAP * 3;
@@ -207,7 +208,7 @@ function portraitZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'>
     y += 40 + gap;
   }
 
-  zones.push(zone('out', FIXED_ZONES.out, 0, y, 100, 28));
+  zones.push(zone('out', FIXED_ZONES.out, 2, y, 96, 28));
   y += 28 + gap;
 
   const [lobbyWidth = 0, offWidth = 0] = shareLength(94, [

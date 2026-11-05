@@ -8,7 +8,7 @@ import { useElementSize } from '../lib/hooks.ts';
 import { computeLayout, type MapLayout, type Seat, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { lookFor } from '../lib/look.ts';
 import { media, theme } from '../styles/theme.ts';
-import { DECOR, PARK_TREES } from './decor.tsx';
+import { DECOR, PARK_TREES, STREET_ART } from './decor.tsx';
 import type { MapProps } from './types.ts';
 
 const HOP_MS = 900;
@@ -25,6 +25,10 @@ const Plan = styled.div`
   transform: translate(-50%, -50%);
 `;
 
+// The street's pavement runs along its top, then a curb line, then the road. Shares of its height, in %.
+const PAVEMENT = 28;
+const CURB = 1.5;
+
 const ZONE_LOOKS: Record<ZoneKind, RuleSet> = {
   office: css`
     background: repeating-conic-gradient(#e6deff 0 25%, #f1ecff 0 50%) 0 0 / 40px 40px;
@@ -40,14 +44,11 @@ const ZONE_LOOKS: Record<ZoneKind, RuleSet> = {
   lobby: css`
     background: repeating-linear-gradient(90deg, #ffe0ec 0 26px, #ffebf2 26px 52px);
   `,
-  // Runs off both sides of the map: a pavement, a curb, then the road and its lane markings.
+  // A pavement, a curb, then the road and its lane markings.
   street: css`
-    border-right: 0;
-    border-left: 0;
-    border-radius: 0;
     background:
       repeating-linear-gradient(90deg, #fff 0 24px, transparent 24px 52px) 0 66% / 100% 3px no-repeat,
-      linear-gradient(#efe9f7 0 28%, ${theme.ink} 28% 29.5%, #8d8ba5 29.5%);
+      linear-gradient(#efe9f7 0 ${PAVEMENT}%, ${theme.ink} ${PAVEMENT}% ${PAVEMENT + CURB}%, #8d8ba5 ${PAVEMENT + CURB}%);
   `,
 };
 
@@ -121,6 +122,40 @@ const DecorBox = styled.div<{ $hidden: boolean }>`
 
   ${({ $hidden }) => $hidden && 'display: none;'}
 `;
+
+const StreetPiece = styled.div`
+  position: absolute;
+  pointer-events: none;
+
+  svg { display: block; }
+`;
+
+// Painted across the whole road, from the curb to the bottom edge.
+const Crosswalk = styled(StreetPiece)`
+  top: calc(${PAVEMENT + CURB}% + 4px);
+  bottom: 4px;
+  left: 44%;
+  width: clamp(30px, 7%, 64px);
+  background: repeating-linear-gradient(#fff 0 6px, transparent 6px 12px);
+`;
+
+/**
+ * Lamps stand on the curb and reach a little above the pavement, clear of the rooms
+ * above at any street height. The left one keeps clear of the street's name.
+ */
+function StreetDecor() {
+  const lamp = { bottom: `${100 - PAVEMENT}%`, height: `calc(${PAVEMENT}% + 8px)`, aspectRatio: '36 / 52' };
+  return (
+    <>
+      <StreetPiece style={{ ...lamp, left: 'max(16%, 150px)' }}>{STREET_ART.lamp}</StreetPiece>
+      <StreetPiece style={{ ...lamp, right: '24%' }}>{STREET_ART.lamp}</StreetPiece>
+      <Crosswalk />
+      <StreetPiece style={{ right: '2%', bottom: '8%', height: `min(${(100 - PAVEMENT) * 0.5}%, 42px)`, aspectRatio: '90 / 50' }}>
+        {STREET_ART.car}
+      </StreetPiece>
+    </>
+  );
+}
 
 const bob = keyframes`
   0%, 100% { transform: scale(1, 1); }
@@ -215,6 +250,7 @@ function ZoneRoom({ zone, layout, busy }: { zone: Zone; layout: MapLayout; busy:
           {art}
         </DecorBox>
       ))}
+      {zone.kind === 'street' && <StreetDecor />}
     </Room>
   );
 }
