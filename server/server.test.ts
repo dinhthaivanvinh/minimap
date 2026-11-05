@@ -122,6 +122,27 @@ test('releasing invalidates the old token and allows a new claim', async (t) => 
   assert.equal((await me(newToken, { status: 'x' })).status, 200);
 });
 
+test('a username with dots can save, and its token only works for that user', async (t) => {
+  const { api, addUser, claim, me } = await setup(t);
+  await addUser('first');
+  await addUser('first.last');
+  await addUser('a.b.c');
+  const firstToken = await claim('first');
+  const token = await claim('first.last');
+  assert.equal((await me(await claim('a.b.c'), { status: 'three parts' })).status, 200);
+  assert.equal((await me(token, { status: 'x' })).status, 200);
+  const users: TeamUser[] = (await api('GET', '/api/state')).json.users;
+  assert.equal(users.find((u) => u.username === 'first.last')?.status, 'x');
+  assert.equal(users.find((u) => u.username === 'first')?.status, '');
+
+  const sig = (value: string) => value.slice(value.lastIndexOf('.') + 1);
+  assert.equal((await me(`first.last.1.${sig(firstToken)}`, { status: 'y' })).status, 401);
+  assert.equal((await me(`first.1.${sig(token)}`, { status: 'y' })).status, 401);
+
+  assert.equal((await api('POST', '/api/admin/users/first.last/release', undefined, ADMIN)).status, 200);
+  assert.equal((await me(token, { status: 'y' })).status, 401);
+});
+
 test('deleting removes the user', async (t) => {
   const { api, addUser } = await setup(t);
   await addUser('a');
