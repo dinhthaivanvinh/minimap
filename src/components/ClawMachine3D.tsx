@@ -341,6 +341,7 @@ export default function ClawMachine3D(props: ClawMachine3DProps) {
       ramp.dispose();
       renderer.domElement.removeEventListener('webglcontextlost', onLost);
       renderer.dispose();
+      renderer.forceContextLoss(); // Browsers allow only a few live 3D contexts.
       renderer.domElement.remove();
       labels.domElement.remove();
     };

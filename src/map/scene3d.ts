@@ -6,6 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
 import { CLEAR, mixColor, type Ambience, type Conditions } from '../lib/ambience.ts';
+import { watchContextLoss } from '../lib/contextLoss.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
 import { computeLayout, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { box, clampTo, contains, grow, pickSpot, steer, type Box } from '../lib/wander.ts';
@@ -48,6 +49,8 @@ export interface Scene3D {
 interface SceneOptions {
   onPick: (username: string, label: HTMLElement) => void;
   onCamera: (camera: CameraState) => void;
+  /** The browser took away the 3D context and didn't give it back. */
+  onContextGone: () => void;
 }
 
 type Vec3 = [number, number, number];
@@ -200,7 +203,7 @@ function checkerTexture(a: string, b: string) {
   return texture;
 }
 
-export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOptions): Scene3D {
+export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone }: SceneOptions): Scene3D {
   const ramp = toonRamp();
   const materials = new Map<number, THREE.MeshToonMaterial>();
   const mat = (color: number): THREE.MeshToonMaterial => {
@@ -235,6 +238,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   root.append(renderer.domElement);
+  const stopWatchingContext = watchContextLoss(renderer.domElement, onContextGone);
 
   const labels = new CSS2DRenderer();
   Object.assign(labels.domElement.style, { position: 'absolute', inset: '0', pointerEvents: 'none' });
@@ -1250,6 +1254,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera }: SceneOpti
       snowMaterial.dispose();
       puddleMaterial.dispose();
       ramp.dispose();
+      stopWatchingContext();
       renderer.dispose();
       renderer.forceContextLoss(); // Browsers allow only a few live 3D contexts.
       renderer.domElement.remove();

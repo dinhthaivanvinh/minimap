@@ -31,16 +31,40 @@ export async function api<T = unknown>(
   return json as T;
 }
 
-// Calls onState with each new state. EventSource reconnects by itself.
+const RETRY_MIN_MS = 1000;
+const RETRY_MAX_MS = 30_000;
+
+// Calls onState with each new state. EventSource retries a dropped connection by
+// itself, but gives up for good on an HTTP error, such as a proxy's 502 during a
+// restart. Only then do we open a new one.
 export function subscribe(onState: (state: TeamState) => void, onConnection: (online: boolean) => void): () => void {
-  const source = new EventSource('/api/events');
-  source.onopen = () => onConnection(true);
-  source.onerror = () => onConnection(false);
-  source.onmessage = (event: MessageEvent<string>) => {
-    onConnection(true);
-    onState(JSON.parse(event.data) as TeamState);
+  let source: EventSource;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryMs = RETRY_MIN_MS;
+
+  function connect() {
+    source = new EventSource('/api/events');
+    source.onopen = () => {
+      retryMs = RETRY_MIN_MS;
+      onConnection(true);
+    };
+    source.onerror = () => {
+      onConnection(false);
+      if (source.readyState !== EventSource.CLOSED) return;
+      retryTimer = setTimeout(connect, retryMs);
+      retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
+    };
+    source.onmessage = (event) => {
+      onConnection(true);
+      onState(JSON.parse(event.data) as TeamState);
+    };
+  }
+
+  connect();
+  return () => {
+    clearTimeout(retryTimer);
+    source.close();
   };
-  return () => source.close();
 }
 
 export function errorText(err: unknown): string {

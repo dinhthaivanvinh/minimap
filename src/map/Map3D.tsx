@@ -109,7 +109,12 @@ const CameraHint = styled.p`
   ${media.phone} { display: none; }
 `;
 
-export default function Map3D({ state, isDimmed, selected, focus, onSelect, look }: MapProps) {
+interface Map3DProps extends MapProps {
+  /** The 3D map can't keep drawing, so show something else. */
+  onFail: () => void;
+}
+
+export default function Map3D({ state, isDimmed, selected, focus, onSelect, look, onFail }: Map3DProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene3D | null>(null);
   const [personLabels, setPersonLabels] = useState<ReadonlyMap<string, HTMLElement>>(new Map());
@@ -121,12 +126,15 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect, look
 
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const onFailRef = useRef(onFail);
+  onFailRef.current = onFail;
 
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
     const scene = createScene3D(stage, {
       onCamera: setCamera,
+      onContextGone: () => onFailRef.current(),
       // Clicking a character opens the same card as clicking its badge.
       onPick: (username, label) => onSelectRef.current(username, label.querySelector<HTMLElement>('[data-badge]') ?? label),
     });
