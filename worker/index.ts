@@ -67,19 +67,40 @@ export class Minimap extends DurableObject<Env> {
         saved: saved ? JSON.parse(saved) : null,
         // Not awaited: Cloudflare holds back the reply until the write is safely stored.
         save: (data) => void ctx.storage.put('data', JSON.stringify(data)),
-        onChange: (state) => this.sendAll(`data: ${JSON.stringify(state)}\n\n`),
+        onChange: (state) => {
+          this.sendAll(`data: ${JSON.stringify(state)}\n\n`);
+          this.syncAlarm();
+        },
         adminPassword: env.ADMIN_PASSWORD ?? '',
         resetAt: env.RESET_AT || '05:00',
         timeZone: env.TZ || 'UTC',
       });
-      this.core.runResetIfDue();
+      this.runTimedChanges();
       this.core.save();
+      this.syncAlarm();
     });
   }
 
-  override async fetch(request: Request): Promise<Response> {
-    // Nothing runs while nobody is looking, so catch up on the reset and weather first.
+  // Wakes the object for the next scheduled change, even with no map open.
+  override async alarm(): Promise<void> {
+    this.runTimedChanges();
+    this.syncAlarm();
+  }
+
+  // The reset goes first, so it wins over schedules that are overdue.
+  private runTimedChanges(): void {
     this.core.runResetIfDue();
+    this.core.runScheduledIfDue();
+  }
+
+  private syncAlarm(): void {
+    const next = this.core.nextScheduledAt();
+    void (next ? this.ctx.storage.setAlarm(new Date(next)) : this.ctx.storage.deleteAlarm());
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    // Only alarms run while nobody is looking, so catch up on the reset and weather first.
+    this.runTimedChanges();
     this.refreshWeatherIfDue();
 
     const url = new URL(request.url);
@@ -108,7 +129,7 @@ export class Minimap extends DurableObject<Env> {
     // While a map is open, keep the connection alive and the reset and weather on time.
     this.ticker ??= setInterval(() => {
       this.sendAll(': ping\n\n');
-      this.core.runResetIfDue();
+      this.runTimedChanges();
       this.refreshWeatherIfDue();
     }, PING_MS);
     return new Response(readable, {

@@ -143,6 +143,7 @@ npm run dev:cf
 
 - **Data:** it lives in the Durable Object, not in `data.json`, and starts empty. To bring over an existing `data.json`, or to keep backups, see [Back up and move data](#back-up-and-move-data). Cloudflare can also [restore it to any point in the last 30 days](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api).
 - **Morning reset:** runs on time while a map is open, and otherwise when someone next opens the app, so nobody ever sees yesterday's places.
+- **Scheduled changes:** a Durable Object alarm applies them on time, even with no map open.
 - **Weather:** refreshed every 15 minutes while someone is looking.
 - **Logs:** run `npx wrangler tail`, or open the Worker's **Logs** in the Cloudflare dashboard.
 - **Custom domain:** add one under the Worker's **Settings → Domains & Routes**, then update **Team address**.
@@ -155,7 +156,7 @@ On the Admin page, under **Backup**:
 - **Download backup** saves everything, PINs included, to a file. Keep backups private: with one, anyone could work out every PIN.
 - **Restore from a file** replaces all usernames, PINs and settings with a backup's. It also accepts the `data.json` from the office server, which is how you move to Cloudflare.
 
-A restore brings over usernames, nicknames, PINs, characters, offices, clocks and the weather location, and people stay logged in. If the backup is from before the last morning reset, places and statuses are cleared, as on any morning. Backups can be up to 2 MB.
+A restore brings over usernames, nicknames, PINs, characters, scheduled changes, offices, clocks and the weather location, and people stay logged in. If the backup is from before the last morning reset, places, statuses and scheduled changes are cleared, as on any morning. Otherwise, scheduled changes that are overdue apply straight away. Backups can be up to 2 MB.
 
 ## Random member picker
 
@@ -190,7 +191,7 @@ Set these in `.env`, then restart.
 |---|---|---|
 | `ADMIN_PASSWORD` | none, required | Password for the Admin page |
 | `PORT` | `8080` | Port to open |
-| `RESET_AT` | `05:00` | Time each day when everyone's place and status clear |
+| `RESET_AT` | `05:00` | Time each day when everyone's place, status and scheduled changes clear |
 | `TZ` | `Asia/Ho_Chi_Minh` in Docker, the computer's own otherwise | Time zone for `RESET_AT` |
 
 Avoid `$` in `ADMIN_PASSWORD` when using Docker, because Docker Compose treats it as a variable.
@@ -200,10 +201,10 @@ Avoid `$` in `ADMIN_PASSWORD` when using Docker, because Docker Compose treats i
 - **Room sizes:** rooms grow and shrink with how many people are in them, and each keeps a minimum size so its name still fits. Working rooms get most of the map; Not checked in and Off today stay small, with a park filling the space beside them. In 2D they glide to their new size; in 3D they change straight away.
 - **Working and not working:** Main Office, Other Office and Work from home count as working. Off today and Out of Office count as not working, with Out of Office people on the street through the middle of the map. The map's top buttons and the people list use the same groups.
 - **Wandering in 3D:** people walk around inside their own room and never leave it. Everyone in the lobby, at home, on the street or at the beach keeps strolling, stopping now and then to turn and face the camera. In an office, people stay at their desk most of the time and get up for a short walk every so often, going round the desks, plants and other people. A room too crowded to walk in keeps everyone still. The Wander button turns it off, which sends everyone back to their spot, and it's always off when the device asks for reduced motion.
-- **Stopping early:** on the User page, **Leaving early** moves someone to Off with that reason in one tap. Choosing any place again clears the reason.
+- **Leaving early:** on the User page, **Schedule a change** moves someone to Out of Office at a chosen time before the next morning reset, with an optional status message, even with their browser closed. Until then they stay where they are, and teammates see the time and message wherever a status appears. Each person can have one pending change, and can edit or cancel it at any time. When it fires, the message replaces the status, or the status is cleared if there's no message. Choosing Out of Office by hand cancels it; choosing any other place keeps it.
 - **Decorating characters:** on the User page, anyone can change their character's body color, add a hat, glasses or a mustache, and draw on its face with a pen. A hat replaces the character's automatic accessory. Drawings are saved as lines (up to 40 lines and 600 points each person), wrap around the face in 3D, and stay through the morning reset.
 - **Forgotten PIN:** the admin clicks Release on that username, and the person claims it again with a new PIN.
-- **Morning reset:** clears place and status for everyone. Nicknames and PINs stay. If the server was off at reset time, the reset runs when it next starts.
+- **Morning reset:** clears place, status and scheduled changes for everyone. Nicknames and PINs stay. If the server was off at reset time, the reset runs when it next starts, and it goes before any overdue scheduled changes, so nobody starts the day in Out of Office.
 - **More offices:** stop the server and add an entry to `places` in `data.json`. The first entry is the main office, and both maps make room for the rest. In Docker, copy the file out and back with `docker compose cp`.
 - **Weather:** the server gets it from [Open-Meteo](https://open-meteo.com) every 15 minutes, sending only the office coordinates. It also gets the sunrise and sunset times, cloud cover, rain amount and wind speed for the map's daylight and weather. Browsers never contact it. The server needs internet access for this, and everything else works without it. If updates fail, the last reading stays for up to 3 hours, then the map shows "Weather unavailable". Check [Open-Meteo's terms](https://open-meteo.com/en/terms) for your use, because its free service is for non-commercial use. Its data license requires the credit line shown under the weather, so keep that in place.
 - **Working from home:** teammates can only update their status if they can reach the server, for example over your VPN.

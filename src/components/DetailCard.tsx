@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import styled from 'styled-components';
 import type { Place, TeamUser } from '../../shared/types.ts';
 import { placeName } from '../lib/layout.ts';
+import { scheduledText } from '../lib/status.ts';
 import { theme } from '../styles/theme.ts';
 import { Mochi } from './Mochi.tsx';
 
@@ -132,6 +133,7 @@ export function DetailCard({ user, places, anchor, onClose }: DetailCardProps) {
       </CardHead>
       <CardRow>{placeName(places, user.place)}</CardRow>
       {user.status && <CardStatus>{user.status}</CardStatus>}
+      {user.scheduled && <CardStatus>{scheduledText(user)}</CardStatus>}
       <CardTime>{user.claimed ? formatUpdated(user.updatedAt) : 'Nobody has claimed this username yet'}</CardTime>
     </Card>,
     document.body,

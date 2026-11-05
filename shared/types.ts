@@ -7,6 +7,18 @@ export interface Place {
   kind: 'office';
 }
 
+/** A change that happens by itself at a chosen time. */
+export interface ScheduledChange {
+  /** An exact instant, in ISO format. */
+  at: string;
+  place: string;
+  /** Replaces the status when it fires. Empty clears the old status. */
+  status: string;
+}
+
+/** What someone sends to schedule a change. The server picks the place. */
+export type ScheduledChangeRequest = Pick<ScheduledChange, 'at' | 'status'>;
+
 export interface TeamUser {
   username: string;
   nickname: string;
@@ -16,6 +28,7 @@ export interface TeamUser {
   claimed: boolean;
   /** Null means the default character chosen from the username. */
   look: CharacterDesign | null;
+  scheduled?: ScheduledChange | null;
 }
 
 export interface Clock {
