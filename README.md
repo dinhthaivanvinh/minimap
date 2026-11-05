@@ -157,6 +157,12 @@ On the Admin page, under **Backup**:
 
 A restore brings over usernames, nicknames, PINs, characters, offices, clocks and the weather location, and people stay logged in. If the backup is from before the last morning reset, places and statuses are cleared, as on any morning. Backups can be up to 2 MB.
 
+## Random member picker
+
+Click **Random picker** on the map page to draw a teammate in a little claw machine. Give the draw a title (for example, "Who's buying coffee?") and choose who's in it. Everyone is included to start with, whatever filter the map is showing. **Start draw** picks the winner fairly before anything moves. The claw then looks around, grabs the winner, drops them in the prize chute and reveals them with confetti, which takes about six seconds. **Skip animation** shows the same winner straight away, and devices set to reduce motion always skip it. **Pick again** runs another draw with the same settings, and earlier winners can win again.
+
+The tray shows up to 15 characters. In a bigger draw, everyone still has the same chance, the winner is always among the characters shown, and a note says how many more are in the draw. Draws happen only in your browser: they don't change anyone's status and nothing is saved.
+
 ## Home page settings
 
 Set these on the Admin page. They apply straight away and are saved with the rest of the data.

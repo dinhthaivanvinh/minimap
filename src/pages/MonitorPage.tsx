@@ -5,6 +5,7 @@ import type { TeamState, TeamUser } from '../../shared/types.ts';
 import { DetailCard } from '../components/DetailCard.tsx';
 import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
+import { RandomPicker } from '../components/RandomPicker.tsx';
 import { useTeamState } from '../lib/hooks.ts';
 import { isNotWorking, placeGroup, placeName, type PlaceGroup } from '../lib/layout.ts';
 import Map2D from '../map/Map2D.tsx';
@@ -360,6 +361,7 @@ export function MonitorPage() {
   });
   const [selection, setSelection] = useState<{ username: string; anchor: HTMLElement } | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     document.title = 'Team Minimap';
@@ -380,6 +382,7 @@ export function MonitorPage() {
   const isDimmed = useCallback((user: TeamUser) => !matches(user), [matches]);
 
   const closeCard = useCallback(() => setSelection(null), []);
+  const closePicker = useCallback(() => setPickerOpen(false), []);
   const select = useCallback((username: string, anchor: HTMLElement) => setSelection({ username, anchor }), []);
 
   // A list click points at the person on the map; the row is the fallback.
@@ -448,6 +451,9 @@ export function MonitorPage() {
           </button>
         </Segmented>
         <TopBarSpacer />
+        <Button type="button" disabled={!state?.users.length} onClick={() => { closeCard(); setPickerOpen(true); }}>
+          Random picker
+        </Button>
         <Button as="a" $primary href="/me">Update my status</Button>
       </TopBar>
 
@@ -476,6 +482,8 @@ export function MonitorPage() {
           </People>
         </Side>
       </Stage>
+
+      {state && pickerOpen && <RandomPicker users={users} onClose={closePicker} />}
 
       {state && selection && selectedUser && (
         <DetailCard user={selectedUser} places={state.places} anchor={selection.anchor} onClose={closeCard} />
