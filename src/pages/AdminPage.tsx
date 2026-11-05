@@ -1,5 +1,5 @@
-// Admin page: create usernames, release claims, and set up the home page.
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+// Admin page: create usernames, release claims, set up the home page, and back up the data.
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import styled from 'styled-components';
 import type { Clock, OfficeLocation, PublicSettings, TeamUser } from '../../shared/types.ts';
 import { Mochi } from '../components/Mochi.tsx';
@@ -57,6 +57,10 @@ const ClockFields = styled.div`
 
 const ClockFieldPair = styled.div`
   display: contents;
+`;
+
+const WrappingRow = styled(Row)`
+  flex-wrap: wrap;
 `;
 
 function readSavedPassword(): string {
@@ -343,6 +347,67 @@ function OfficeForm({ officeName, call, run }: { officeName: string; call: Admin
   );
 }
 
+// ---- Backup -------------------------------------------------------------
+
+function todayStamp(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function BackupPanel({ call, run }: { call: AdminCall; run: Runner }) {
+  const [message, showMessage] = useMessage();
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  function download() {
+    void run(
+      async () => {
+        const data = await call('GET', '/api/admin/data');
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `minimap-backup-${todayStamp()}.json`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      },
+      'Backup downloaded',
+      showMessage,
+    );
+  }
+
+  async function restore(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // Picking the same file again should work too.
+    if (!file) return;
+    let backup: { users?: unknown };
+    try {
+      backup = JSON.parse(await file.text());
+    } catch {
+      showMessage(`${file.name} is not a backup file. Pick a data.json or a downloaded backup.`, true);
+      return;
+    }
+    const count = Array.isArray(backup?.users) ? backup.users.length : 0;
+    const question = `Replace everything with ${file.name}? It has ${count} ${count === 1 ? 'user' : 'users'}. All current usernames, PINs and settings will be replaced.`;
+    if (!confirm(question)) return;
+    void run(() => call('PUT', '/api/admin/data', backup), `Restored ${count} ${count === 1 ? 'user' : 'users'} from ${file.name}`, showMessage);
+  }
+
+  return (
+    <StackPanel>
+      <h2>Backup</h2>
+      <PanelHint>
+        Save everything to a file, PINs included. Restoring replaces all usernames, PINs and settings with a backup, or with the
+        data.json from the office server. Keep backups private: they reveal every PIN.
+      </PanelHint>
+      <WrappingRow>
+        <Button type="button" onClick={download}>Download backup</Button>
+        <Button type="button" onClick={() => fileInput.current?.click()}>Restore from a file</Button>
+        <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={(event) => void restore(event)} />
+      </WrappingRow>
+      <StatusLine message={message} />
+    </StackPanel>
+  );
+}
+
 // ---- Page ---------------------------------------------------------------
 
 function AdminPanels({ call, run }: { call: AdminCall; run: Runner }) {
@@ -356,6 +421,7 @@ function AdminPanels({ call, run }: { call: AdminCall; run: Runner }) {
       <AddressForm value={settings.publicUrl} call={call} run={run} />
       <ClocksForm value={settings.clocks} call={call} run={run} />
       <OfficeForm officeName={settings.officeName} call={call} run={run} />
+      <BackupPanel call={call} run={run} />
     </div>
   );
 }

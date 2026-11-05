@@ -150,21 +150,12 @@ npm run dev:cf
 
 ## Back up and move data
 
-These commands work with any copy of the app: on Cloudflare, in Docker or on your own computer. Run them from this folder after `npm install`. They ask for the admin password, or read `ADMIN_PASSWORD` from `.env`.
+On the Admin page, under **Backup**:
 
-Save everything, PINs included, to a file:
+- **Download backup** saves everything, PINs included, to a file. Keep backups private: with one, anyone could work out every PIN.
+- **Restore from a file** replaces all usernames, PINs and settings with a backup's. It also accepts the `data.json` from the office server, which is how you move to Cloudflare.
 
-```bash
-npm run data -- export https://minimap.<your-subdomain>.workers.dev backup.json
-```
-
-Replace everything with a backup, such as the `data.json` from the office server:
-
-```bash
-npm run data -- import https://minimap.<your-subdomain>.workers.dev data.json
-```
-
-An import replaces all users and settings. Usernames, nicknames, PINs, characters, offices, clocks and the weather location come across, and people stay logged in. If the backup is from before the last morning reset, places and statuses are cleared, as on any morning. Keep backups private: with the file, anyone could work out every PIN and log in as anyone.
+A restore brings over usernames, nicknames, PINs, characters, offices, clocks and the weather location, and people stay logged in. If the backup is from before the last morning reset, places and statuses are cleared, as on any morning. Backups can be up to 2 MB.
 
 ## Home page settings
 
