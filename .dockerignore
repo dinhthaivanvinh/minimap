@@ -8,3 +8,5 @@ scripts
 server/*.test.ts
 src/**/*.test.ts
 README.md
+.dev.vars
+.wrangler
