@@ -159,15 +159,21 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
     }
   });
 
-  let resetTimer: NodeJS.Timeout | undefined;
+  let timedChangesTimer: NodeJS.Timeout | undefined;
   let pingTimer: NodeJS.Timeout | undefined;
   let weatherTimer: NodeJS.Timeout | undefined;
 
-  function start(port: number): Promise<number> {
+  // The reset goes first, so it wins over schedules that went overdue while the server was off.
+  function runTimedChanges(): void {
     core.runResetIfDue();
+    core.runScheduledIfDue();
+  }
+
+  function start(port: number): Promise<number> {
+    runTimedChanges();
     core.save();
     void core.refreshWeather();
-    resetTimer = setInterval(core.runResetIfDue, 30 * 1000);
+    timedChangesTimer = setInterval(runTimedChanges, 30 * 1000);
     weatherTimer = setInterval(() => void core.refreshWeather(), WEATHER_EVERY_MS);
     // Comment lines keep SSE connections alive through idle proxies.
     pingTimer = setInterval(() => {
@@ -179,7 +185,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   }
 
   function stop(): Promise<void> {
-    clearInterval(resetTimer);
+    clearInterval(timedChangesTimer);
     clearInterval(pingTimer);
     clearInterval(weatherTimer);
     for (const res of sseClients) res.end();
@@ -187,7 +193,13 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
     return new Promise((resolve) => server.close(() => resolve()));
   }
 
-  return { start, stop, runResetIfDue: core.runResetIfDue, refreshWeather: core.refreshWeather };
+  return {
+    start,
+    stop,
+    runResetIfDue: core.runResetIfDue,
+    runScheduledIfDue: core.runScheduledIfDue,
+    refreshWeather: core.refreshWeather,
+  };
 }
 
 if (import.meta.main) {

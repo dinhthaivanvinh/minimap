@@ -7,6 +7,7 @@ import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { RandomPicker } from '../components/RandomPicker.tsx';
 import { useTeamState } from '../lib/hooks.ts';
+import { shownStatus } from '../lib/status.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
 import { isNotWorking, placeGroup, placeName, type PlaceGroup } from '../lib/layout.ts';
 import Map2D from '../map/Map2D.tsx';
@@ -298,7 +299,8 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }) {
   function fullWhere(user: TeamUser): string {
     const place = placeName(state.places, user.place);
-    return user.status ? `${place}: ${user.status}` : place;
+    const status = shownStatus(user);
+    return status ? `${place}: ${status}` : place;
   }
 
   if (!people.length) {
@@ -332,7 +334,7 @@ function PeopleList({ state, people, filter, selected, onPick }: {
                 <RowAvatar><Mochi user={user} /></RowAvatar>
                 <RowText>
                   <RowName>{user.nickname}</RowName>
-                  <RowWhere>{user.status || placeName(state.places, user.place)}</RowWhere>
+                  <RowWhere>{shownStatus(user) || placeName(state.places, user.place)}</RowWhere>
                 </RowText>
               </PersonRow>
             </li>

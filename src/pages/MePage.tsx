@@ -1,23 +1,18 @@
 // User page: claim a username, then set nickname, place and status.
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import styled from 'styled-components';
-import type { AuthResult, TeamState, TeamUser } from '../../shared/types.ts';
+import type { AuthResult, ScheduledChangeRequest, TeamState, TeamUser } from '../../shared/types.ts';
 import { CharacterEditor } from '../components/CharacterEditor.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { SheetNav, StatusLine } from '../components/SheetNav.tsx';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
-import { useMessage, useTeamState } from '../lib/hooks.ts';
-import { isStopWorkStatus, placeChange, STOP_WORK_REASONS } from '../lib/status.ts';
+import { useMessage, useTeamState, type Message } from '../lib/hooks.ts';
+import { clockTime, nextInstant, timeInputValue } from '../lib/status.ts';
 import { theme } from '../styles/theme.ts';
 import { Button, Chip, Chips, Field, FieldLabel, Input, Panel, PanelHint, Row, Sheet, StackPanel } from '../styles/ui.ts';
 
 const AUTH_KEY = 'minimap.auth';
 const OFFICE_ICONS = ['🏢', '🏬'];
-
-// The status set by the "Leaving early" button doesn't belong in the status box.
-function customStatus(status: string): string {
-  return isStopWorkStatus(status) ? '' : status;
-}
 
 const Hero = styled(Panel)`
   display: flex;
@@ -75,6 +70,18 @@ const GroupLabel = styled(FieldLabel)`
 const ChoiceIcon = styled.span`
   font-size: 26px;
   line-height: 1;
+`;
+
+const PendingTime = styled.p`
+  margin: 0;
+  font-family: ${theme.displayFont};
+  font-size: 18px;
+  font-weight: 700;
+`;
+
+const PendingMessage = styled.p`
+  margin: 0;
+  overflow-wrap: anywhere;
 `;
 
 function loadAuth(): AuthResult | null {
@@ -155,7 +162,85 @@ function PinPanel({ user, onDone, onBack }: { user: TeamUser; onDone: (auth: Aut
   );
 }
 
+// ---- Scheduling ---------------------------------------------------------
+
+interface SchedulePanelProps {
+  user: TeamUser;
+  message: Message;
+  onSave: (scheduled: ScheduledChangeRequest | null, done: string) => Promise<boolean>;
+}
+
+function SchedulePanel({ user, message, onSave }: SchedulePanelProps) {
+  const pending = user.scheduled ?? null;
+  const [editing, setEditing] = useState(false);
+  const [time, setTime] = useState('');
+  const [note, setNote] = useState('');
+
+  // It fired or was cancelled, perhaps on another device, so what's in the form is out of date.
+  const hasPending = Boolean(pending);
+  useEffect(() => {
+    if (hasPending) return;
+    setEditing(false);
+    setTime('');
+    setNote('');
+  }, [hasPending]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const at = nextInstant(time);
+    if (await onSave({ at, status: note }, `Out of Office scheduled for ${clockTime(at)}`)) setEditing(false);
+  }
+
+  if (pending && !editing) {
+    return (
+      <StackPanel>
+        <h2>Schedule a change</h2>
+        <PendingTime>Out of Office at {clockTime(pending.at)}</PendingTime>
+        {pending.status && <PendingMessage>{pending.status}</PendingMessage>}
+        <Row>
+          <Button
+            type="button"
+            onClick={() => {
+              setTime(timeInputValue(pending.at));
+              setNote(pending.status);
+              setEditing(true);
+            }}
+          >
+            Edit
+          </Button>
+          <Button type="button" onClick={() => void onSave(null, 'Scheduled change cancelled')}>Cancel</Button>
+        </Row>
+        <StatusLine message={message} />
+      </StackPanel>
+    );
+  }
+
+  return (
+    <StackPanel as="form" onSubmit={(event) => void submit(event)}>
+      <h2>Schedule a change</h2>
+      <PanelHint>Move to Out of Office later on, even with this page closed.</PanelHint>
+      <Field>
+        <FieldLabel>Out of Office at</FieldLabel>
+        <Input type="time" required value={time} onChange={(event) => setTime(event.target.value)} />
+      </Field>
+      <Field>
+        <FieldLabel>Status message (optional)</FieldLabel>
+        <Input maxLength={140} placeholder="Dentist appointment" value={note} onChange={(event) => setNote(event.target.value)} />
+      </Field>
+      <Row>
+        <Button $primary type="submit">{editing ? 'Save' : 'Schedule'}</Button>
+        {editing && <Button type="button" onClick={() => setEditing(false)}>Back</Button>}
+      </Row>
+      <StatusLine message={message} />
+    </StackPanel>
+  );
+}
+
 // ---- Editing ------------------------------------------------------------
+
+type MeChange = Partial<Pick<TeamUser, 'nickname' | 'place' | 'status' | 'look'>> & {
+  scheduled?: ScheduledChangeRequest | null;
+};
 
 interface EditorProps {
   user: TeamUser;
@@ -166,8 +251,9 @@ interface EditorProps {
 
 function Editor({ user, state, token, onLogOut }: EditorProps) {
   const [message, showMessage] = useMessage(2500);
+  const [scheduleMessage, showScheduleMessage] = useMessage(2500);
   const [nickname, setNickname] = useState(user.nickname);
-  const [status, setStatus] = useState(customStatus(user.status));
+  const [status, setStatus] = useState(user.status);
   const nicknameRef = useRef<HTMLInputElement>(null);
   const statusRef = useRef<HTMLInputElement>(null);
 
@@ -176,19 +262,21 @@ function Editor({ user, state, token, onLogOut }: EditorProps) {
     if (document.activeElement !== nicknameRef.current) setNickname(user.nickname);
   }, [user.nickname]);
   useEffect(() => {
-    if (document.activeElement !== statusRef.current) setStatus(customStatus(user.status));
+    if (document.activeElement !== statusRef.current) setStatus(user.status);
   }, [user.status]);
 
-  async function patchMe(body: Partial<Pick<TeamUser, 'nickname' | 'place' | 'status' | 'look'>>, done: string) {
+  async function patchMe(body: MeChange, done: string, show = showMessage): Promise<boolean> {
     try {
       await api('PATCH', '/api/me', body, { Authorization: `Bearer ${token}` });
-      showMessage(done);
+      show(done);
+      return true;
     } catch (err) {
       if (err instanceof ApiFailure && err.status === 401) {
         onLogOut('You were logged out because your username was released. Pick it again to continue.');
-        return;
+        return false;
       }
-      showMessage(errorText(err), true);
+      show(errorText(err), true);
+      return false;
     }
   }
 
@@ -200,15 +288,14 @@ function Editor({ user, state, token, onLogOut }: EditorProps) {
     { id: 'out', name: 'Out of Office', icon: '🚶' },
     { id: 'off', name: 'Off today', icon: '🏖️' },
   ];
-  const leftEarly = isStopWorkStatus(user.status);
 
   function placeButton(option: { id: string; name: string; icon: string }) {
     return (
       <Choice
         key={option.id}
         type="button"
-        aria-pressed={user.place === option.id && !leftEarly}
-        onClick={() => void patchMe(placeChange(option.id, user.status), `Place set to ${option.name}`)}
+        aria-pressed={user.place === option.id}
+        onClick={() => void patchMe({ place: option.id }, `Place set to ${option.name}`)}
       >
         <ChoiceIcon aria-hidden="true">{option.icon}</ChoiceIcon>
         {option.name}
@@ -232,21 +319,14 @@ function Editor({ user, state, token, onLogOut }: EditorProps) {
         <GroupLabel>Working</GroupLabel>
         <ChoiceGrid>{workingPlaces.map(placeButton)}</ChoiceGrid>
         <GroupLabel>Not working</GroupLabel>
-        <ChoiceGrid>
-          {awayPlaces.map(placeButton)}
-          {STOP_WORK_REASONS.map((reason) => (
-            <Choice
-              key={reason.status}
-              type="button"
-              aria-pressed={user.status === reason.status}
-              onClick={() => void patchMe({ place: 'off', status: reason.status }, `You're marked as off: ${reason.status}`)}
-            >
-              <ChoiceIcon aria-hidden="true">{reason.icon}</ChoiceIcon>
-              {reason.label}
-            </Choice>
-          ))}
-        </ChoiceGrid>
+        <ChoiceGrid>{awayPlaces.map(placeButton)}</ChoiceGrid>
       </Panel>
+
+      <SchedulePanel
+        user={user}
+        message={scheduleMessage}
+        onSave={(scheduled, done) => patchMe({ scheduled }, done, showScheduleMessage)}
+      />
 
       <StackPanel>
         <h2>Status</h2>

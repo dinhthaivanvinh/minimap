@@ -14,7 +14,7 @@ import {
   type CharacterDesign,
   type Stroke,
 } from '../shared/look.ts';
-import type { AuthResult, Clock, OfficeLocation, Place, TeamState, Weather } from '../shared/types.ts';
+import type { AuthResult, Clock, OfficeLocation, Place, ScheduledChange, TeamState, Weather } from '../shared/types.ts';
 
 export type JsonBody = Record<string, unknown>;
 
@@ -27,6 +27,7 @@ interface StoredUser {
   pinHash: string | null;
   pinVersion: number;
   look?: CharacterDesign | null;
+  scheduled?: ScheduledChange | null;
 }
 
 interface Settings {
@@ -71,6 +72,7 @@ export interface CoreOptions {
 const FIXED_PLACES = ['wfh', 'off', 'out']; // Offices come from data.places.
 const MAX_NICKNAME = 24;
 const MAX_STATUS = 140;
+const SCHEDULED_PLACE = 'out'; // Scheduling only moves people to Out of Office for now.
 export const MAX_BODY = 16 * 1024;
 // A whole backup. Cloudflare stores the data as one value, which can be at most 2 MB.
 const MAX_BACKUP = 2 * 1024 * 1024;
@@ -157,6 +159,12 @@ export function latestResetDate(now: Date, resetAt: string, timeZone?: string): 
 
 // ---- Settings validation ------------------------------------------------
 
+function cleanStatus(value: unknown): string {
+  const status = String(value ?? '').trim();
+  if ([...status].length > MAX_STATUS) throw new ApiError(400, `Statuses can be at most ${MAX_STATUS} characters.`);
+  return status;
+}
+
 function cleanPublicUrl(value: unknown): string {
   const url = String(value ?? '').trim();
   if (!url) return '';
@@ -235,6 +243,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+// A broken schedule isn't worth losing a whole backup over, so it's simply dropped.
+function savedSchedule(value: unknown, placeIds: Set<string>): ScheduledChange | null {
+  if (!isObject(value)) return null;
+  const { at, place, status } = value;
+  if (typeof at !== 'string' || typeof place !== 'string' || typeof status !== 'string') return null;
+  const time = new Date(at).getTime();
+  if (Number.isNaN(time) || !placeIds.has(place) || [...status].length > MAX_STATUS) return null;
+  return { at: new Date(time).toISOString(), place, status };
+}
+
 // Checks a data.json backup before it replaces everything, and returns a clean copy.
 // Leaves out the secret when the backup has none, so the current one is kept.
 function checkBackup(value: unknown): Partial<Data> {
@@ -273,6 +291,7 @@ function checkBackup(value: unknown): Partial<Data> {
       pinHash: typeof u.pinHash === 'string' ? u.pinHash : null,
       pinVersion: pinVersion as number,
       look,
+      scheduled: savedSchedule(u.scheduled, placeIds),
     };
   });
 
@@ -338,6 +357,7 @@ export function createCore({
         claimed: Boolean(u.pinHash),
         // Characters saved before accessories existed have no "wearing" list.
         look: u.look ? { color: u.look.color, wearing: u.look.wearing ?? [], strokes: u.look.strokes } : null,
+        scheduled: u.scheduled ?? null,
       })),
     };
   }
@@ -422,10 +442,47 @@ export function createCore({
     for (const u of data.users) {
       u.place = null;
       u.status = '';
+      u.scheduled = null;
     }
     data.lastResetDate = due;
     commit();
     return true;
+  }
+
+  // ---- Scheduled changes ------------------------------------------------
+
+  // Run the reset first, so that nobody starts a new day in a place from yesterday's schedule.
+  function runScheduledIfDue(): boolean {
+    const current = now();
+    let changed = false;
+    for (const u of data.users) {
+      if (!u.scheduled || new Date(u.scheduled.at) > current) continue;
+      u.place = u.scheduled.place;
+      u.status = u.scheduled.status;
+      u.updatedAt = current.toISOString();
+      u.scheduled = null;
+      changed = true;
+    }
+    if (changed) commit();
+    return changed;
+  }
+
+  function nextScheduledAt(): string | null {
+    const times = data.users.flatMap((u) => (u.scheduled ? [new Date(u.scheduled.at).getTime()] : []));
+    return times.length ? new Date(Math.min(...times)).toISOString() : null;
+  }
+
+  function cleanSchedule(value: unknown): ScheduledChange | null {
+    if (value === null) return null;
+    const { at, status } = isObject(value) ? value : ({} as JsonBody);
+    const time = new Date(typeof at === 'string' ? at : NaN);
+    const current = now();
+    if (Number.isNaN(time.getTime())) throw new ApiError(400, 'That time is not valid. Pick another time.');
+    if (time <= current) throw new ApiError(400, 'That time has already passed. Pick a later time.');
+    if (latestResetDate(time, resetAt, timeZone) !== latestResetDate(current, resetAt, timeZone)) {
+      throw new ApiError(400, 'That time is after the next morning reset. Pick an earlier time.');
+    }
+    return { at: time.toISOString(), place: SCHEDULED_PLACE, status: cleanStatus(status) };
   }
 
   // ---- Auth -------------------------------------------------------------
@@ -555,7 +612,8 @@ export function createCore({
       weather = null;
       // Logins from the backup keep working when it brings its secret; a backup from
       // an earlier day gets the morning reset it missed.
-      if (!runResetIfDue()) commit();
+      const wasReset = runResetIfDue();
+      if (!runScheduledIfDue() && !wasReset) commit();
       void refreshWeather();
       return jsonResponse(200, { ok: true, users: data.users.length });
     }
@@ -650,14 +708,15 @@ export function createCore({
         }
         next.place = place;
       }
-      if ('status' in body) {
-        const status = String(body.status ?? '').trim();
-        if ([...status].length > MAX_STATUS) throw new ApiError(400, `Statuses can be at most ${MAX_STATUS} characters.`);
-        next.status = status;
-      }
+      if ('status' in body) next.status = cleanStatus(body.status);
       // "Updated at" tells teammates when someone's whereabouts changed, not their outfit.
       const isWhereabouts = Object.keys(next).length > 0;
       if ('look' in body) next.look = cleanLook(body.look);
+      // A schedule only changes someone's whereabouts when it fires.
+      if ('scheduled' in body) next.scheduled = cleanSchedule(body.scheduled);
+      // Going there by hand means the scheduled change has already happened.
+      const pending = next.scheduled === undefined ? user.scheduled : next.scheduled;
+      if (next.place && next.place === pending?.place) next.scheduled = null;
       Object.assign(user, next, isWhereabouts ? { updatedAt: now().toISOString() } : {});
       commit();
       return jsonResponse(200, { ok: true });
@@ -679,7 +738,16 @@ export function createCore({
     }
   }
 
-  return { handle, publicState, save, runResetIfDue, refreshWeather, hasOffice: () => Boolean(data.settings.office) };
+  return {
+    handle,
+    publicState,
+    save,
+    runResetIfDue,
+    runScheduledIfDue,
+    nextScheduledAt,
+    refreshWeather,
+    hasOffice: () => Boolean(data.settings.office),
+  };
 }
 
 export type Core = ReturnType<typeof createCore>;

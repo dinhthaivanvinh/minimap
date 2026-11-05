@@ -590,3 +590,247 @@ test('people in an office that is gone count as not checked in after an import',
   assert.equal((await api('PUT', '/api/admin/data', { lastResetDate: '2026-11-03', users: [user] }, ADMIN)).status, 200);
   assert.equal((await api('GET', '/api/state')).json.users[0].place, null);
 });
+
+// ---- Scheduled changes --------------------------------------------------
+
+const AT_4PM = new Date(2026, 10, 3, 16, 0).toISOString();
+
+async function scheduledUser(t: TestContext, options: Partial<AppOptions> = {}) {
+  const context = await setup(t, options);
+  await context.addUser('a');
+  const token = await context.claim('a');
+  const user = async (): Promise<TeamUser> => (await context.api('GET', '/api/state')).json.users[0];
+  return { ...context, token, user };
+}
+
+test('a scheduled change fires at the chosen time, and not before', async (t) => {
+  const { app, me, token, user, clock } = await scheduledUser(t);
+  await me(token, { place: 'main', status: 'In a meeting' });
+  assert.equal((await me(token, { scheduled: { at: AT_4PM, status: ' Dentist appointment ' } })).status, 200);
+  assert.deepEqual((await user()).scheduled, { at: AT_4PM, place: 'out', status: 'Dentist appointment' });
+
+  clock.now = new Date(2026, 10, 3, 15, 59, 59);
+  assert.equal(app.runScheduledIfDue(), false);
+  assert.deepEqual([(await user()).place, (await user()).status], ['main', 'In a meeting']);
+
+  clock.now = new Date(2026, 10, 3, 16, 0, 10);
+  assert.equal(app.runScheduledIfDue(), true);
+  const fired = await user();
+  assert.deepEqual([fired.place, fired.status, fired.scheduled], ['out', 'Dentist appointment', null]);
+  assert.equal(fired.updatedAt, clock.now.toISOString());
+  assert.equal(app.runScheduledIfDue(), false, 'it only fires once');
+});
+
+test('a scheduled change with no message clears the old status', async (t) => {
+  const { app, me, token, user, clock } = await scheduledUser(t);
+  await me(token, { place: 'main', status: 'In a meeting' });
+  await me(token, { scheduled: { at: AT_4PM, status: '' } });
+  clock.now = new Date(2026, 10, 3, 16, 0);
+  app.runScheduledIfDue();
+  assert.deepEqual([(await user()).place, (await user()).status], ['out', '']);
+});
+
+test('the server always picks the place of a scheduled change', async (t) => {
+  const { me, token, user } = await scheduledUser(t);
+  await me(token, { scheduled: { at: AT_4PM, place: 'main', status: '' } });
+  assert.equal((await user()).scheduled?.place, 'out');
+});
+
+test('creating, editing and cancelling a schedule keep "updated at", and saving replaces the old one', async (t) => {
+  const { me, token, user, clock } = await scheduledUser(t);
+  await me(token, { place: 'main' });
+  const updatedAt = (await user()).updatedAt;
+  clock.now = new Date(2026, 10, 3, 13, 0);
+
+  await me(token, { scheduled: { at: AT_4PM, status: 'First' } });
+  assert.equal((await user()).updatedAt, updatedAt);
+
+  const later = new Date(2026, 10, 3, 17, 0).toISOString();
+  await me(token, { scheduled: { at: later, status: 'Second' } });
+  assert.deepEqual((await user()).scheduled, { at: later, place: 'out', status: 'Second' });
+  assert.equal((await user()).updatedAt, updatedAt);
+
+  await me(token, { scheduled: null });
+  assert.equal((await user()).scheduled, null);
+  assert.equal((await user()).updatedAt, updatedAt);
+});
+
+test('only valid scheduled changes are saved', async (t) => {
+  const { me, token, user, clock } = await scheduledUser(t);
+  const bad: [unknown, RegExp][] = [
+    [{ at: 'not a date', status: '' }, /not valid/],
+    [{ status: '' }, /not valid/],
+    [{ at: 12345, status: '' }, /not valid/],
+    ['16:00', /not valid/],
+    [{ at: new Date(2026, 10, 3, 11, 0).toISOString(), status: '' }, /already passed/],
+    [{ at: clock.now.toISOString(), status: '' }, /already passed/],
+    [{ at: new Date(2026, 10, 4, 5, 0).toISOString(), status: '' }, /morning reset/],
+    [{ at: new Date(2026, 10, 4, 12, 0).toISOString(), status: '' }, /morning reset/],
+    [{ at: AT_4PM, status: 'x'.repeat(141) }, /140/],
+  ];
+  for (const [scheduled, why] of bad) {
+    const res = await me(token, { scheduled });
+    assert.equal(res.status, 400, JSON.stringify(scheduled));
+    assert.match(res.json.error, why);
+  }
+  assert.equal((await user()).scheduled, null);
+
+  const lastMinute = new Date(2026, 10, 4, 4, 59).toISOString();
+  assert.equal((await me(token, { scheduled: { at: lastMinute, status: 'x'.repeat(140) } })).status, 200, 'just before the reset is fine');
+});
+
+test('a time before the morning reset is allowed in the small hours too', async (t) => {
+  const { me, token, clock } = await scheduledUser(t);
+  clock.now = new Date(2026, 10, 4, 1, 0);
+  assert.equal((await me(token, { scheduled: { at: new Date(2026, 10, 4, 4, 0).toISOString(), status: '' } })).status, 200);
+  assert.equal((await me(token, { scheduled: { at: new Date(2026, 10, 4, 6, 0).toISOString(), status: '' } })).status, 400);
+});
+
+test('a schedule can only be changed with its owner\'s token', async (t) => {
+  const { api, me, addUser, claim, token, user } = await scheduledUser(t);
+  await addUser('b');
+  const other = await claim('b');
+  await me(token, { scheduled: { at: AT_4PM, status: 'Mine' } });
+
+  assert.equal((await api('PATCH', '/api/me', { scheduled: null })).status, 401);
+  await me(other, { scheduled: null });
+  assert.equal((await user()).scheduled?.status, 'Mine');
+});
+
+test('choosing the scheduled place by hand cancels the schedule, and another place keeps it', async (t) => {
+  const { me, token, user } = await scheduledUser(t);
+  await me(token, { scheduled: { at: AT_4PM, status: 'Dentist' } });
+
+  await me(token, { place: 'wfh' });
+  assert.equal((await user()).scheduled?.status, 'Dentist', 'moving to another place keeps it');
+  await me(token, { status: 'Busy' });
+  assert.equal((await user()).scheduled?.status, 'Dentist', 'changing the status keeps it');
+
+  await me(token, { place: 'out' });
+  assert.equal((await user()).scheduled, null, 'going there by hand means it already happened');
+
+  await me(token, { place: 'out', scheduled: { at: AT_4PM, status: 'Dentist' } });
+  assert.equal((await user()).scheduled, null, 'also when both arrive together');
+});
+
+test('the morning reset clears schedules, and wins over overdue ones', async (t) => {
+  const { app, me, token, user, clock } = await scheduledUser(t);
+  await me(token, { place: 'main', status: 'Busy', scheduled: { at: AT_4PM, status: 'Dentist' } });
+
+  clock.now = new Date(2026, 10, 4, 6, 0); // Slept right through both.
+  assert.equal(app.runResetIfDue(), true);
+  assert.equal(app.runScheduledIfDue(), false);
+  const after = await user();
+  assert.deepEqual([after.place, after.status, after.scheduled], [null, '', null]);
+});
+
+test('a restart keeps a pending schedule, and applies one that went overdue', async (t) => {
+  const { me, token, dataFile } = await scheduledUser(t);
+  await me(token, { place: 'main', scheduled: { at: AT_4PM, status: 'Dentist' } });
+  const restart = async (now: Date) => {
+    const app = createApp({ dataFile, adminPassword: 'secret', now: () => now });
+    const port = await app.start(0);
+    const state = (await (await fetch(`http://127.0.0.1:${port}/api/state`)).json()) as TeamState;
+    await app.stop();
+    return state.users[0]!;
+  };
+
+  const early = await restart(new Date(2026, 10, 3, 15, 0));
+  assert.deepEqual([early.place, early.scheduled?.status], ['main', 'Dentist']);
+
+  const late = await restart(new Date(2026, 10, 3, 18, 0));
+  assert.deepEqual([late.place, late.status, late.scheduled], ['out', 'Dentist', null]);
+  assert.equal(late.updatedAt, new Date(2026, 10, 3, 18, 0).toISOString());
+});
+
+test('a restart after the next morning reset lets the reset win', async (t) => {
+  const { me, token, dataFile } = await scheduledUser(t);
+  await me(token, { place: 'main', scheduled: { at: AT_4PM, status: 'Dentist' } });
+  const app = createApp({ dataFile, adminPassword: 'secret', now: () => new Date(2026, 10, 4, 8, 0) });
+  await app.start(0);
+  await app.stop();
+  const saved = JSON.parse(fs.readFileSync(dataFile, 'utf8')).users[0];
+  assert.deepEqual([saved.place, saved.status, saved.scheduled], [null, '', null]);
+});
+
+test('older saved data loads with nothing scheduled', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'minimap-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dataFile = path.join(dir, 'data.json');
+  fs.writeFileSync(dataFile, JSON.stringify({
+    secret: 's',
+    lastResetDate: '2026-11-03',
+    users: [{ username: 'a', nickname: 'a', place: 'off', status: 'Left early', updatedAt: null, pinHash: null, pinVersion: 1 }],
+  }));
+  const app = createApp({ dataFile, adminPassword: 'secret', now: () => new Date(2026, 10, 3, 12, 0) });
+  const port = await app.start(0);
+  t.after(() => app.stop());
+  const state = (await (await fetch(`http://127.0.0.1:${port}/api/state`)).json()) as TeamState;
+  assert.deepEqual([state.users[0]!.place, state.users[0]!.status, state.users[0]!.scheduled], ['off', 'Left early', null]);
+  assert.equal(app.runScheduledIfDue(), false);
+});
+
+test('a backup keeps a pending schedule', async (t) => {
+  const first = await scheduledUser(t);
+  await first.me(first.token, { place: 'main', scheduled: { at: AT_4PM, status: 'Dentist' } });
+  const backup = (await first.api('GET', '/api/admin/data', undefined, ADMIN)).json;
+
+  const second = await setup(t);
+  assert.equal((await second.api('PUT', '/api/admin/data', backup, ADMIN)).status, 200);
+  const [user] = (await second.api('GET', '/api/state')).json.users;
+  assert.deepEqual(user.scheduled, { at: AT_4PM, place: 'out', status: 'Dentist' });
+  assert.equal(user.place, 'main');
+});
+
+test('a backup with broken schedules loads, without them', async (t) => {
+  const { api } = await setup(t);
+  const user = { nickname: 'n', place: 'main', status: '', updatedAt: null, pinHash: null, pinVersion: 1 };
+  const broken = [
+    'tomorrow',
+    { at: 'not a date', place: 'out', status: '' },
+    { at: AT_4PM, place: 'nowhere', status: '' },
+    { at: AT_4PM, status: '' },
+    { at: AT_4PM, place: 'out' },
+    { at: AT_4PM, place: 'out', status: 'x'.repeat(141) },
+  ];
+  const users = broken.map((scheduled, i) => ({ ...user, username: `u${i}`, scheduled }));
+  const res = await api('PUT', '/api/admin/data', { lastResetDate: '2026-11-03', users }, ADMIN);
+  assert.deepEqual([res.status, res.json.users], [200, broken.length]);
+  for (const u of (await api('GET', '/api/state')).json.users as TeamUser[]) {
+    assert.deepEqual([u.place, u.scheduled], ['main', null], u.username);
+  }
+});
+
+test('a backup with an overdue schedule follows the same rules as downtime', async (t) => {
+  const { api, clock } = await setup(t);
+  const user = { username: 'a', nickname: 'a', place: 'main', status: 'x', updatedAt: null, pinHash: null, pinVersion: 1, scheduled: { at: AT_4PM, place: 'out', status: 'Dentist' } };
+
+  clock.now = new Date(2026, 10, 3, 18, 0);
+  assert.equal((await api('PUT', '/api/admin/data', { lastResetDate: '2026-11-03', users: [user] }, ADMIN)).status, 200);
+  const [fired] = (await api('GET', '/api/state')).json.users;
+  assert.deepEqual([fired.place, fired.status, fired.scheduled], ['out', 'Dentist', null]);
+
+  clock.now = new Date(2026, 10, 4, 8, 0);
+  assert.equal((await api('PUT', '/api/admin/data', { lastResetDate: '2026-11-03', users: [user] }, ADMIN)).status, 200);
+  const [reset] = (await api('GET', '/api/state')).json.users;
+  assert.deepEqual([reset.place, reset.status, reset.scheduled], [null, '', null]);
+});
+
+test('open maps hear about a schedule when it is made and when it fires', async (t) => {
+  const { app, me, token, port, clock } = await scheduledUser(t);
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const res = await fetch(`http://127.0.0.1:${port}/api/events`, { signal: controller.signal });
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  const nextUser = async (): Promise<TeamUser> => JSON.parse(decoder.decode((await reader.read()).value).replace(/^data: /, '')).users[0];
+
+  assert.equal((await nextUser()).scheduled, null);
+  await me(token, { scheduled: { at: AT_4PM, status: 'Dentist' } });
+  assert.equal((await nextUser()).scheduled?.status, 'Dentist');
+  clock.now = new Date(2026, 10, 3, 16, 0);
+  app.runScheduledIfDue();
+  const fired = await nextUser();
+  assert.deepEqual([fired.place, fired.status, fired.scheduled], ['out', 'Dentist', null]);
+  await reader.cancel();
+});

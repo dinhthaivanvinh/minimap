@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamUser } from '../../shared/types.ts';
 import { statusKind } from '../lib/look.ts';
+import { shownStatus } from '../lib/status.ts';
 import { theme } from '../styles/theme.ts';
 import { DeskSvg, MochiSvg } from './Mochi.tsx';
 
@@ -135,7 +136,8 @@ interface BadgeProps {
 
 // A person's name with their status: shown if short, behind a "!" if long.
 export function Badge({ user, figure, floating, selected, dimmed, onSelect }: BadgeProps) {
-  const kind = statusKind(user.status);
+  const status = shownStatus(user);
+  const kind = statusKind(status);
   return (
     <BadgeButton
       type="button"
@@ -143,13 +145,13 @@ export function Badge({ user, figure, floating, selected, dimmed, onSelect }: Ba
       $dimmed={dimmed}
       data-badge
       data-username={user.username}
-      aria-label={user.status ? `${user.nickname}: ${user.status}` : user.nickname}
+      aria-label={status ? `${user.nickname}: ${status}` : user.nickname}
       onClick={(event) => onSelect(user.username, event.currentTarget)}
     >
-      {kind === 'short' && <BadgeStatus>{user.status}</BadgeStatus>}
+      {kind === 'short' && <BadgeStatus>{status}</BadgeStatus>}
       {kind === 'long' && (
         <BadgeAlert $floating={floating}>
-          !<BadgeTip>{user.status}</BadgeTip>
+          !<BadgeTip>{status}</BadgeTip>
         </BadgeAlert>
       )}
       {figure}

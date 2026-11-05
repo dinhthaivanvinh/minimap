@@ -15,14 +15,16 @@ interface Member {
   place: string;
   status?: string;
   look?: CharacterDesign;
+  /** Schedules Out of Office this many hours from now, with this message. */
+  leaving?: { inHours: number; status: string };
 }
 
 const INK = '#2a2657';
 const RED = '#e5383b';
 
 const MEMBERS: Member[] = [
-  { nickname: 'Test An', place: 'main' },
-  { nickname: 'Test Bình', place: 'main', status: 'In a meeting' },
+  { nickname: 'Test An', place: 'main', leaving: { inHours: 2, status: 'Dentist appointment' } },
+  { nickname: 'Test Bình', place: 'main', status: 'In a meeting', leaving: { inHours: 3, status: '' } },
   { nickname: 'Test Chi', place: 'main', look: { color: '#a9714b', wearing: ['glasses'], strokes: [] } },
   { nickname: 'Test Dũng', place: 'main', status: 'Leave at 4pm' },
   { nickname: 'Test Giang', place: 'main', status: 'Out for a client visit until about 3pm, call me if it is urgent' },
@@ -100,10 +102,17 @@ async function add() {
       console.log(`Skipped ${username}: it is already in use by someone else.`);
       continue;
     }
-    const { nickname, place, status = '', look = null } = member;
-    const saved = await call('PATCH', '/api/me', { nickname, place, status, look }, { Authorization: `Bearer ${token}` });
+    const { nickname, place, status = '', look = null, leaving } = member;
+    const auth = { Authorization: `Bearer ${token}` };
+    const saved = await call('PATCH', '/api/me', { nickname, place, status, look }, auth);
     if (saved.status === 200) ready += 1;
     else console.log(`Could not set up ${username}: ${saved.json.error}`);
+    if (leaving) {
+      const at = new Date(Date.now() + leaving.inHours * 60 * 60 * 1000).toISOString();
+      const scheduled = await call('PATCH', '/api/me', { scheduled: { at, status: leaving.status } }, auth);
+      // Close to the morning reset the time is refused. The member is still fine without it.
+      if (scheduled.status !== 200) console.log(`No scheduled change for ${username}: ${scheduled.json.error}`);
+    }
   }
   console.log(`${ready} test members are ready.`);
 }
