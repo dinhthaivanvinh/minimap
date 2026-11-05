@@ -212,15 +212,20 @@ test('the main office and home stay equal with more offices', () => {
   }
 });
 
-test('the street runs the full width of the map, between the buildings and the beach', () => {
-  const { zones, width } = computeLayout(TWO_OFFICES, []);
-  const find = (id: string) => zones.find((z) => z.id === id)!;
-  const street = find('out');
-  assert.equal(street.kind, 'street');
-  assert.equal(street.x, 0);
-  assert.equal(street.w, width);
-  assert.ok(find('main').y + find('main').h <= street.y);
-  assert.ok(find('off').y >= street.y + street.h);
+test('the street lines up with the other areas, between the buildings and the beach', () => {
+  for (const portrait of [false, true]) {
+    const { zones } = computeLayout(TWO_OFFICES, [], { portrait });
+    const find = (id: string) => zones.find((z) => z.id === id)!;
+    const street = find('out');
+    assert.equal(street.kind, 'street');
+    const others = zones.filter((z) => z !== street);
+    const left = Math.min(...others.map((z) => z.x));
+    const right = Math.max(...others.map((z) => z.x + z.w));
+    assert.equal(street.x, left, 'same left edge as the other areas');
+    assert.ok(Math.abs(street.x + street.w - right) < 1e-9, 'same right edge as the other areas');
+    assert.ok(find('main').y + find('main').h <= street.y);
+    assert.ok(find('off').y >= street.y + street.h);
+  }
 });
 
 test('people on the street stand clear of its name on a wide screen', () => {

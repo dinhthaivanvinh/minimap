@@ -53,19 +53,12 @@ const Mat = (
   </svg>
 );
 
+// Short and stout, so it fits on the pavement with its light still easy to see.
 const Lamp = (
-  <svg viewBox="0 0 40 80" width="100%" height="100%">
-    <path d="M20 78V14" stroke={INK} strokeWidth="4" strokeLinecap="round" />
-    <path d="M20 14h10" stroke={INK} strokeWidth="4" strokeLinecap="round" />
-    <circle cx="31" cy="17" r="6" fill="#ffe27a" stroke={INK} strokeWidth="3" />
-  </svg>
-);
-
-const Crosswalk = (
-  <svg viewBox="0 0 60 60" width="100%" height="100%">
-    {[0, 1, 2, 3, 4].map((i) => (
-      <rect key={i} x="4" y={2 + i * 12} width="52" height="7" rx="1" fill="#fff" />
-    ))}
+  <svg viewBox="0 0 36 52" width="100%" height="100%">
+    <path d="M12 49V7h11" fill="none" stroke={INK} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M6 49h12" stroke={INK} strokeWidth="4" strokeLinecap="round" />
+    <circle cx="25" cy="13" r="8" fill="#ffe27a" stroke={INK} strokeWidth="3" />
   </svg>
 );
 
@@ -109,10 +102,9 @@ export const DECOR: Record<ZoneKind, DecorItem[]> = {
   ],
   off: [{ art: Parasol, left: 6, top: 22, width: 17 }],
   lobby: [{ art: Mat, right: 3, bottom: 12, width: 13, large: true }],
-  street: [
-    { art: Lamp, left: 14, bottom: 22, width: 7 },
-    { art: Lamp, right: 26, bottom: 22, width: 7 },
-    { art: Crosswalk, left: 44, bottom: 0, width: 8 },
-    { art: Car, right: 2, bottom: 2, width: 9 },
-  ],
+  // The street lines its things up with its pavement and road instead: see STREET_ART.
+  street: [],
 };
+
+/** The street's own art. Map2D stands the lamps on the curb and drives the car in the road. */
+export const STREET_ART = { lamp: Lamp, car: Car };
