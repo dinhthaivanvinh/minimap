@@ -11,6 +11,7 @@ import { Button } from '../styles/ui.ts';
 import { createScene3D, type CameraState, type Scene3D, type ZoneLabelSlot } from './scene3d.ts';
 import type { MapProps } from './types.ts';
 import { ArcadePlay } from './ArcadeCabinet.tsx';
+import { NoticeBoardLink } from './NoticeBoard2D.tsx';
 import { Clouds } from './Weather2D.tsx';
 
 const View = styled.div<{ $namesOff: boolean }>`
@@ -298,9 +299,9 @@ export default function Map3D({
 
       {boardSlot &&
         createPortal(
-          <ArcadePlay as="a" href="/vote" data-notice-board="3d" style={{ textDecoration: 'none' }} aria-label={boardLabel(votes)}>
+          <NoticeBoardLink href="/vote" data-notice-board="3d" aria-label={boardLabel(votes)}>
             Votes
-          </ArcadePlay>,
+          </NoticeBoardLink>,
           boardSlot,
         )}
 

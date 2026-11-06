@@ -182,12 +182,13 @@ Paths are from the project root. Function names are given instead of line number
 | Backup part, deleted people | `server/vote/core.ts`: `feature` (`checkVotes`, `forget`) |
 | Live updates | `onChange` → `event: vote` on `/api/events` (public views only, never `mine`), also sent when a stream opens |
 | Page `/vote`: tabs, form, cards, deep link | `src/pages/VotePage.tsx` (lazy in `main.tsx`), `src/components/VoteForm.tsx`, `src/components/VoteCard.tsx`, `src/components/VoteResults.tsx` |
+| The saved login and admin password the page reads | `src/lib/savedLogin.ts` (`savedLogin`, `savedAdminPassword`) |
 | Times in words, quick end picks | `src/lib/voteTime.ts` (`endsText`, `timeLeft`, `quickEnds`, `localInputValue`) |
-| Notice board (both maps) | `src/lib/noticeBoard.ts` (`boardNotes`, `countdown`, `voteLink`), `src/map/NoticeBoard2D.tsx`, `src/map/noticeBoard3d.ts` (canvas texture, `linkAt` for raycast); in `scene3d.ts`: `drawBoard` |
+| Notice board (both maps) | `src/lib/noticeBoard.ts` (`boardNotes`, `countdown`, `voteLink`), `src/map/NoticeBoard2D.tsx` (also `NoticeBoardLink`, the 3D board's keyboard link), `src/map/noticeBoard3d.ts` (canvas texture, `linkAt` for raycast); in `scene3d.ts`: `drawBoard` |
 | Results banner and "hasn't voted" marks | `MonitorPage.tsx` builds `VoteMarks` (switch `minimap.voteMarks`); 2D: `src/map/ResultBanner2D.tsx`, `src/components/BallotMark.tsx` (on `Badge`); 3D: `src/map/blimp3d.ts`, `scene3d.ts` `setVoteMarks`, `markBallot`, `animateVoteMarks`; `DetailCard.tsx` lists pending votes |
 | Character reactions | `src/lib/voteReactions.ts` (`reactions`), planned in `MonitorPage.tsx`; 2D: `Map2D.tsx` `usePlaying`; 3D: `scene3d.ts` `react`, `animateReaction`, `confettiAt`, with `hopHeight` from `wander.ts` |
 | 3D results skyline and ballot drop | `src/components/VoteSkyline3D.tsx` (lazy, bars when WebGL is missing or lost), `src/lib/skyline.ts` (`skylineTowers`), `src/components/BallotDrop.tsx` |
-| Tests | `shared/vote.test.ts`, `server/vote/vote.test.ts`, `src/lib/voteTime.test.ts`, `src/lib/noticeBoard.test.ts`, `src/lib/voteReactions.test.ts`, `src/lib/skyline.test.ts`, the vote test in `worker/worker.test.ts` |
+| Tests | `shared/vote.test.ts`, `server/vote/vote.test.ts`, `src/lib/voteTime.test.ts`, `src/lib/noticeBoard.test.ts`, `src/lib/voteReactions.test.ts`, `src/lib/skyline.test.ts`, `src/lib/savedLogin.test.ts`, the vote test in `worker/worker.test.ts` |
 
 ### Random member picker (claw machine)
 | Feature | Code |

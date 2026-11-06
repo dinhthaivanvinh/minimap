@@ -10,6 +10,41 @@ import { media, theme } from '../styles/theme.ts';
 
 const NOTE_COLOURS = ['#fff4b8', '#c9f2dc', '#ffd6e6', '#ffffff'];
 
+/** The 3D board's link for keyboards and screen readers: a little pinned note under the board. */
+export const NoticeBoardLink = styled.a`
+  position: relative;
+  display: block;
+  min-width: 44px;
+  min-height: 28px;
+  padding: 5px 10px 3px;
+  border: 2px solid ${theme.ink};
+  border-radius: 4px;
+  background: ${NOTE_COLOURS[0]};
+  box-shadow: 0 2px 0 rgb(42 38 87 / .35);
+  font: 800 12px/1.2 ${theme.displayFont};
+  text-align: center;
+  text-decoration: none;
+  transform: rotate(-2deg);
+  pointer-events: auto;
+
+  /* The pin. */
+  &::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    margin-left: -4px;
+    border: 1.5px solid ${theme.ink};
+    border-radius: 50%;
+    background: ${theme.bubblegum};
+  }
+
+  &:hover { background: ${theme.butter}; }
+  &:focus-visible { outline: 3px solid ${theme.focus}; outline-offset: 3px; }
+`;
+
 const pulse = keyframes`
   0%, 100% { transform: rotate(var(--tilt)) scale(1); }
   50% { transform: rotate(var(--tilt)) scale(1.07); }

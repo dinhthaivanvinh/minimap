@@ -1,13 +1,13 @@
 // Team votes page (/vote): open votes and history, the form for a new vote, and each vote's ballot and results.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import styled from 'styled-components';
-import type { AuthResult } from '../../shared/types.ts';
 import { closedNewestFirst, isOpen, mapSummary, type VoteView } from '../../shared/vote.ts';
 import { SheetNav } from '../components/SheetNav.tsx';
 import { VoteCard, type Viewer } from '../components/VoteCard.tsx';
 import { VoteForm } from '../components/VoteForm.tsx';
 import { api } from '../lib/api.ts';
 import { useNow, useTeamState } from '../lib/hooks.ts';
+import { savedAdminPassword, savedLogin } from '../lib/savedLogin.ts';
 import { theme } from '../styles/theme.ts';
 import { Button, Count, Panel, PanelHint, Segmented, Sheet } from '../styles/ui.ts';
 
@@ -31,29 +31,11 @@ const Empty = styled(Panel)`
   text-align: center;
 `;
 
-// The login from My status and the admin password from the Admin page, saved in this browser.
-function readAuth(): AuthResult | null {
-  try {
-    const value = JSON.parse(localStorage.getItem('minimap.auth') ?? 'null');
-    return typeof value?.token === 'string' && typeof value?.username === 'string' ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function readAdminPassword(): string {
-  try {
-    return sessionStorage.getItem('minimap.admin') ?? '';
-  } catch {
-    return '';
-  }
-}
-
 export function VotePage() {
   const { state, votes: liveVotes } = useTeamState();
   const now = useNow(15_000);
-  const [auth] = useState(readAuth);
-  const [adminPassword] = useState(readAdminPassword);
+  const [auth] = useState(() => savedLogin());
+  const [adminPassword] = useState(() => savedAdminPassword());
   const [votes, setVotes] = useState<VoteView[] | null>(null);
   // The viewer's own picks, which the live updates never carry.
   const [mine, setMine] = useState<ReadonlyMap<string, string[]>>(new Map());
