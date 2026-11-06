@@ -646,7 +646,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     if (layout.park) {
       const { x, y, w, h } = layout.park;
       const middle = toWorld(x + w / 2, y + h / 2);
-      addTree(world, middle.x - w * 0.3, middle.z-h*.28);
+      addTree(world, middle.x - w * 0.3, middle.z - h * 0.28);
       addTree(world, middle.x + w * 0.05, middle.z - h * 0.36);
       addTree(world, middle.x + w * 0.32, middle.z - h * 0.25);
     }
@@ -663,14 +663,19 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       zoneLabels.set(z.id, label);
     }
 
-    arcade=null; arcadeSlot=null;
+    arcade = null;
+    arcadeSlot = null;
     if (layout.park) {
-      const p=layout.park;
-      const at=toWorld(p.x+p.w/2,p.y+p.h*.80);
-      const cabinet=createArcadeCabinet();
-      arcade=cabinet.group; arcadeSlot=cabinet.playElement;
-      arcade.position.set(at.x,.1,at.z); arcade.rotation.y=-.22; arcade.scale.setScalar(.75);
-      world.add(arcade); block(at.x,at.z,3.2,2.4);
+      const park = layout.park;
+      const at = toWorld(park.x + park.w / 2, park.y + park.h * 0.8);
+      const cabinet = createArcadeCabinet();
+      arcade = cabinet.group;
+      arcadeSlot = cabinet.playElement;
+      arcade.position.set(at.x, 0.1, at.z);
+      arcade.rotation.y = -0.22;
+      arcade.scale.setScalar(0.75);
+      world.add(arcade);
+      block(at.x, at.z, 3.2, 2.4);
     }
 
     buildPresets();
@@ -891,13 +896,13 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   }
 
   function onPointerUp(e: PointerEvent) {
-    if (e.button!==0 || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
+    if (e.button !== 0 || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(pointer, camera);
     const meshes = [...characters.values()].map((c) => c.group);
     if (arcade) meshes.push(arcade);
-    const hit = raycaster.intersectObjects(meshes,true).find(h=>h.object.userData.username || h.object.userData.arcade);
+    const hit = raycaster.intersectObjects(meshes, true).find((h) => h.object.userData.username || h.object.userData.arcade);
     if (hit?.object.userData.arcade && arcadeSlot) {
       onArcade(arcadeSlot.querySelector<HTMLElement>('[data-arcade-play]') ?? arcadeSlot);
       return;

@@ -1,5 +1,5 @@
-import { Basketball } from '../components/Basketball.tsx';
 // Monitor page: filters, the people list, and switching between 2D and 3D.
+import { Basketball } from '../components/Basketball.tsx';
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamState, TeamUser } from '../../shared/types.ts';

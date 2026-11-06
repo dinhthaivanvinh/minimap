@@ -1,9 +1,18 @@
-import { AIM_PERIOD, ROUND_MS, replay, rank, weekKey, type BasketballRecords, type RecordScore } from '../shared/basketball.ts';
 // The API itself: data, rules, auth, the daily reset and weather. It knows nothing about
 // how requests arrive or where data is kept, so the same code runs on Node.js
 // (server.ts) and on Cloudflare Workers (worker/index.ts).
 
 import * as crypto from 'node:crypto';
+import {
+  AIM_PERIOD,
+  MAX_ROUND_SCORE,
+  ROUND_MS,
+  replay,
+  rank,
+  weekKey,
+  type BasketballRecords,
+  type RecordScore,
+} from '../shared/basketball.ts';
 import {
   isHexColor,
   isOnFace,
@@ -347,7 +356,7 @@ function checkBackup(value: unknown): Partial<Data> {
     const valid = (rows: unknown): rows is RecordScore[] => Array.isArray(rows) && rows.length <= users.length &&
       new Set(rows.map(r => isObject(r) ? r.username : null)).size === rows.length && rows.every(r =>
         isObject(r) && users.some(u => u.username === r.username) && Number.isInteger(r.score) &&
-        (r.score as number) >= 0 && (r.score as number) <= 938 && typeof r.at === 'string' && Number.isFinite(Date.parse(r.at)));
+        (r.score as number) >= 0 && (r.score as number) <= MAX_ROUND_SCORE && typeof r.at === 'string' && Number.isFinite(Date.parse(r.at)));
     if (!isObject(b) || typeof b.week !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.week) || !valid(b.allTime) || !valid(b.weekly)) throw invalid('its basketball records are not valid.');
     backup.basketball = { week: b.week, allTime: b.allTime, weekly: b.weekly };
   } else backup.basketball = undefined;
@@ -658,12 +667,25 @@ export function createCore({
     if (route === 'POST /api/basketball/round') {
       const user = userFromToken(req);
       const seed = crypto.randomInt(AIM_PERIOD);
-      const payload = Buffer.from(JSON.stringify({ username: user.username, version: user.pinVersion, start: now().getTime(), seed, nonce: crypto.randomBytes(12).toString('hex') })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify({
+        username: user.username,
+        version: user.pinVersion,
+        start: now().getTime(),
+        seed,
+        nonce: crypto.randomBytes(12).toString('hex'),
+      })).toString('base64url');
       const ticket = `${payload}.${signRound(payload)}`;
       const write = gameWrite.then(async () => {
         const basketballRound = { ticket };
-        await store({ ...data, users: data.users.map(u => u === user ? { ...u, basketballRound } : u) });
+        const previousRound = user.basketballRound;
         user.basketballRound = basketballRound;
+        try {
+          // Any interleaved team save must include the pending round too.
+          await store(data);
+        } catch (error) {
+          if (user.basketballRound === basketballRound) user.basketballRound = previousRound;
+          throw error;
+        }
         return jsonResponse(201, { seed, ticket });
       });
       gameWrite = write.catch(() => {});
@@ -676,23 +698,49 @@ export function createCore({
       const [payload = '', sig = ''] = ticket.split('.');
       if (!safeEqual(sig, signRound(payload))) throw new ApiError(400, 'Invalid round ticket.');
       let round;
-      try { round = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch { throw new ApiError(400, 'Invalid round ticket.'); }
+      try {
+        round = JSON.parse(Buffer.from(payload, 'base64url').toString());
+      } catch {
+        throw new ApiError(400, 'Invalid round ticket.');
+      }
       const age = now().getTime() - round.start;
-      if (round.username !== user.username || round.version !== user.pinVersion || age < ROUND_MS || age > 86400000) throw new ApiError(400, 'Round is unfinished or expired.');
+      if (round.username !== user.username || round.version !== user.pinVersion || age < ROUND_MS || age > 86400000) {
+        throw new ApiError(400, 'Round is unfinished or expired.');
+      }
       let result;
-      try { result = replay(shots, round.seed); } catch { throw new ApiError(400, 'Invalid shot timing.'); }
+      try {
+        result = replay(shots, round.seed);
+      } catch {
+        throw new ApiError(400, 'Invalid shot timing.');
+      }
       const score = result.score;
       const digest = crypto.createHash('sha256').update(JSON.stringify(shots)).digest('hex');
       const write = gameWrite.then(async () => {
-        if (user.basketballRound?.ticket !== ticket || user.basketballRound.digest && user.basketballRound.digest !== digest) throw new ApiError(409, 'This round has already ended or been replaced.');
+        if (user.basketballRound?.ticket !== ticket || (user.basketballRound.digest && user.basketballRound.digest !== digest)) {
+          throw new ApiError(409, 'This round has already ended or been replaced.');
+        }
         const current = boards();
         const entry = { username: user.username, score, at: new Date(round.start).toISOString() };
         const best = (rows: RecordScore[]) => rank([...rows.filter(r => r.username !== user.username), rows.find(r => r.username === user.username && r.score >= score) ?? entry]);
-        const next = { week: current.week, allTime: best(current.allTime), weekly: weekKey(new Date(round.start)) === current.week ? best(current.weekly) : current.weekly };
+        const next = {
+          week: current.week,
+          allTime: best(current.allTime),
+          weekly: weekKey(new Date(round.start)) === current.week ? best(current.weekly) : current.weekly,
+        };
         // Wait for durable storage before acknowledging; failed writes leave retry possible.
-        await store({ ...data, basketball: next, users: data.users.map(u => u === user ? { ...u, basketballRound: { ticket, digest } } : u) });
-        user.basketballRound = { ticket, digest };
+        const previousRound = user.basketballRound;
+        const previousRecords = data.basketball;
+        const basketballRound = { ticket, digest };
+        user.basketballRound = basketballRound;
         data.basketball = next;
+        try {
+          await store(data);
+        } catch (error) {
+          // Restore only these fields, preserving interleaved team/admin changes.
+          if (user.basketballRound === basketballRound) user.basketballRound = previousRound;
+          if (data.basketball === next) data.basketball = previousRecords;
+          throw error;
+        }
         return jsonResponse(200, { score, ...next });
       });
       gameWrite = write.catch(() => {});

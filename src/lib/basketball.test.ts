@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aimAt, targetWidth, replay, shoot, EMPTY_RESULT, rank, weekKey } from '../../shared/basketball.ts';
+import {
+  aimAt,
+  targetWidth,
+  replay,
+  shoot,
+  EMPTY_RESULT,
+  rank,
+  weekKey,
+  MAX_ROUND_SCORE,
+} from '../../shared/basketball.ts';
 
 test('meter reverses, streaks narrow the target, and every third basket adds a bonus', () => {
   assert.equal(aimAt(300, 0), 0.5);
@@ -33,7 +42,18 @@ test('replay rejects impossible cadence, malformed input and shots outside the r
 test('weekly periods start Monday UTC across years and ties use earliest result', () => {
   assert.equal(weekKey(new Date('2027-01-03T23:59:59Z')), '2026-12-28');
   assert.equal(weekKey(new Date('2027-01-04T00:00:00Z')), '2027-01-04');
-  const rows = [{ username: 'b', score: 5, at: '2026-11-02' }, { username: 'a', score: 5, at: '2026-11-01' }];
+  const rows = [
+    { username: 'b', score: 5, at: '2026-11-02' },
+    { username: 'a', score: 5, at: '2026-11-01' },
+  ];
   assert.equal(rank(rows)[0]?.username, 'a');
   assert.equal(rows[0]?.username, 'b');
+});
+
+test('a perfect boundary-to-boundary round reaches the shared backup score cap', () => {
+  const shots = [...Array.from({ length: 100 }, (_, i) => i * 600), 59999];
+  const result = replay(shots, 300);
+  assert.equal(result.made, 101);
+  assert.equal(result.score, 667);
+  assert.equal(result.score, MAX_ROUND_SCORE);
 });

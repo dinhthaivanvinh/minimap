@@ -21,9 +21,13 @@ const View = styled.div<{ $namesOff: boolean }>`
   background: linear-gradient(var(--sky-top), var(--sky-bottom) 70%);
   box-shadow: 0 5px 0 ${theme.ink};
 
-  ${({ $namesOff }) => $namesOff && css`
-    ${BadgeName} { display: none; }
-  `}
+  ${({ $namesOff }) =>
+    $namesOff &&
+    css`
+      ${BadgeName} {
+        display: none;
+      }
+    `}
 `;
 
 const SkyLayer = styled.div`
@@ -36,7 +40,9 @@ const SceneStage = styled.div`
   position: absolute;
   inset: 0;
 
-  canvas { display: block; }
+  canvas {
+    display: block;
+  }
 `;
 
 const ZoneLabel = styled.div`
@@ -72,8 +78,12 @@ const CameraBar = styled.div`
   gap: 6px;
   pointer-events: none;
 
-  ${Button} { pointer-events: auto; }
-  ${Button}[aria-pressed='true'] { background: ${theme.butter}; }
+  ${Button} {
+    pointer-events: auto;
+  }
+  ${Button}[aria-pressed='true'] {
+    background: ${theme.butter};
+  }
 
   ${media.phone} {
     flex-wrap: nowrap;
@@ -85,7 +95,9 @@ const CameraBar = styled.div`
     pointer-events: auto;
     scrollbar-width: none;
 
-    ${Button} { flex: none; }
+    ${Button} {
+      flex: none;
+    }
   }
 `;
 
@@ -101,13 +113,17 @@ const CameraHint = styled.p`
   pointer-events: none;
 
   /* Stays readable against a dark sky. */
-  [data-daylight='night'] &, [data-daylight='dawn'] &, [data-daylight='dusk'] & {
+  [data-daylight='night'] &,
+  [data-daylight='dawn'] &,
+  [data-daylight='dusk'] & {
     padding: 0 8px;
     border-radius: 8px;
-    background: rgb(255 254 250 / .85);
+    background: rgb(255 254 250 / 0.85);
   }
 
-  ${media.phone} { display: none; }
+  ${media.phone} {
+    display: none;
+  }
 `;
 
 interface Map3DProps extends MapProps {
@@ -115,11 +131,21 @@ interface Map3DProps extends MapProps {
   onFail: () => void;
 }
 
-export default function Map3D({ state, isDimmed, selected, focus, onSelect, onArcade, look, onFail }: Map3DProps) {
+export default function Map3D({
+  state,
+  isDimmed,
+  selected,
+  focus,
+  onSelect,
+  onArcade,
+  look,
+  onFail,
+}: Map3DProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene3D | null>(null);
   const [arcadeSlot, setArcadeSlot] = useState<HTMLElement | null>(null);
-  const onArcadeRef = useRef(onArcade); onArcadeRef.current=onArcade;
+  const onArcadeRef = useRef(onArcade);
+  onArcadeRef.current = onArcade;
   const [personLabels, setPersonLabels] = useState<ReadonlyMap<string, HTMLElement>>(new Map());
   const [zoneLabels, setZoneLabels] = useState<ZoneLabelSlot[]>([]);
   const [camera, setCamera] = useState<CameraState>({ presets: [], active: 'overview' });
@@ -137,17 +163,19 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect, onAr
     if (!stage) return;
     const scene = createScene3D(stage, {
       onCamera: setCamera,
-      onArcade: trigger=>onArcadeRef.current(trigger),
+      onArcade: (trigger) => onArcadeRef.current(trigger),
       onContextGone: () => onFailRef.current(),
       // Clicking a character opens the same card as clicking its badge.
-      onPick: (username, label) => onSelectRef.current(username, label.querySelector<HTMLElement>('[data-badge]') ?? label),
+      onPick: (username, label) =>
+        onSelectRef.current(username, label.querySelector<HTMLElement>('[data-badge]') ?? label),
     });
     sceneRef.current = scene;
     return () => {
       scene.destroy();
       sceneRef.current = null;
       setPersonLabels(new Map());
-      setZoneLabels([]); setArcadeSlot(null);
+      setZoneLabels([]);
+      setArcadeSlot(null);
     };
   }, []);
 
@@ -156,7 +184,8 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect, onAr
     if (!scene) return;
     const { people, zones, arcade } = scene.update(state, isDimmed);
     setPersonLabels(people);
-    setZoneLabels(zones); setArcadeSlot(arcade);
+    setZoneLabels(zones);
+    setArcadeSlot(arcade);
   }, [state, isDimmed]);
 
   useEffect(() => {
@@ -206,10 +235,19 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect, onAr
 
       <CameraHint>Drag to rotate, scroll to zoom, click someone for details</CameraHint>
 
-      {arcadeSlot && createPortal(
-        <ArcadePlay data-arcade-play data-arcade-cabinet="3d" aria-label="Open basketball arcade" aria-haspopup="dialog" onClick={event=>onArcade(event.currentTarget)}>Play</ArcadePlay>,
-        arcadeSlot,
-      )}
+      {arcadeSlot &&
+        createPortal(
+          <ArcadePlay
+            data-arcade-play
+            data-arcade-cabinet="3d"
+            aria-label="Open basketball arcade"
+            aria-haspopup="dialog"
+            onClick={(event) => onArcade(event.currentTarget)}
+          >
+            Play
+          </ArcadePlay>,
+          arcadeSlot,
+        )}
 
       {zoneLabels.map((zone) =>
         createPortal(
