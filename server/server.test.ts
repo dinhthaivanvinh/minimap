@@ -254,7 +254,7 @@ test('the event stream sends current state, then each change', async (t) => {
 
   assert.equal((await nextEvent()).users.length, 0);
   await addUser('a');
-  assert.equal((await nextEvent()).users[0].username, 'a');
+  assert.equal((await nextEvent()).users[0]!.username, 'a');
   await reader.cancel();
 });
 
@@ -907,7 +907,7 @@ test('open maps hear about a schedule when it is made and when it fires', async 
   t.after(() => controller.abort());
   const res = await fetch(`http://127.0.0.1:${port}/api/events`, { signal: controller.signal });
   const { reader, nextState } = readStates(res);
-  const nextUser = async (): Promise<TeamUser> => (await nextState()).users[0];
+  const nextUser = async (): Promise<TeamUser> => (await nextState()).users[0]!;
 
   assert.equal((await nextUser()).scheduled, null);
   await me(token, { scheduled: { at: AT_4PM, status: 'Dentist' } });
