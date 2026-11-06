@@ -48,6 +48,27 @@ async function setup(t: TestContext, options: Partial<AppOptions> = {}) {
   return { app, api, addUser, claim, me, clock, dataFile, port };
 }
 
+// Reads the team's state from the live updates, skipping features' own named events.
+function readStates(res: Response) {
+  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  async function nextState(): Promise<TeamState> {
+    for (;;) {
+      const end = buffer.indexOf('\n\n');
+      if (end >= 0) {
+        const message = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        if (message.startsWith('data: ')) return JSON.parse(message.slice(6));
+        continue;
+      }
+      const { value, done } = await reader.read();
+      if (done) throw new Error('The live updates stopped.');
+      buffer += value;
+    }
+  }
+  return { reader, nextState };
+}
+
 test('admin routes need the password', async (t) => {
   const { api } = await setup(t);
   assert.equal((await api('POST', '/api/admin/users', { username: 'a' })).status, 401);
@@ -229,9 +250,7 @@ test('the event stream sends current state, then each change', async (t) => {
   const controller = new AbortController();
   t.after(() => controller.abort());
   const res = await fetch(`http://127.0.0.1:${port}/api/events`, { signal: controller.signal });
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  const nextEvent = async () => JSON.parse(decoder.decode((await reader.read()).value).replace(/^data: /, ''));
+  const { reader, nextState: nextEvent } = readStates(res);
 
   assert.equal((await nextEvent()).users.length, 0);
   await addUser('a');
@@ -887,9 +906,8 @@ test('open maps hear about a schedule when it is made and when it fires', async 
   const controller = new AbortController();
   t.after(() => controller.abort());
   const res = await fetch(`http://127.0.0.1:${port}/api/events`, { signal: controller.signal });
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  const nextUser = async (): Promise<TeamUser> => JSON.parse(decoder.decode((await reader.read()).value).replace(/^data: /, '')).users[0];
+  const { reader, nextState } = readStates(res);
+  const nextUser = async (): Promise<TeamUser> => (await nextState()).users[0];
 
   assert.equal((await nextUser()).scheduled, null);
   await me(token, { scheduled: { at: AT_4PM, status: 'Dentist' } });
