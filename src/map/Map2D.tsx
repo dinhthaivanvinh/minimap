@@ -5,12 +5,13 @@ import type { TeamUser } from '../../shared/types.ts';
 import { Badge, BadgeFigure, type SelectHandler } from '../components/Badge.tsx';
 import { Desk, Mochi, MochiSvg } from '../components/Mochi.tsx';
 import { useElementSize, useReducedMotion } from '../lib/hooks.ts';
-import { computeLayout, type MapLayout, type Seat, type Zone, type ZoneKind } from '../lib/layout.ts';
+import { computeLayout, noticeBoardSpot, type MapLayout, type Seat, type Zone, type ZoneKind } from '../lib/layout.ts';
 import type { Ambience } from '../lib/ambience.ts';
 import { lookFor } from '../lib/look.ts';
 import { media, theme } from '../styles/theme.ts';
 import { DECOR, PARK_TREES, STREET_ART, Umbrella } from './decor.tsx';
 import { ArcadeCabinet2D } from './ArcadeCabinet.tsx';
+import { NoticeBoard2D } from './NoticeBoard2D.tsx';
 import type { MapProps } from './types.ts';
 import { hasWeather, Weather2D } from './Weather2D.tsx';
 
@@ -452,7 +453,7 @@ function isPlain(look: Ambience): boolean {
   return look.daylight === 1 && look.warmth === 0 && look.weather.gloom === 0;
 }
 
-export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, look }: MapProps) {
+export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, look, votes }: MapProps) {
   const fillRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const daylight = {
@@ -472,6 +473,8 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, l
   const { width, height } = useElementSize(fillRef);
   const portrait = height > 0 && width / height < 0.95;
   const layout = useMemo(() => computeLayout(state.places, state.users, { portrait }), [state.places, state.users, portrait]);
+
+  const board = noticeBoardSpot(layout);
 
   // Fit the whole plan inside the available space, keeping its proportions.
   const scale = Math.min(width / layout.width, height / layout.height);
@@ -527,6 +530,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, l
           {layout.zones.map((zone) => (
             <ZoneRoom key={zone.id} zone={zone} layout={layout} busy={isBusy(zone)} snowy={snowy} />
           ))}
+          {board && <NoticeBoard2D spot={board} width={layout.width} height={layout.height} votes={votes} />}
           {hasWeather(look) && <Weather2D look={look} reduced={reduced} />}
           {state.users.map((user) => {
             const seat = layout.seats.get(user.username);

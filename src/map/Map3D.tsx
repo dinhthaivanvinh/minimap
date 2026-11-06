@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import styled, { css } from 'styled-components';
+import { mapSummary, type VoteView } from '../../shared/vote.ts';
 import { Badge, BadgeName } from '../components/Badge.tsx';
 import { useReducedMotion } from '../lib/hooks.ts';
 import { media, theme } from '../styles/theme.ts';
@@ -126,6 +127,11 @@ const CameraHint = styled.p`
   }
 `;
 
+function boardLabel(votes: VoteView[]): string {
+  const open = mapSummary(votes, new Date()).length;
+  return `Notice board: ${open || 'no'} open ${open === 1 ? 'vote' : 'votes'}. Open team votes`;
+}
+
 interface Map3DProps extends MapProps {
   /** The 3D map can't keep drawing, so show something else. */
   onFail: () => void;
@@ -139,11 +145,13 @@ export default function Map3D({
   onSelect,
   onArcade,
   look,
+  votes,
   onFail,
 }: Map3DProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene3D | null>(null);
   const [arcadeSlot, setArcadeSlot] = useState<HTMLElement | null>(null);
+  const [boardSlot, setBoardSlot] = useState<HTMLElement | null>(null);
   const onArcadeRef = useRef(onArcade);
   onArcadeRef.current = onArcade;
   const [personLabels, setPersonLabels] = useState<ReadonlyMap<string, HTMLElement>>(new Map());
@@ -164,6 +172,7 @@ export default function Map3D({
     const scene = createScene3D(stage, {
       onCamera: setCamera,
       onArcade: (trigger) => onArcadeRef.current(trigger),
+      onNoticeBoard: (link) => location.assign(link),
       onContextGone: () => onFailRef.current(),
       // Clicking a character opens the same card as clicking its badge.
       onPick: (username, label) =>
@@ -176,17 +185,23 @@ export default function Map3D({
       setPersonLabels(new Map());
       setZoneLabels([]);
       setArcadeSlot(null);
+      setBoardSlot(null);
     };
   }, []);
 
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    const { people, zones, arcade } = scene.update(state, isDimmed);
+    const { people, zones, arcade, board } = scene.update(state, isDimmed);
     setPersonLabels(people);
     setZoneLabels(zones);
     setArcadeSlot(arcade);
+    setBoardSlot(board);
   }, [state, isDimmed]);
+
+  useEffect(() => {
+    sceneRef.current?.setVotes(votes);
+  }, [votes]);
 
   useEffect(() => {
     if (focus) sceneRef.current?.focus(focus.username);
@@ -247,6 +262,14 @@ export default function Map3D({
             Play
           </ArcadePlay>,
           arcadeSlot,
+        )}
+
+      {boardSlot &&
+        createPortal(
+          <ArcadePlay as="a" href="/vote" data-notice-board="3d" style={{ textDecoration: 'none' }} aria-label={boardLabel(votes)}>
+            Votes
+          </ArcadePlay>,
+          boardSlot,
         )}
 
       {zoneLabels.map((zone) =>

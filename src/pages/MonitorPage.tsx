@@ -2,6 +2,7 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
+import type { VoteView } from '../../shared/vote.ts';
 import { DetailCard } from '../components/DetailCard.tsx';
 import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
@@ -21,6 +22,7 @@ const Map3D = lazy(() => import('../map/Map3D.tsx'));
 const Basketball = lazy(() => import('../components/Basketball.tsx').then((m) => ({ default: m.Basketball })));
 
 const MODE_KEY = 'minimap.mode';
+const NO_VOTES: VoteView[] = [];
 const WEATHER_KEY = 'minimap.weather';
 
 type Filter = 'all' | 'office' | 'wfh' | 'notWorking';
@@ -350,7 +352,7 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }
 
 export function MonitorPage() {
-  const { state, online } = useTeamState();
+  const { state, online, votes } = useTeamState();
   const has3D = useMemo(supportsWebGL, []);
   const [filter, setFilter] = useState<Filter>('all');
   const [mode, setMode] = useState<Mode>(() => {
@@ -435,7 +437,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look, votes: votes ?? NO_VOTES };
 
   return (
     <Page>

@@ -103,7 +103,8 @@ export const DECOR: Record<ZoneKind, DecorItem[]> = {
     { art: Tree, left: 3, bottom: 5, width: 11, sway: true },
   ],
   off: [{ art: Parasol, left: 6, top: 22, width: 17 }],
-  lobby: [{ art: Mat, right: 3, bottom: 12, width: 13, large: true }],
+  // The notice board stands at the right edge (NoticeBoard2D.tsx), so the mat lies by the door.
+  lobby: [{ art: Mat, left: 3, bottom: 12, width: 13, large: true }],
   // The street lines its things up with its pavement and road instead: see STREET_ART.
   street: [],
 };

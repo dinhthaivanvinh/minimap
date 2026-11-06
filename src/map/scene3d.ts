@@ -5,13 +5,16 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
+import type { VoteView } from '../../shared/vote.ts';
 import { CLEAR, mixColor, type Ambience, type Conditions } from '../lib/ambience.ts';
 import { watchContextLoss } from '../lib/contextLoss.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
-import { computeLayout, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
+import { boardNotes } from '../lib/noticeBoard.ts';
+import { computeLayout, noticeBoardSpot, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { box, clampTo, contains, grow, pickSpot, steer, type Box } from '../lib/wander.ts';
 import { createArcadeCabinet } from './arcade3d.ts';
 import { createCharacterBuilder } from './character3d.ts';
+import { createNoticeBoard, type NoticeBoard3D } from './noticeBoard3d.ts';
 
 export interface CameraPreset {
   id: string;
@@ -34,6 +37,8 @@ export interface SceneLabels {
   people: ReadonlyMap<string, HTMLElement>;
   zones: ZoneLabelSlot[];
   arcade: HTMLElement | null;
+  /** Where the notice board's link goes. */
+  board: HTMLElement | null;
 }
 
 export interface Scene3D {
@@ -45,11 +50,15 @@ export interface Scene3D {
   setWandering(on: boolean): void;
   /** Lights the town for the time of day: sun and sky, moonlight, lamps and windows. */
   setAmbience(look: Ambience): void;
+  /** The team's votes, for the notice board. */
+  setVotes(votes: VoteView[]): void;
   destroy(): void;
 }
 
 interface SceneOptions {
   onArcade: (trigger: HTMLElement) => void;
+  /** A click on the notice board: the /vote page, or one vote on it. */
+  onNoticeBoard: (link: string) => void;
   onPick: (username: string, label: HTMLElement) => void;
   onCamera: (camera: CameraState) => void;
   /** The browser took away the 3D context and didn't give it back. */
@@ -206,7 +215,7 @@ function checkerTexture(a: string, b: string) {
   return texture;
 }
 
-export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade }: SceneOptions): Scene3D {
+export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade, onNoticeBoard }: SceneOptions): Scene3D {
   const ramp = toonRamp();
   const materials = new Map<number, THREE.MeshToonMaterial>();
   const mat = (color: number): THREE.MeshToonMaterial => {
@@ -267,6 +276,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   let arcade: THREE.Group | null = null;
   let arcadeSlot: HTMLElement | null = null;
+  let noticeBoard: NoticeBoard3D | null = null;
+  let votes: VoteView[] = [];
+  let boardDrawnAt = 0;
+  let boardPulsing = false;
   const world = new THREE.Group();
   scene.add(world);
   const desks = new THREE.Group();
@@ -548,7 +561,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   function addLobby(group: THREE.Group, z: Zone, c: Point) {
     group.add(mesh(new THREE.BoxGeometry(z.w, 1, z.h), 0xffe0ec, { ...c, y: 0.5, shadow: false }));
-    group.add(mesh(new THREE.BoxGeometry(9, 0.2, 3.6), 0xffe27a, { x: c.x + z.w / 2 - 7, y: 1.1, z: c.z + z.h / 2 - 3, shadow: false }));
+    group.add(mesh(new THREE.BoxGeometry(9, 0.2, 3.6), 0xffe27a, { x: c.x - z.w / 2 + 7, y: 1.1, z: c.z + z.h / 2 - 3, shadow: false }));
     addNightLight(group, c.x, 7, c.z, { strength: 1.8, distance: Math.max(z.w, z.h) * 0.75 });
   }
 
@@ -678,8 +691,31 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       block(at.x, at.z, 3.2, 2.4);
     }
 
+    // The notice board stands at the back of its spot, facing the camera, lit after dark.
+    noticeBoard = null;
+    const spot = noticeBoardSpot(layout);
+    if (spot) {
+      const at = toWorld(spot.x + spot.w / 2, spot.y + spot.h * 0.35);
+      noticeBoard = createNoticeBoard();
+      noticeBoard.group.position.set(at.x, 1, at.z);
+      noticeBoard.group.scale.setScalar(spot.w / 10.5);
+      world.add(noticeBoard.group);
+      block(at.x, at.z, spot.w / 2, 1);
+      addNightLight(world, at.x, 9, at.z + 5, { strength: 1.6, distance: 14 });
+      drawBoard(0);
+    }
+
     buildPresets();
     applyNightLights();
+  }
+
+  function drawBoard(time: number) {
+    if (!noticeBoard) return;
+    const pulse = reducedMotion ? 0 : (Math.sin(time * 3.5) + 1) / 2;
+    const board = boardNotes(votes, new Date());
+    noticeBoard.draw(board, pulse);
+    boardDrawnAt = time;
+    boardPulsing = !reducedMotion && board.notes.some((n) => n.urgent);
   }
 
   function buildDesks() {
@@ -902,7 +938,12 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     raycaster.setFromCamera(pointer, camera);
     const meshes = [...characters.values()].map((c) => c.group);
     if (arcade) meshes.push(arcade);
-    const hit = raycaster.intersectObjects(meshes, true).find((h) => h.object.userData.username || h.object.userData.arcade);
+    if (noticeBoard) meshes.push(noticeBoard.group);
+    const hit = raycaster.intersectObjects(meshes, true).find((h) => h.object.userData.username || h.object.userData.arcade || h.object.userData.noticeBoard);
+    if (hit?.object.userData.noticeBoard && noticeBoard) {
+      onNoticeBoard(hit.object.userData.noticeFace && hit.uv ? noticeBoard.linkAt(hit.uv) : '/vote');
+      return;
+    }
     if (hit?.object.userData.arcade && arcadeSlot) {
       onArcade(arcadeSlot.querySelector<HTMLElement>('[data-arcade-play]') ?? arcadeSlot);
       return;
@@ -991,7 +1032,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       const element = zoneLabels.get(id);
       return element ? [{ id, name, count, element }] : [];
     });
-    return { people: labelElements, zones, arcade: arcadeSlot };
+    return { people: labelElements, zones, arcade: arcadeSlot, board: noticeBoard?.slot ?? null };
   }
 
   // ---- Animation --------------------------------------------------------
@@ -1006,6 +1047,9 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       if (t >= 1) tween = null;
     }
     controls.update();
+
+    // Notes count down every half minute; ones in their last hour pulse.
+    if (time - boardDrawnAt > (boardPulsing ? 0.1 : 30)) drawBoard(time);
 
     for (const c of characters.values()) {
       const { group, inner } = c;
@@ -1233,6 +1277,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       lampGlow.opacity = lamps * 0.85;
       lampLevel = lamps;
       applyNightLights();
+    },
+
+    setVotes(next) {
+      votes = next;
+      drawBoard(performance.now() / 1000);
     },
 
     setWandering(on) {

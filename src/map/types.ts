@@ -1,4 +1,5 @@
 import type { TeamState, TeamUser } from '../../shared/types.ts';
+import type { VoteView } from '../../shared/vote.ts';
 import type { SelectHandler } from '../components/Badge.tsx';
 import type { Ambience } from '../lib/ambience.ts';
 
@@ -17,4 +18,6 @@ export interface MapProps {
   onArcade: (trigger: HTMLElement) => void;
   /** The time of day and weather to show (lib/ambience.ts). */
   look: Ambience;
+  /** The team's votes, as anyone may see them. The notice board shows the open ones. */
+  votes: VoteView[];
 }
