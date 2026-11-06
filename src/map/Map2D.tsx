@@ -10,6 +10,7 @@ import type { Ambience } from '../lib/ambience.ts';
 import { lookFor } from '../lib/look.ts';
 import { media, theme } from '../styles/theme.ts';
 import { DECOR, PARK_TREES, STREET_ART, Umbrella } from './decor.tsx';
+import { ArcadeCabinet2D } from './ArcadeCabinet.tsx';
 import type { MapProps } from './types.ts';
 import { hasWeather, Weather2D } from './Weather2D.tsx';
 
@@ -451,7 +452,7 @@ function isPlain(look: Ambience): boolean {
   return look.daylight === 1 && look.warmth === 0 && look.weather.gloom === 0;
 }
 
-export default function Map2D({ state, isDimmed, selected, onSelect, look }: MapProps) {
+export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, look }: MapProps) {
   const fillRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const daylight = {
@@ -496,7 +497,6 @@ export default function Map2D({ state, isDimmed, selected, onSelect, look }: Map
         <Plan style={{ width: layout.width * scale, height: layout.height * scale }}>
           {layout.park && (
             <Park
-              aria-hidden="true"
               style={{
                 left: percent(layout.park.x, layout.width),
                 top: percent(layout.park.y, layout.height),
@@ -515,12 +515,13 @@ export default function Map2D({ state, isDimmed, selected, onSelect, look }: Map
                     aspectRatio: '1',
                     left: left === undefined ? undefined : `${left}%`,
                     right: right === undefined ? undefined : `${right}%`,
-                    bottom: `${bottom}%`,
+                    bottom: `${55+bottom*.25}%`,
                   }}
                 >
                   {art}
                 </DecorBox>
               ))}
+              <ArcadeCabinet2D x="50%" y="90%" width={4.8*scale} onPlay={onArcade}/>
             </Park>
           )}
           {layout.zones.map((zone) => (

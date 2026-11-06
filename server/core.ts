@@ -1,3 +1,4 @@
+import { AIM_PERIOD, ROUND_MS, replay, rank, weekKey, type BasketballRecords, type RecordScore } from '../shared/basketball.ts';
 // The API itself: data, rules, auth, the daily reset and weather. It knows nothing about
 // how requests arrive or where data is kept, so the same code runs on Node.js
 // (server.ts) and on Cloudflare Workers (worker/index.ts).
@@ -19,6 +20,7 @@ import type { AuthResult, Clock, OfficeLocation, Place, ScheduledChange, SunTime
 export type JsonBody = Record<string, unknown>;
 
 interface StoredUser {
+  basketballRound?: { ticket: string; digest?: string };
   username: string;
   nickname: string;
   place: string | null;
@@ -38,6 +40,7 @@ interface Settings {
 }
 
 export interface Data {
+  basketball?: BasketballRecords;
   secret: string;
   lastResetDate: string;
   places: Place[];
@@ -61,7 +64,7 @@ export interface ApiResponse {
 
 export interface CoreOptions {
   saved: Partial<Data> | null; // What was stored last time, or null on a first run.
-  save: (data: Data) => void;
+  save: (data: Data) => void | Promise<void>;
   onChange: (state: TeamState) => void; // Tell connected maps about the new state.
   adminPassword: string;
   resetAt?: string;
@@ -311,6 +314,8 @@ function checkBackup(value: unknown): Partial<Data> {
       throw invalid(`${name}'s character is not valid.`);
     }
     return {
+      ...(isObject(u.basketballRound) && typeof u.basketballRound.ticket === 'string' && u.basketballRound.ticket.length <= 1024 &&
+        (u.basketballRound.digest === undefined || typeof u.basketballRound.digest === 'string') ? { basketballRound: { ticket: u.basketballRound.ticket, digest: u.basketballRound.digest as string | undefined } } : {}),
       username: name,
       nickname: typeof u.nickname === 'string' && u.nickname.trim() ? u.nickname.trim() : name,
       // Places that no longer exist count as not checked in.
@@ -337,6 +342,15 @@ function checkBackup(value: unknown): Partial<Data> {
   }
   const backup: Partial<Data> = { places: places as Place[], users, settings, lastResetDate: lastResetDate ?? '' };
   if (typeof value.secret === 'string' && value.secret) backup.secret = value.secret;
+  if (value.basketball !== undefined) {
+    const b = value.basketball;
+    const valid = (rows: unknown): rows is RecordScore[] => Array.isArray(rows) && rows.length <= users.length &&
+      new Set(rows.map(r => isObject(r) ? r.username : null)).size === rows.length && rows.every(r =>
+        isObject(r) && users.some(u => u.username === r.username) && Number.isInteger(r.score) &&
+        (r.score as number) >= 0 && (r.score as number) <= 938 && typeof r.at === 'string' && Number.isFinite(Date.parse(r.at)));
+    if (!isObject(b) || typeof b.week !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.week) || !valid(b.allTime) || !valid(b.weekly)) throw invalid('its basketball records are not valid.');
+    backup.basketball = { week: b.week, allTime: b.allTime, weekly: b.weekly };
+  } else backup.basketball = undefined;
   return backup;
 }
 
@@ -357,6 +371,7 @@ export function createCore({
   if (timeZone !== undefined && !isTimeZone(timeZone)) throw new Error(`Unknown time zone: ${timeZone}`);
 
   const data: Data = {
+    basketball: saved?.basketball,
     secret: saved?.secret || crypto.randomBytes(32).toString('hex'),
     places: saved?.places || DEFAULT_PLACES,
     users: saved?.users || [],
@@ -623,11 +638,66 @@ export function createCore({
     return [...data.places.map((p) => p.id), ...FIXED_PLACES];
   }
 
+  let gameWrite: Promise<unknown> = Promise.resolve();
+  function boards(): BasketballRecords {
+    const week = weekKey(now());
+    const members = (rows: RecordScore[]) => rank(rows.filter(r => data.users.some(u => u.username === r.username)));
+    return { week, allTime: members(data.basketball?.allTime ?? []), weekly: members(data.basketball?.week === week ? data.basketball.weekly : []) };
+  }
+  function signRound(payload: string): string {
+    return crypto.createHmac('sha256', data.secret).update(`basketball:${payload}`).digest('hex');
+  }
+
   // ---- Routes -----------------------------------------------------------
 
   async function route(req: ApiRequest): Promise<ApiResponse> {
     const { url } = req;
     const route = `${req.method} ${url.pathname}`;
+
+    if (route === 'GET /api/basketball') return jsonResponse(200, boards());
+    if (route === 'POST /api/basketball/round') {
+      const user = userFromToken(req);
+      const seed = crypto.randomInt(AIM_PERIOD);
+      const payload = Buffer.from(JSON.stringify({ username: user.username, version: user.pinVersion, start: now().getTime(), seed, nonce: crypto.randomBytes(12).toString('hex') })).toString('base64url');
+      const ticket = `${payload}.${signRound(payload)}`;
+      const write = gameWrite.then(async () => {
+        const basketballRound = { ticket };
+        await store({ ...data, users: data.users.map(u => u === user ? { ...u, basketballRound } : u) });
+        user.basketballRound = basketballRound;
+        return jsonResponse(201, { seed, ticket });
+      });
+      gameWrite = write.catch(() => {});
+      return await write;
+    }
+    if (route === 'POST /api/basketball/score') {
+      const user = userFromToken(req);
+      const { ticket, shots } = await req.readJson();
+      if (typeof ticket !== 'string' || ticket.length > 1024) throw new ApiError(400, 'Invalid round ticket.');
+      const [payload = '', sig = ''] = ticket.split('.');
+      if (!safeEqual(sig, signRound(payload))) throw new ApiError(400, 'Invalid round ticket.');
+      let round;
+      try { round = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch { throw new ApiError(400, 'Invalid round ticket.'); }
+      const age = now().getTime() - round.start;
+      if (round.username !== user.username || round.version !== user.pinVersion || age < ROUND_MS || age > 86400000) throw new ApiError(400, 'Round is unfinished or expired.');
+      let result;
+      try { result = replay(shots, round.seed); } catch { throw new ApiError(400, 'Invalid shot timing.'); }
+      const score = result.score;
+      const digest = crypto.createHash('sha256').update(JSON.stringify(shots)).digest('hex');
+      const write = gameWrite.then(async () => {
+        if (user.basketballRound?.ticket !== ticket || user.basketballRound.digest && user.basketballRound.digest !== digest) throw new ApiError(409, 'This round has already ended or been replaced.');
+        const current = boards();
+        const entry = { username: user.username, score, at: new Date(round.start).toISOString() };
+        const best = (rows: RecordScore[]) => rank([...rows.filter(r => r.username !== user.username), rows.find(r => r.username === user.username && r.score >= score) ?? entry]);
+        const next = { week: current.week, allTime: best(current.allTime), weekly: weekKey(new Date(round.start)) === current.week ? best(current.weekly) : current.weekly };
+        // Wait for durable storage before acknowledging; failed writes leave retry possible.
+        await store({ ...data, basketball: next, users: data.users.map(u => u === user ? { ...u, basketballRound: { ticket, digest } } : u) });
+        user.basketballRound = { ticket, digest };
+        data.basketball = next;
+        return jsonResponse(200, { score, ...next });
+      });
+      gameWrite = write.catch(() => {});
+      return await write;
+    }
 
     if (route === 'GET /api/state') return jsonResponse(200, publicState());
 
@@ -706,6 +776,7 @@ export function createCore({
         requireAdmin(req);
         const user = mustFindUser(username);
         data.users.splice(data.users.indexOf(user), 1);
+        if (data.basketball) data.basketball = boards();
         commit();
         return jsonResponse(200, { ok: true });
       }

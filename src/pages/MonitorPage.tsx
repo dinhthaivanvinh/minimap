@@ -1,3 +1,4 @@
+import { Basketball } from '../components/Basketball.tsx';
 // Monitor page: filters, the people list, and switching between 2D and 3D.
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
@@ -356,6 +357,8 @@ export function MonitorPage() {
   });
   const [selection, setSelection] = useState<{ username: string; anchor: HTMLElement } | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
+  const [arcadeRequest, setArcadeRequest] = useState<{trigger: HTMLElement} | null>(null);
+  const openArcade = useCallback((trigger: HTMLElement) => setArcadeRequest({trigger}), []);
   const [pickerOpen, setPickerOpen] = useState(false);
   // Each screen can turn the town's daylight and weather off, if the admin has them on.
   const [weatherOn, setWeatherOn] = useState(() => readSaved(WEATHER_KEY) !== 'off');
@@ -430,7 +433,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, look };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look };
 
   return (
     <Page>
@@ -489,6 +492,7 @@ export function MonitorPage() {
               </Map3DGuard>
             )}
           </MapHost>
+          <Basketball initialView={mode} users={users} request={arcadeRequest} />
           {!online && <OfflineNote role="status">Reconnecting to the server</OfflineNote>}
           {state && !state.users.length && (
             <EmptyNote>No team members yet. Add usernames on the <a href="/admin">Admin page</a>.</EmptyNote>

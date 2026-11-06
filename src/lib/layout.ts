@@ -151,7 +151,7 @@ function landscapeZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'
   zones.push(zone('out', FIXED_ZONES.out, GAP, streetY, MAP_WIDTH - GAP * 2, streetHeight));
 
   const bottomY = streetY + streetHeight + GAP;
-  const available = MAP_WIDTH - GAP * 3;
+  const available = MAP_WIDTH - GAP * 4 - MIN_PARK;
   const wantedLobby = Math.max(MIN_LOBBY, count('lobby') * LOBBY_PERSON_WIDTH + 4);
   const wantedBeach = Math.max(MIN_BEACH, count('off') * BEACH_PERSON_WIDTH + 4);
   const fit = Math.min(1, available / (wantedLobby + wantedBeach));
@@ -160,7 +160,7 @@ function landscapeZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'
   zones.push(zone('lobby', FIXED_ZONES.lobby, GAP, bottomY, lobbyWidth, bottomHeight));
   zones.push(zone('off', FIXED_ZONES.off, MAP_WIDTH - GAP - offWidth, bottomY, offWidth, bottomHeight));
 
-  const parkWidth = MAP_WIDTH - GAP * 4 - lobbyWidth - offWidth;
+  const parkWidth = Math.max(MIN_PARK,MAP_WIDTH - GAP * 4 - lobbyWidth - offWidth);
   const park = parkWidth >= MIN_PARK ? { x: GAP * 2 + lobbyWidth, y: bottomY, w: parkWidth, h: bottomHeight } : null;
   return { zones, width: MAP_WIDTH, height: MAP_HEIGHT, park };
 }
@@ -219,7 +219,9 @@ function portraitZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'>
   zones.push(zone('lobby', FIXED_ZONES.lobby, 2, y, lobbyWidth, bottomH));
   zones.push(zone('off', FIXED_ZONES.off, 4 + lobbyWidth, y, offWidth, bottomH));
   y += bottomH + gap;
-  return { zones, width: 100, height: y, park: null };
+  const park = { x: 2, y, w: 96, h: 32 };
+  y += park.h + gap;
+  return { zones, width: 100, height: y, park };
 }
 
 /** Where people stand in a room: clear of its name, with a little margin from its edges. */

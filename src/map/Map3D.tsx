@@ -8,6 +8,7 @@ import { media, theme } from '../styles/theme.ts';
 import { Button } from '../styles/ui.ts';
 import { createScene3D, type CameraState, type Scene3D, type ZoneLabelSlot } from './scene3d.ts';
 import type { MapProps } from './types.ts';
+import { ArcadePlay } from './ArcadeCabinet.tsx';
 import { Clouds } from './Weather2D.tsx';
 
 const View = styled.div<{ $namesOff: boolean }>`
@@ -114,9 +115,11 @@ interface Map3DProps extends MapProps {
   onFail: () => void;
 }
 
-export default function Map3D({ state, isDimmed, selected, focus, onSelect, look, onFail }: Map3DProps) {
+export default function Map3D({ state, isDimmed, selected, focus, onSelect, onArcade, look, onFail }: Map3DProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene3D | null>(null);
+  const [arcadeSlot, setArcadeSlot] = useState<HTMLElement | null>(null);
+  const onArcadeRef = useRef(onArcade); onArcadeRef.current=onArcade;
   const [personLabels, setPersonLabels] = useState<ReadonlyMap<string, HTMLElement>>(new Map());
   const [zoneLabels, setZoneLabels] = useState<ZoneLabelSlot[]>([]);
   const [camera, setCamera] = useState<CameraState>({ presets: [], active: 'overview' });
@@ -134,6 +137,7 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect, look
     if (!stage) return;
     const scene = createScene3D(stage, {
       onCamera: setCamera,
+      onArcade: trigger=>onArcadeRef.current(trigger),
       onContextGone: () => onFailRef.current(),
       // Clicking a character opens the same card as clicking its badge.
       onPick: (username, label) => onSelectRef.current(username, label.querySelector<HTMLElement>('[data-badge]') ?? label),
@@ -143,16 +147,16 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect, look
       scene.destroy();
       sceneRef.current = null;
       setPersonLabels(new Map());
-      setZoneLabels([]);
+      setZoneLabels([]); setArcadeSlot(null);
     };
   }, []);
 
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    const { people, zones } = scene.update(state, isDimmed);
+    const { people, zones, arcade } = scene.update(state, isDimmed);
     setPersonLabels(people);
-    setZoneLabels(zones);
+    setZoneLabels(zones); setArcadeSlot(arcade);
   }, [state, isDimmed]);
 
   useEffect(() => {
@@ -201,6 +205,11 @@ export default function Map3D({ state, isDimmed, selected, focus, onSelect, look
       </CameraBar>
 
       <CameraHint>Drag to rotate, scroll to zoom, click someone for details</CameraHint>
+
+      {arcadeSlot && createPortal(
+        <ArcadePlay data-arcade-play data-arcade-cabinet="3d" aria-label="Open basketball arcade" aria-haspopup="dialog" onClick={event=>onArcade(event.currentTarget)}>Play</ArcadePlay>,
+        arcadeSlot,
+      )}
 
       {zoneLabels.map((zone) =>
         createPortal(
