@@ -83,6 +83,15 @@ export const Outcome = styled.p`
   font-weight: 800;
 `;
 
+/** Who won, or a tie, once the vote has closed. */
+export function ResultOutcome({ vote, closed }: { vote: VoteView; closed: boolean }) {
+  const { winners } = results(vote);
+  if (!closed) return null;
+  if (winners.length === 1) return <Outcome>🏆 {winners[0]!.text} wins</Outcome>;
+  if (winners.length > 1) return <Outcome>Tie: {winners.map((w) => w.text).join(', ')}</Outcome>;
+  return <Outcome>Nobody voted.</Outcome>;
+}
+
 export function VoteResults({ vote, mine, closed, nameOf }: {
   vote: VoteView;
   mine: string[] | undefined;
@@ -93,9 +102,7 @@ export function VoteResults({ vote, mine, closed, nameOf }: {
   const won = new Set(closed ? winners.map((w) => w.id) : []);
   return (
     <div>
-      {closed && winners.length === 1 && <Outcome>🏆 {winners[0]!.text} wins</Outcome>}
-      {closed && winners.length > 1 && <Outcome>Tie: {winners.map((w) => w.text).join(', ')}</Outcome>}
-      {closed && winners.length === 0 && <Outcome>Nobody voted.</Outcome>}
+      <ResultOutcome vote={vote} closed={closed} />
       <List>
         {options.map((option) => {
           const share = turnout ? Math.round((option.count / turnout) * 100) : 0;

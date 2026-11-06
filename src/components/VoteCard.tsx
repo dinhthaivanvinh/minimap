@@ -1,15 +1,42 @@
 // One vote on the /vote page: its details, the ballot for invited people while it is open,
 // the results, and the creator's and admin's controls (extend, delete).
-import { useState, type FormEvent } from 'react';
+import { Component, lazy, Suspense, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import { canVote, isOpen, MAX_OPTION, type VoteView } from '../../shared/vote.ts';
 import { api, errorText } from '../lib/api.ts';
 import { useMessage } from '../lib/hooks.ts';
 import { endsText, fromLocalInput, localInputValue } from '../lib/voteTime.ts';
+import { supportsWebGL } from '../lib/webgl.ts';
 import { theme } from '../styles/theme.ts';
-import { Button, Input, Panel, Row } from '../styles/ui.ts';
+import { Button, Input, Panel, Row, Segmented } from '../styles/ui.ts';
+import { BALLOT_DROP_MS, BallotDrop } from './BallotDrop.tsx';
 import { StatusLine } from './SheetNav.tsx';
-import { VoteResults } from './VoteResults.tsx';
+import { ResultOutcome, VoteResults } from './VoteResults.tsx';
+
+// three.js is large, so the skyline only loads when someone asks for it.
+const VoteSkyline3D = lazy(() => import('./VoteSkyline3D.tsx'));
+
+// Checked once: each check briefly makes a 3D context, and browsers allow only a few.
+let webgl: boolean | undefined;
+const canUse3D = () => (webgl ??= supportsWebGL());
+
+// Shows the bars instead if the skyline crashes or can't be downloaded.
+class SkylineGuard extends Component<{ onFail: () => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('Could not show the 3D results', error);
+    this.props.onFail();
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 
 const Card = styled(Panel)<{ $highlighted: boolean }>`
   display: grid;
@@ -111,6 +138,9 @@ export function VoteCard({ vote, mine, viewer, now, highlighted, nameOf, onChang
   const [extending, setExtending] = useState(false);
   const [newEnd, setNewEnd] = useState(vote.endsAt);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<'bars' | 'skyline'>('bars');
+  const [skylineLost, setSkylineLost] = useState(false);
+  const [dropping, setDropping] = useState(false);
   const [message, show] = useMessage(4000);
   const auth: Record<string, string> = viewer.token ? { Authorization: `Bearer ${viewer.token}` } : {};
   const voting = me !== null && canVote(vote, me, now) && (!hasVoted || changing);
@@ -145,8 +175,14 @@ export function VoteCard({ vote, mine, viewer, now, highlighted, nameOf, onChang
     if (!reply) return;
     setChanging(false);
     onChanged(reply);
-    show('Your vote is in.');
+    setDropping(true);
   }
+
+  useEffect(() => {
+    if (!dropping) return;
+    const timer = setTimeout(() => setDropping(false), BALLOT_DROP_MS);
+    return () => clearTimeout(timer);
+  }, [dropping]);
 
   async function addOption() {
     const reply = await send<VoteView>('POST', `/api/vote/${encodeURIComponent(vote.id)}/options`, { text: newOption });
@@ -225,7 +261,31 @@ export function VoteCard({ vote, mine, viewer, now, highlighted, nameOf, onChang
         </form>
       ) : (
         <>
-          <VoteResults vote={vote} mine={mine} closed={!open} nameOf={nameOf} />
+          {dropping && <BallotDrop />}
+          <Segmented role="group" aria-label="Show results as" style={{ justifySelf: 'start' }}>
+            <button type="button" aria-pressed={view === 'bars' || skylineLost} onClick={() => setView('bars')}>Bars</button>
+            <button
+              type="button"
+              aria-pressed={view === 'skyline' && !skylineLost}
+              disabled={!canUse3D() || skylineLost}
+              title={canUse3D() && !skylineLost ? 'Show the results as towers in 3D' : 'This browser cannot show 3D graphics'}
+              onClick={() => setView('skyline')}
+            >
+              Skyline
+            </button>
+          </Segmented>
+          {view === 'skyline' && !skylineLost ? (
+            <>
+              <ResultOutcome vote={vote} closed={!open} />
+              <SkylineGuard onFail={() => setSkylineLost(true)}>
+                <Suspense fallback={<VoteResults vote={vote} mine={mine} closed={!open} nameOf={nameOf} />}>
+                  <VoteSkyline3D vote={vote} closed={!open} onFail={() => setSkylineLost(true)} />
+                </Suspense>
+              </SkylineGuard>
+            </>
+          ) : (
+            <VoteResults vote={vote} mine={mine} closed={!open} nameOf={nameOf} />
+          )}
           {open && hasVoted && invited && (
             <Actions><Button type="button" onClick={startChanging}>Change vote</Button></Actions>
           )}
