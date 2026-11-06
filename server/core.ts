@@ -4,7 +4,6 @@
 
 import * as crypto from 'node:crypto';
 import {
-  AIM_PERIOD,
   MAX_ROUND_SCORE,
   ROUND_MS,
   replay,
@@ -666,8 +665,9 @@ export function createCore({
     if (route === 'GET /api/basketball') return jsonResponse(200, boards());
     if (route === 'POST /api/basketball/round') {
       const user = userFromToken(req);
-      const seed = crypto.randomInt(AIM_PERIOD);
+      const seed = crypto.randomInt(0x100000000);
       const payload = Buffer.from(JSON.stringify({
+        rules: 2,
         username: user.username,
         version: user.pinVersion,
         start: now().getTime(),
@@ -703,6 +703,7 @@ export function createCore({
       } catch {
         throw new ApiError(400, 'Invalid round ticket.');
       }
+      if (round.rules !== 2) throw new ApiError(400, 'Round rules changed. Start a new round.');
       const age = now().getTime() - round.start;
       if (round.username !== user.username || round.version !== user.pinVersion || age < ROUND_MS || age > 86400000) {
         throw new ApiError(400, 'Round is unfinished or expired.');
