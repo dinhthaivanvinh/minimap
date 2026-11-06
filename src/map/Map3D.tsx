@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import styled, { css } from 'styled-components';
-import { mapSummary, type VoteView } from '../../shared/vote.ts';
+import { mapSummary, resultText, type VoteView } from '../../shared/vote.ts';
+import { voteLink } from '../lib/noticeBoard.ts';
 import { Badge, BadgeName } from '../components/Badge.tsx';
 import { useReducedMotion } from '../lib/hooks.ts';
 import { media, theme } from '../styles/theme.ts';
@@ -127,6 +128,27 @@ const CameraHint = styled.p`
   }
 `;
 
+const ResultLink = styled.a`
+  position: absolute;
+  left: 12px;
+  bottom: 36px;
+  z-index: 6;
+  padding: 2px 10px;
+  border: ${theme.thinLine};
+  border-radius: 10px;
+  background: ${theme.butter};
+  font-weight: 800;
+  text-decoration: none;
+
+  &:not(:focus) {
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+`;
+
 function boardLabel(votes: VoteView[]): string {
   const open = mapSummary(votes, new Date()).length;
   return `Notice board: ${open || 'no'} open ${open === 1 ? 'vote' : 'votes'}. Open team votes`;
@@ -146,6 +168,7 @@ export default function Map3D({
   onArcade,
   look,
   votes,
+  voteMarks,
   onFail,
 }: Map3DProps) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -202,6 +225,10 @@ export default function Map3D({
   useEffect(() => {
     sceneRef.current?.setVotes(votes);
   }, [votes]);
+
+  useEffect(() => {
+    sceneRef.current?.setVoteMarks(voteMarks);
+  }, [voteMarks]);
 
   useEffect(() => {
     if (focus) sceneRef.current?.focus(focus.username);
@@ -271,6 +298,11 @@ export default function Map3D({
           </ArcadePlay>,
           boardSlot,
         )}
+
+      {/* The blimp's banner for keyboards and screen readers: it shows when focused. */}
+      {voteMarks?.result && (
+        <ResultLink href={voteLink(voteMarks.result.vote.id)}>{resultText(voteMarks.result)}</ResultLink>
+      )}
 
       {zoneLabels.map((zone) =>
         createPortal(

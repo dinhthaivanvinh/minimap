@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import styled from 'styled-components';
 import type { Place, TeamUser } from '../../shared/types.ts';
+import { waitingVotes, type VoteView } from '../../shared/vote.ts';
 import { placeName } from '../lib/layout.ts';
+import { voteLink } from '../lib/noticeBoard.ts';
 import { scheduledText } from '../lib/status.ts';
 import { theme } from '../styles/theme.ts';
 import { Mochi } from './Mochi.tsx';
@@ -79,15 +81,27 @@ function place(card: HTMLElement, anchor: HTMLElement): void {
   card.style.top = `${top}px`;
 }
 
+const CardVotes = styled.ul`
+  margin: 9px 0 0;
+  padding: 6px 10px 6px 26px;
+  border-radius: 10px;
+  background: #ffe6ef;
+  font-size: 14px;
+
+  li { overflow-wrap: anywhere; }
+`;
+
 interface DetailCardProps {
   user: TeamUser;
   places: Place[];
+  votes: VoteView[];
   anchor: HTMLElement;
   onClose: () => void;
 }
 
-export function DetailCard({ user, places, anchor, onClose }: DetailCardProps) {
+export function DetailCard({ user, places, votes, anchor, onClose }: DetailCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const pending = waitingVotes(votes, user.username, new Date());
 
   useLayoutEffect(() => {
     if (cardRef.current) place(cardRef.current, anchor);
@@ -134,6 +148,15 @@ export function DetailCard({ user, places, anchor, onClose }: DetailCardProps) {
       <CardRow>{placeName(places, user.place)}</CardRow>
       {user.status && <CardStatus>{user.status}</CardStatus>}
       {user.scheduled && <CardStatus>{scheduledText(user)}</CardStatus>}
+      {pending.length > 0 && (
+        <CardVotes aria-label="Hasn't voted on">
+          {pending.map((vote) => (
+            <li key={vote.id}>
+              Hasn't voted on <a href={voteLink(vote.id)}>{vote.title}</a>
+            </li>
+          ))}
+        </CardVotes>
+      )}
       <CardTime>{user.claimed ? formatUpdated(user.updatedAt) : 'Nobody has claimed this username yet'}</CardTime>
     </Card>,
     document.body,

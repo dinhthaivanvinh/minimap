@@ -5,16 +5,18 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
-import type { VoteView } from '../../shared/vote.ts';
+import { resultText, type VoteView } from '../../shared/vote.ts';
 import { CLEAR, mixColor, type Ambience, type Conditions } from '../lib/ambience.ts';
 import { watchContextLoss } from '../lib/contextLoss.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
-import { boardNotes } from '../lib/noticeBoard.ts';
+import { boardNotes, voteLink } from '../lib/noticeBoard.ts';
 import { computeLayout, noticeBoardSpot, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { box, clampTo, contains, grow, pickSpot, steer, type Box } from '../lib/wander.ts';
 import { createArcadeCabinet } from './arcade3d.ts';
+import { createBlimp } from './blimp3d.ts';
 import { createCharacterBuilder } from './character3d.ts';
 import { createNoticeBoard, type NoticeBoard3D } from './noticeBoard3d.ts';
+import type { VoteMarks } from './types.ts';
 
 export interface CameraPreset {
   id: string;
@@ -52,6 +54,8 @@ export interface Scene3D {
   setAmbience(look: Ambience): void;
   /** The team's votes, for the notice board. */
   setVotes(votes: VoteView[]): void;
+  /** Ballots over people who haven't voted, and the blimp with the latest result. Null hides them. */
+  setVoteMarks(marks: VoteMarks | null): void;
   destroy(): void;
 }
 
@@ -92,6 +96,11 @@ interface Character {
   zoneKind: ZoneKind;
   /** Held outdoors in the rain or snow. */
   umbrella: THREE.Group;
+  /** Floats over their head while they haven't voted on a vote shown on the map. */
+  ballot: THREE.Sprite;
+  ballotOn: boolean;
+  /** When the ballot started to pop away, or -1. */
+  ballotPopAt: number;
   /** Where they may wander, or null when the room is too crowded to. */
   area: Box | null;
   /** travel: hurrying to a new room. walk: wandering. idle: standing still. */
@@ -168,6 +177,33 @@ function flakeTexture() {
   ctx.fillRect(0, 0, 32, 32);
   return new THREE.CanvasTexture(canvas);
 }
+
+// A little paper ballot with a tick box, for people who haven't voted.
+function ballotTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#2a2657';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(8, 4, 48, 56, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineWidth = 4;
+  ctx.strokeRect(16, 14, 12, 12);
+  ctx.strokeRect(16, 36, 12, 12);
+  ctx.beginPath();
+  for (const y of [20, 42]) {
+    ctx.moveTo(34, y);
+    ctx.lineTo(48, y);
+  }
+  ctx.stroke();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+const BALLOT_POP_S = 0.4;
 
 function glowTexture() {
   const canvas = document.createElement('canvas');
@@ -280,6 +316,14 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   let votes: VoteView[] = [];
   let boardDrawnAt = 0;
   let boardPulsing = false;
+  let voteMarks: VoteMarks | null = null;
+  const ballotMap = ballotTexture();
+  // The blimp belongs to the sky, not the town, so it stays when the town is rebuilt.
+  const blimp = createBlimp();
+  blimp.group.visible = false;
+  blimp.group.scale.setScalar(1.5);
+  scene.add(blimp.group);
+  let blimpText = '';
   const world = new THREE.Group();
   scene.add(world);
   const desks = new THREE.Group();
@@ -709,6 +753,50 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     applyNightLights();
   }
 
+  // Shows or hides someone's ballot. One that goes away while the map is open pops.
+  function markBallot(c: Character, animate: boolean) {
+    const on = voteMarks?.waiting.has(c.username) ?? false;
+    if (on === c.ballotOn) return;
+    c.ballotOn = on;
+    if (on) {
+      c.ballotPopAt = -1;
+      c.ballot.material.opacity = 1;
+      c.ballot.visible = true;
+    } else if (animate && !reducedMotion && c.ballot.visible) {
+      c.ballotPopAt = performance.now() / 1000;
+    } else {
+      c.ballot.visible = false;
+    }
+  }
+
+  function animateVoteMarks(time: number) {
+    for (const c of characters.values()) {
+      if (!c.ballot.visible) continue;
+      if (c.ballotPopAt >= 0) {
+        const t = (time - c.ballotPopAt) / BALLOT_POP_S;
+        c.ballot.scale.setScalar(1.1 * (1 + t));
+        c.ballot.material.opacity = Math.max(0, 1 - t);
+        if (t >= 1) {
+          c.ballot.visible = false;
+          c.ballotPopAt = -1;
+        }
+        continue;
+      }
+      c.ballot.scale.setScalar(1.1);
+      c.ballot.position.y = 2.9 + (reducedMotion ? 0 : Math.sin(time * 2.4 + c.phase) * 0.15);
+    }
+
+    if (!blimp.group.visible) return;
+    // A slow, flat loop behind the town, so the banner mostly faces the camera. It flies
+    // lower in fog so the banner stays readable. Without motion it waits at the back, facing us.
+    const angle = reducedMotion ? -Math.PI / 2 : time * 0.05;
+    const rx = layout.width * 0.36;
+    const rz = layout.height * 0.12;
+    const height = weather.fog > 0 ? 11 : 16;
+    blimp.group.position.set(Math.cos(angle) * rx, height + (reducedMotion ? 0 : Math.sin(time * 0.7) * 0.4), Math.sin(angle) * rz - layout.height * 0.05);
+    blimp.group.rotation.y = Math.atan2(-Math.cos(angle) * rz, -Math.sin(angle) * rx);
+  }
+
   function drawBoard(time: number) {
     if (!noticeBoard) return;
     const pulse = reducedMotion ? 0 : (Math.sin(time * 3.5) + 1) / 2;
@@ -778,10 +866,17 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     group.add(label);
     const umbrella = makeUmbrella(umbrellaColour(user.username));
     group.add(umbrella);
+    const ballot = new THREE.Sprite(new THREE.SpriteMaterial({ map: ballotMap, transparent: true, depthWrite: false }));
+    ballot.position.set(1.7, 2.9, 0);
+    ballot.visible = false;
+    group.add(ballot);
     scene.add(group);
 
     return {
       umbrella,
+      ballot,
+      ballotOn: false,
+      ballotPopAt: -1,
       username: user.username,
       designKey: JSON.stringify(user.look),
       bodyMaterial,
@@ -822,6 +917,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   function destroyCharacter(character: Character) {
     scene.remove(character.group);
+    character.ballot.material.dispose();
     character.label.element.remove();
     clearBody(character);
     character.umbrella.traverse((node) => {
@@ -939,7 +1035,14 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     const meshes = [...characters.values()].map((c) => c.group);
     if (arcade) meshes.push(arcade);
     if (noticeBoard) meshes.push(noticeBoard.group);
-    const hit = raycaster.intersectObjects(meshes, true).find((h) => h.object.userData.username || h.object.userData.arcade || h.object.userData.noticeBoard);
+    if (blimp.group.visible) meshes.push(blimp.group);
+    const hit = raycaster.intersectObjects(meshes, true).find(
+      (h) => h.object.userData.username || h.object.userData.arcade || h.object.userData.noticeBoard || h.object.userData.resultBanner,
+    );
+    if (hit?.object.userData.resultBanner && voteMarks?.result) {
+      onNoticeBoard(voteLink(voteMarks.result.vote.id));
+      return;
+    }
     if (hit?.object.userData.noticeBoard && noticeBoard) {
       onNoticeBoard(hit.object.userData.noticeFace && hit.uv ? noticeBoard.linkAt(hit.uv) : '/vote');
       return;
@@ -987,6 +1090,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       if (!character) {
         character = createCharacter(user, i * 0.7);
         characters.set(user.username, character);
+        markBallot(character, false);
         changed = true;
       }
       const designKey = JSON.stringify(user.look);
@@ -1050,6 +1154,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
     // Notes count down every half minute; ones in their last hour pulse.
     if (time - boardDrawnAt > (boardPulsing ? 0.1 : 30)) drawBoard(time);
+    animateVoteMarks(time);
 
     for (const c of characters.values()) {
       const { group, inner } = c;
@@ -1277,6 +1382,16 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       lampGlow.opacity = lamps * 0.85;
       lampLevel = lamps;
       applyNightLights();
+      blimp.setLit(lamps);
+    },
+
+    setVoteMarks(marks) {
+      voteMarks = marks;
+      for (const c of characters.values()) markBallot(c, true);
+      const text = marks?.result ? resultText(marks.result) : '';
+      blimp.group.visible = Boolean(text);
+      if (text && text !== blimpText) blimp.setText(text);
+      blimpText = text;
     },
 
     setVotes(next) {
@@ -1318,6 +1433,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       for (const material of materials.values()) material.dispose();
       lampGlow.map?.dispose();
       lampGlow.dispose();
+      ballotMap.dispose();
       for (const fall of [rain, snow]) {
         fall.geometry.dispose();
         const material = fall.material as THREE.PointsMaterial;

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { VoteView } from '../../shared/vote.ts';
-import { boardNotes, shortTitle, voteLink } from './noticeBoard.ts';
+import { boardNotes, countdown, shortTitle, voteLink } from './noticeBoard.ts';
 
 const NOW = new Date('2026-11-06T12:00:00Z');
 const vote = (id: string, minutes: number, title = id): VoteView => ({
@@ -37,4 +37,12 @@ test('long names are cut to fit a note, and notes link to their vote', () => {
   assert.equal(shortTitle('Which pizza place for Friday'), 'Which pizza place…');
   assert.equal([...shortTitle('😀'.repeat(30))].length, 18);
   assert.equal(voteLink('a b'), '/vote?id=a%20b');
+});
+
+test('the wall TV counts down the vote ending soonest, only in its last hour', () => {
+  assert.equal(countdown([vote('a', 61)], NOW), null);
+  const lunch = { ...vote('lunch', 42, 'Team lunch'), voters: ['ann', 'bob', 'cat'], voted: ['ann'] };
+  assert.deepEqual(countdown([vote('a', 50), lunch, vote('gone', -1)], NOW), { id: 'lunch', text: 'Team lunch closes in 42 min, 2 people left' });
+  assert.equal(countdown([{ ...lunch, voted: ['ann', 'bob'] }], NOW)?.text, 'Team lunch closes in 42 min, 1 person left');
+  assert.equal(countdown([{ ...lunch, voted: lunch.voters }], NOW)?.text, 'Team lunch closes in 42 min, everyone has voted');
 });

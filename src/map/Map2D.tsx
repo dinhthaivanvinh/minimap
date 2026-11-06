@@ -12,6 +12,7 @@ import { media, theme } from '../styles/theme.ts';
 import { DECOR, PARK_TREES, STREET_ART, Umbrella } from './decor.tsx';
 import { ArcadeCabinet2D } from './ArcadeCabinet.tsx';
 import { NoticeBoard2D } from './NoticeBoard2D.tsx';
+import { ResultBanner2D } from './ResultBanner2D.tsx';
 import type { MapProps } from './types.ts';
 import { hasWeather, Weather2D } from './Weather2D.tsx';
 
@@ -402,9 +403,11 @@ interface PersonProps {
   onSelect: SelectHandler;
   /** Outdoors in the rain or snow. */
   umbrella: boolean;
+  /** Hasn't voted on a vote shown on the map. */
+  waiting: boolean;
 }
 
-function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrella }: PersonProps) {
+function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrella, waiting }: PersonProps) {
   const zoneId = seat.zone.id;
   const previousZone = useRef(zoneId);
   const [moving, setMoving] = useState(false);
@@ -431,6 +434,7 @@ function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrell
       <Badge
         user={user}
         selected={selected}
+        waiting={waiting}
         onSelect={onSelect}
         figure={
           <BadgeFigure $selected={selected}>
@@ -453,7 +457,7 @@ function isPlain(look: Ambience): boolean {
   return look.daylight === 1 && look.warmth === 0 && look.weather.gloom === 0;
 }
 
-export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, look, votes }: MapProps) {
+export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, look, votes, voteMarks }: MapProps) {
   const fillRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const daylight = {
@@ -475,6 +479,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, l
   const layout = useMemo(() => computeLayout(state.places, state.users, { portrait }), [state.places, state.users, portrait]);
 
   const board = noticeBoardSpot(layout);
+  const street = layout.zones.find((z) => z.kind === 'street');
 
   // Fit the whole plan inside the available space, keeping its proportions.
   const scale = Math.min(width / layout.width, height / layout.height);
@@ -532,6 +537,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, l
           ))}
           {board && <NoticeBoard2D spot={board} width={layout.width} height={layout.height} votes={votes} />}
           {hasWeather(look) && <Weather2D look={look} reduced={reduced} />}
+          {street && voteMarks?.result && <ResultBanner2D result={voteMarks.result} street={street} width={layout.width} height={layout.height} />}
           {state.users.map((user) => {
             const seat = layout.seats.get(user.username);
             if (!seat) return null;
@@ -546,6 +552,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, l
                 selected={selected === user.username}
                 onSelect={onSelect}
                 umbrella={wet && (seat.zone.kind === 'street' || seat.zone.kind === 'off')}
+                waiting={voteMarks?.waiting.has(user.username) ?? false}
               />
             );
           })}
