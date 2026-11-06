@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   aimAt,
   targetWidth,
+  targetCenter,
+  AIM_PERIOD,
   replay,
   shoot,
   EMPTY_RESULT,
@@ -11,27 +13,48 @@ import {
   MAX_ROUND_SCORE,
 } from '../../shared/basketball.ts';
 
-test('meter reverses, streaks narrow the target, and every third basket adds a bonus', () => {
-  assert.equal(aimAt(300, 0), 0.5);
-  assert.equal(aimAt(900, 0), 0.5);
-  assert.equal(aimAt(1200, 0), 0);
-  const result = replay([300, 900, 1500], 0);
-  assert.deepEqual(result, { hit: true, made: 3, streak: 3, score: 7 });
-  assert.equal(shoot(result, 1800, 0).streak, 0);
-  assert.equal(shoot(result, 1800, 0).score, 7);
-  assert.ok(targetWidth(3) < targetWidth(0));
-  assert.equal(targetWidth(100), 0.08);
-  assert.equal(EMPTY_RESULT.score, 0);
+test('slower meter, random targets, streak bonuses and server replay agree', () => {
+  assert.equal(aimAt(600, 0), 0.5);
+  assert.equal(aimAt(1800, 0), 0.5);
+  assert.equal(aimAt(2400, 0), 0);
+  const shots: number[] = [];
+  let result = EMPTY_RESULT;
+  for (let i = 0; i < 12; i++) {
+    let ms = (shots.at(-1) ?? -450) + 450;
+    while (Math.abs(aimAt(ms, 0) - targetCenter(0, result.attempts)) > 0.005) ms++;
+    shots.push(ms);
+    result = shoot(result, ms, 0);
+    assert.equal(result.hit, true);
+  }
+  assert.deepEqual(replay(shots, 0), result);
+  assert.equal(result.attempts, 12);
+  assert.equal(result.streak, 12);
+  assert.ok(result.score > 24);
+  const miss = shoot(result, Math.ceil(shots.at(-1)! / AIM_PERIOD) * AIM_PERIOD, 0);
+  assert.equal(miss.streak, 0);
+  assert.equal(miss.attempts, 13);
 });
-test('harder timing allows a 144ms opening window and narrows to 48ms for long streaks', () => {
-  assert.equal(shoot(EMPTY_RESULT, 229, 0).hit, true);
-  assert.equal(shoot(EMPTY_RESULT, 371, 0).hit, true);
-  assert.equal(shoot(EMPTY_RESULT, 227, 0).hit, false);
-  assert.equal(shoot(EMPTY_RESULT, 373, 0).hit, false);
-  const combo = { ...EMPTY_RESULT, streak: 8 };
-  assert.equal(shoot(combo, 277, 0).hit, true);
-  assert.equal(shoot(combo, 275, 0).hit, false);
-  assert.equal(shoot(EMPTY_RESULT, 400, 0).hit, false);
+test('forgiving target offers a 408ms opening window and at least 216ms in streaks', () => {
+  const center = targetCenter(0, 0) * 1200;
+  assert.equal(shoot(EMPTY_RESULT, Math.round(center + 200), 0).hit, true);
+  assert.equal(shoot(EMPTY_RESULT, Math.round(center + 206), 0).hit, false);
+  const combo = { ...EMPTY_RESULT, streak: 20 };
+  assert.equal(targetWidth(combo.streak), 0.18);
+  assert.equal(shoot(combo, Math.round(center + 105), 0).hit, true);
+  assert.equal(shoot(combo, Math.round(center + 111), 0).hit, false);
+});
+test('targets vary per attempt, stay inside the meter and reproduce from the signed seed', () => {
+  for (const seed of [0, 1, 12345, 0xffffffff]) {
+    const positions = Array.from({ length: 100 }, (_, attempt) => targetCenter(seed, attempt));
+    assert.ok(new Set(positions).size > 95);
+    for (let attempt = 0; attempt < positions.length; attempt++) {
+      const center = positions[attempt]!;
+      assert.equal(center, targetCenter(seed, attempt));
+      if (attempt > 0) assert.ok(Math.abs(center - positions[attempt - 1]!) >= 0.14);
+      assert.ok(center - targetWidth(0) / 2 >= 0 && center + targetWidth(0) / 2 <= 1);
+    }
+  }
+  assert.notEqual(targetCenter(1, 0), targetCenter(2, 0));
 });
 test('replay rejects impossible cadence, malformed input and shots outside the round', () => {
   for (const shots of [null, {}, [0, 1], [-1], [60000], [1.5], [NaN], [450, 0], Array(140).fill(450)]) {
@@ -50,10 +73,8 @@ test('weekly periods start Monday UTC across years and ties use earliest result'
   assert.equal(rows[0]?.username, 'b');
 });
 
-test('a perfect boundary-to-boundary round reaches the shared backup score cap', () => {
-  const shots = [...Array.from({ length: 100 }, (_, i) => i * 600), 59999];
-  const result = replay(shots, 300);
-  assert.equal(result.made, 101);
-  assert.equal(result.score, 667);
-  assert.equal(result.score, MAX_ROUND_SCORE);
+test('backup score cap preserves existing records and bounds any cadence-valid round', () => {
+  assert.ok(MAX_ROUND_SCORE >= 667);
+  const shots = Array.from({ length: Math.ceil(60000 / 450) }, (_, i) => i * 450);
+  for (const seed of [0, 300, 12345, 0xffffffff]) assert.ok(replay(shots, seed).score <= MAX_ROUND_SCORE);
 });

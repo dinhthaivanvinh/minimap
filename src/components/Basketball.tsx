@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import styled from 'styled-components';
 import {
-  AIM_PERIOD,
   aimAt,
   EMPTY_RESULT,
   ROUND_MS,
   SHOT_GAP,
   shoot,
   targetWidth,
+  targetCenter,
   type BasketballRecords,
   type Result,
   type Round,
@@ -236,8 +236,9 @@ const Meter = styled.div`
 `;
 const Controls = styled.div`
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   margin-top: 14px;
 `;
 const Action = styled.button`
@@ -266,7 +267,7 @@ const Player = styled.div`
   min-width: 0;
   font-size: 11px;
   font-weight: 800;
-  text-align: right;
+  text-align: center;
   color: #b8c6d9;
   span {
     display: block;
@@ -517,7 +518,7 @@ export function Basketball({
     try {
       const next = auth
         ? await api<Round>('POST', '/api/basketball/round', {}, headers)
-        : { seed: Math.floor(Math.random() * AIM_PERIOD), ticket: '' };
+        : { seed: Math.floor(Math.random() * 0x100000000), ticket: '' };
       if (attempt !== startAttempt.current) return;
       setCrowdSelection(pickCrowd(users, auth?.username ?? null));
       shots.current = [];
@@ -554,6 +555,7 @@ export function Basketball({
     setOpen(false);
     if (phase === 'playing') setPhase('ready');
   }
+  const center = targetCenter(round?.seed ?? 0, result.attempts) * 100;
   const width = targetWidth(result.streak) * 100;
   const aim = round ? aimAt(elapsed, round.seed) : 0.5;
   return (
@@ -646,12 +648,12 @@ export function Basketball({
               <Deck>
                 <Meter
                   role="img"
-                  aria-label={`Aim ${Math.round(aim * 100)} percent. Target centered at 50 percent, width ${Math.round(width)} percent.`}
+                  aria-label={`Aim ${Math.round(aim * 100)} percent. Target centered at ${Math.round(center)} percent, width ${Math.round(width)} percent.`}
                 >
                   <span
                     style={{
                       position: 'absolute',
-                      left: `${50 - width / 2}%`,
+                      left: `${center - width / 2}%`,
                       width: `${width}%`,
                       insetBlock: 2,
                       borderRadius: 3,

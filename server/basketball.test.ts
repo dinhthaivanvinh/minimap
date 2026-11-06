@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCore, type Data } from './core.ts';
-import { AIM_PERIOD, MAX_ROUND_SCORE, replay, type Round } from '../shared/basketball.ts';
+import { AIM_PERIOD, MAX_ROUND_SCORE, targetCenter, replay, type Round } from '../shared/basketball.ts';
 
 test('basketball validates auth, tickets and timings, persists bests through reset, restart and backup', async () => {
   let time = Date.parse('2026-11-06T12:00:00Z');
@@ -32,7 +32,7 @@ test('basketball validates auth, tickets and timings, persists bests through res
   assert.equal((await request('POST', '/api/basketball/round')).status, 401);
   const round = (await request('POST', '/api/basketball/round', {}, token)).body as Round;
   const shots = [300, 900, 1500]
-    .map((t) => (t - round.seed + AIM_PERIOD * 2) % AIM_PERIOD)
+    .map((t) => (t - (round.seed % AIM_PERIOD) + AIM_PERIOD * 2) % AIM_PERIOD)
     .sort((a, b) => a - b)
     .filter((t, i, a) => !i || t - a[i - 1]! >= 450);
   assert.equal((await request('POST', '/api/basketball/score', { ...round, shots }, token)).status, 400);
@@ -162,7 +162,10 @@ test('team saves during pending arcade writes keep the round and score, and fail
   pendingRound.release();
   const round = (await start).body as Round;
   time += 60000;
-  const shots = [(300 - round.seed + AIM_PERIOD) % AIM_PERIOD];
+  const shots = [
+    (Math.round(targetCenter(round.seed, 0) * (AIM_PERIOD / 2)) - (round.seed % AIM_PERIOD) + AIM_PERIOD) %
+      AIM_PERIOD,
+  ];
   const pendingScore = holdNextSave();
   const submit = request('POST', '/api/basketball/score', { ticket: round.ticket, shots });
   await pendingScore.waiting;
