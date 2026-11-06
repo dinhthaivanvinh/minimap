@@ -11,7 +11,8 @@ import { watchContextLoss } from '../lib/contextLoss.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
 import { boardNotes, voteLink } from '../lib/noticeBoard.ts';
 import { computeLayout, noticeBoardSpot, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
-import { box, clampTo, contains, grow, pickSpot, steer, type Box } from '../lib/wander.ts';
+import { box, clampTo, contains, grow, hopHeight, pickSpot, steer, type Box } from '../lib/wander.ts';
+import type { Reaction, ReactionKind } from '../lib/voteReactions.ts';
 import { createArcadeCabinet } from './arcade3d.ts';
 import { createBlimp } from './blimp3d.ts';
 import { createCharacterBuilder } from './character3d.ts';
@@ -56,6 +57,8 @@ export interface Scene3D {
   setVotes(votes: VoteView[]): void;
   /** Ballots over people who haven't voted, and the blimp with the latest result. Null hides them. */
   setVoteMarks(marks: VoteMarks | null): void;
+  /** Plays characters' reactions to votes once (lib/voteReactions.ts). */
+  react(list: Reaction[]): void;
   destroy(): void;
 }
 
@@ -101,6 +104,10 @@ interface Character {
   ballotOn: boolean;
   /** When the ballot started to pop away, or -1. */
   ballotPopAt: number;
+  /** A reaction to a vote that is playing now. */
+  reaction: { kind: ReactionKind; start: number; end: number } | null;
+  /** 🙌 or 👏 beside their head while they cheer or clap. Made when first needed. */
+  emoji: THREE.Sprite | null;
   /** Where they may wander, or null when the room is too crowded to. */
   area: Box | null;
   /** travel: hurrying to a new room. walk: wandering. idle: standing still. */
@@ -204,6 +211,22 @@ function ballotTexture() {
   return texture;
 }
 const BALLOT_POP_S = 0.4;
+
+function emojiTexture(emoji: string) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.font = '48px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, 32, 36);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+const CONFETTI_COLOURS = [0xff9cc2, 0xffe27a, 0x8fddf5, 0xbdf0d2, 0xb7a6ff];
+const CONFETTI_PIECES = 24;
 
 function glowTexture() {
   const canvas = document.createElement('canvas');
@@ -324,6 +347,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   blimp.group.scale.setScalar(1.5);
   scene.add(blimp.group);
   let blimpText = '';
+  const emojiMaps: Partial<Record<'cheer' | 'clap', THREE.Texture>> = {};
+  let bursts: { points: THREE.Points; speeds: number[]; start: number; end: number }[] = [];
   const world = new THREE.Group();
   scene.add(world);
   const desks = new THREE.Group();
@@ -769,6 +794,64 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     }
   }
 
+  // Plays a reaction on top of whatever someone is doing: hops, a wiggle, and 🙌 or 👏.
+  function animateReaction(c: Character, time: number) {
+    const r = c.reaction;
+    if (!r) return;
+    const t = time - r.start;
+    if (time >= r.end) {
+      c.reaction = null;
+      c.inner.rotation.z = 0;
+      if (c.emoji) c.emoji.visible = false;
+      return;
+    }
+    if (r.kind === 'cheer') c.inner.position.y += hopHeight(t % 0.5, 0.5, 1.1);
+    else if (r.kind === 'clap') c.inner.rotation.z = Math.sin(t * 22) * 0.1;
+    else c.inner.position.y += hopHeight(t, 0.6);
+    if (c.emoji) c.emoji.position.y = 2.9 + Math.min(t * 2, 0.5);
+  }
+
+  function confettiAt(position: THREE.Vector3, time: number) {
+    const positions = new Float32Array(CONFETTI_PIECES * 3);
+    const colours = new Float32Array(CONFETTI_PIECES * 3);
+    const speeds: number[] = [];
+    const colour = new THREE.Color();
+    for (let i = 0; i < CONFETTI_PIECES; i++) {
+      const angle = (i / CONFETTI_PIECES) * Math.PI * 2;
+      const out = 3 + (i % 4);
+      speeds.push(Math.cos(angle) * out, 7 + (i % 3) * 2, Math.sin(angle) * out);
+      positions.set([position.x, position.y + 2.5, position.z], i * 3);
+      colour.set(CONFETTI_COLOURS[i % CONFETTI_COLOURS.length]!);
+      colours.set([colour.r, colour.g, colour.b], i * 3);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 0.7, vertexColors: true, transparent: true }));
+    scene.add(points);
+    bursts.push({ points, speeds, start: time, end: time + 1.5 });
+  }
+
+  function animateBursts(dt: number, time: number) {
+    bursts = bursts.filter((burst) => {
+      const done = time >= burst.end;
+      if (done) {
+        scene.remove(burst.points);
+        burst.points.geometry.dispose();
+        (burst.points.material as THREE.Material).dispose();
+        return false;
+      }
+      const position = burst.points.geometry.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i < CONFETTI_PIECES; i++) {
+        burst.speeds[i * 3 + 1]! -= 14 * dt;
+        position.setXYZ(i, position.getX(i) + burst.speeds[i * 3]! * dt, position.getY(i) + burst.speeds[i * 3 + 1]! * dt, position.getZ(i) + burst.speeds[i * 3 + 2]! * dt);
+      }
+      position.needsUpdate = true;
+      (burst.points.material as THREE.PointsMaterial).opacity = 1 - (time - burst.start) / (burst.end - burst.start);
+      return true;
+    });
+  }
+
   function animateVoteMarks(time: number) {
     for (const c of characters.values()) {
       if (!c.ballot.visible) continue;
@@ -877,6 +960,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       ballot,
       ballotOn: false,
       ballotPopAt: -1,
+      reaction: null,
+      emoji: null,
       username: user.username,
       designKey: JSON.stringify(user.look),
       bodyMaterial,
@@ -918,6 +1003,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   function destroyCharacter(character: Character) {
     scene.remove(character.group);
     character.ballot.material.dispose();
+    character.emoji?.material.dispose();
     character.label.element.remove();
     clearBody(character);
     character.umbrella.traverse((node) => {
@@ -1155,6 +1241,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     // Notes count down every half minute; ones in their last hour pulse.
     if (time - boardDrawnAt > (boardPulsing ? 0.1 : 30)) drawBoard(time);
     animateVoteMarks(time);
+    animateBursts(dt, time);
 
     for (const c of characters.values()) {
       const { group, inner } = c;
@@ -1182,6 +1269,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       } else {
         walk(c, dt, time);
       }
+      animateReaction(c, time);
 
       if (Math.abs(c.opacity - c.targetOpacity) > 0.005) {
         setOpacity(c, c.opacity + (c.targetOpacity - c.opacity) * Math.min(1, dt * 8));
@@ -1385,6 +1473,31 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       blimp.setLit(lamps);
     },
 
+    react(list) {
+      if (reducedMotion) return;
+      const time = performance.now() / 1000;
+      for (const { username, kind, ms } of list) {
+        const c = characters.get(username);
+        if (!c) continue;
+        c.reaction = { kind, start: time, end: time + ms / 1000 };
+        c.inner.rotation.z = 0;
+        if (kind === 'confetti') confettiAt(c.group.position, time);
+        if (kind === 'cheer' || kind === 'clap') {
+          const map = (emojiMaps[kind] ??= emojiTexture(kind === 'cheer' ? '🙌' : '👏'));
+          if (!c.emoji) {
+            c.emoji = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false }));
+            c.emoji.position.set(-1.7, 2.9, 0);
+            c.emoji.scale.setScalar(1.6);
+            c.group.add(c.emoji);
+          }
+          c.emoji.material.map = map;
+          c.emoji.visible = true;
+        } else if (c.emoji) {
+          c.emoji.visible = false;
+        }
+      }
+    },
+
     setVoteMarks(marks) {
       voteMarks = marks;
       for (const c of characters.values()) markBallot(c, true);
@@ -1434,6 +1547,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       lampGlow.map?.dispose();
       lampGlow.dispose();
       ballotMap.dispose();
+      for (const map of Object.values(emojiMaps)) map.dispose();
+      for (const burst of bursts) {
+        burst.points.geometry.dispose();
+        (burst.points.material as THREE.Material).dispose();
+      }
       for (const fall of [rain, snow]) {
         fall.geometry.dispose();
         const material = fall.material as THREE.PointsMaterial;

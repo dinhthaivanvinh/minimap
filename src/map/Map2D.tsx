@@ -14,6 +14,7 @@ import { ArcadeCabinet2D } from './ArcadeCabinet.tsx';
 import { NoticeBoard2D } from './NoticeBoard2D.tsx';
 import { ResultBanner2D } from './ResultBanner2D.tsx';
 import type { MapProps } from './types.ts';
+import type { ReactionKind } from '../lib/voteReactions.ts';
 import { hasWeather, Weather2D } from './Weather2D.tsx';
 
 const HOP_MS = 900;
@@ -314,7 +315,55 @@ const hop = keyframes`
 `;
 
 // Position and scale change often, so they stay inline rather than become classes.
-const PersonBox = styled.div<{ $dimmed: boolean; $moving: boolean; $strolling: boolean }>`
+const confettiFly = keyframes`
+  from { transform: translate(0, 0) rotate(0); opacity: 1; }
+  to { transform: translate(var(--x), var(--y)) rotate(320deg); opacity: 0; }
+`;
+
+const tagRise = keyframes`
+  0% { transform: translate(-50%, 6px) scale(.6); opacity: 0; }
+  15%, 85% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -6px) scale(1); opacity: 0; }
+`;
+
+/** 🙌 or 👏 over someone cheering or clapping when a vote closes. */
+const ReactionTag = styled.span`
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  z-index: 5;
+  font-size: 20px;
+  line-height: 1;
+  pointer-events: none;
+  animation: ${tagRise} 3s ease-out forwards;
+`;
+
+const Confetti = styled.span`
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  z-index: 5;
+  pointer-events: none;
+
+  i {
+    position: absolute;
+    width: 6px;
+    height: 9px;
+    border-radius: 1px;
+    animation: ${confettiFly} 1.4s ease-out forwards;
+  }
+`;
+
+const CONFETTI = Array.from({ length: 14 }, (_, i) => {
+  const angle = (i / 14) * Math.PI * 2;
+  return {
+    x: `${Math.round(Math.cos(angle) * (28 + (i % 3) * 10))}px`,
+    y: `${Math.round(Math.sin(angle) * (24 + (i % 4) * 8) - 18)}px`,
+    colour: ['#ff9cc2', '#ffe27a', '#8fddf5', '#bdf0d2', '#b7a6ff'][i % 5]!,
+  };
+});
+
+const PersonBox = styled.div<{ $dimmed: boolean; $moving: boolean; $strolling: boolean; $reaction?: ReactionKind }>`
   position: absolute;
   z-index: 3;
   transform: translate(-50%, -50%) scale(var(--s, 1));
@@ -342,6 +391,16 @@ const PersonBox = styled.div<{ $dimmed: boolean; $moving: boolean; $strolling: b
 
     ${({ $moving }) => $moving && css`
       animation: ${hop} .45s ease-in-out 2;
+    `}
+
+    ${({ $reaction }) => ($reaction === 'hop' || $reaction === 'confetti') && css`
+      animation: ${hop} .5s ease-out 1;
+    `}
+    ${({ $reaction }) => $reaction === 'cheer' && css`
+      animation: ${hop} .5s ease-in-out 6;
+    `}
+    ${({ $reaction }) => $reaction === 'clap' && css`
+      animation: ${waddle} .3s ease-in-out 10;
     `}
   }
 
@@ -405,9 +464,10 @@ interface PersonProps {
   umbrella: boolean;
   /** Hasn't voted on a vote shown on the map. */
   waiting: boolean;
+  reaction: ReactionKind | undefined;
 }
 
-function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrella, waiting }: PersonProps) {
+function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrella, waiting, reaction }: PersonProps) {
   const zoneId = seat.zone.id;
   const previousZone = useRef(zoneId);
   const [moving, setMoving] = useState(false);
@@ -430,7 +490,16 @@ function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrell
   } as CSSProperties;
 
   return (
-    <PersonBox $dimmed={dimmed} $moving={moving} $strolling={seat.zone.kind === 'street'} style={style}>
+    <PersonBox $dimmed={dimmed} $moving={moving} $strolling={seat.zone.kind === 'street'} $reaction={reaction} style={style}>
+      {reaction === 'cheer' && <ReactionTag aria-hidden="true">🙌</ReactionTag>}
+      {reaction === 'clap' && <ReactionTag aria-hidden="true">👏</ReactionTag>}
+      {reaction === 'confetti' && (
+        <Confetti aria-hidden="true">
+          {CONFETTI.map((c, i) => (
+            <i key={i} style={{ background: c.colour, '--x': c.x, '--y': c.y } as CSSProperties} />
+          ))}
+        </Confetti>
+      )}
       <Badge
         user={user}
         selected={selected}
@@ -452,12 +521,37 @@ function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrell
   );
 }
 
+/** Who is reacting to a vote right now. Each reaction ends by itself. */
+function usePlaying(reactions: MapProps['reactions']): ReadonlyMap<string, ReactionKind> {
+  const [playing, setPlaying] = useState<ReadonlyMap<string, ReactionKind>>(new Map());
+  // Kept across new sets of reactions, so one that is still playing still ends.
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => {
+    if (!reactions) return;
+    setPlaying((current) => new Map([...current, ...reactions.list.map((r) => [r.username, r.kind] as const)]));
+    for (const r of reactions.list) {
+      const timer = setTimeout(() => {
+        timers.current.delete(timer);
+        setPlaying((current) => {
+          if (current.get(r.username) !== r.kind) return current;
+          const next = new Map(current);
+          next.delete(r.username);
+          return next;
+        });
+      }, r.ms);
+      timers.current.add(timer);
+    }
+  }, [reactions]);
+  return playing;
+}
+
 /** The ordinary daytime look, with nothing to tint. */
 function isPlain(look: Ambience): boolean {
   return look.daylight === 1 && look.warmth === 0 && look.weather.gloom === 0;
 }
 
-export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, look, votes, voteMarks }: MapProps) {
+export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, look, votes, voteMarks, reactions }: MapProps) {
   const fillRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const daylight = {
@@ -479,6 +573,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, l
   const layout = useMemo(() => computeLayout(state.places, state.users, { portrait }), [state.places, state.users, portrait]);
 
   const board = noticeBoardSpot(layout);
+  const playing = usePlaying(reactions);
   const street = layout.zones.find((z) => z.kind === 'street');
 
   // Fit the whole plan inside the available space, keeping its proportions.
@@ -553,6 +648,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, l
                 onSelect={onSelect}
                 umbrella={wet && (seat.zone.kind === 'street' || seat.zone.kind === 'off')}
                 waiting={voteMarks?.waiting.has(user.username) ?? false}
+                reaction={playing.get(user.username)}
               />
             );
           })}

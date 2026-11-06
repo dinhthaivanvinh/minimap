@@ -169,6 +169,7 @@ export default function Map3D({
   look,
   votes,
   voteMarks,
+  reactions,
   onFail,
 }: Map3DProps) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -229,6 +230,10 @@ export default function Map3D({
   useEffect(() => {
     sceneRef.current?.setVoteMarks(voteMarks);
   }, [voteMarks]);
+
+  useEffect(() => {
+    if (reactions) sceneRef.current?.react(reactions.list);
+  }, [reactions]);
 
   useEffect(() => {
     if (focus) sceneRef.current?.focus(focus.username);

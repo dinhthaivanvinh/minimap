@@ -2,6 +2,7 @@ import type { TeamState, TeamUser } from '../../shared/types.ts';
 import type { LatestResult, VoteView } from '../../shared/vote.ts';
 import type { SelectHandler } from '../components/Badge.tsx';
 import type { Ambience } from '../lib/ambience.ts';
+import type { Reaction } from '../lib/voteReactions.ts';
 
 /** Asks the map to bring a person into view. `at` lets the same person be requested twice. */
 export interface FocusRequest {
@@ -17,6 +18,12 @@ export interface VoteMarks {
   result: LatestResult | null;
 }
 
+/** Reactions to play once (lib/voteReactions.ts). A new `id` plays a new set. */
+export interface ReactionPlay {
+  id: number;
+  list: Reaction[];
+}
+
 export interface MapProps {
   state: TeamState;
   isDimmed: (user: TeamUser) => boolean;
@@ -30,4 +37,6 @@ export interface MapProps {
   votes: VoteView[];
   /** Markers over people who haven't voted, and the latest result's banner. Null when turned off. */
   voteMarks: VoteMarks | null;
+  /** Characters hop when they vote, and cheer, clap or get confetti when a vote closes. */
+  reactions: ReactionPlay | null;
 }

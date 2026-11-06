@@ -1,5 +1,5 @@
 // Monitor page: filters, the people list, and switching between 2D and 3D.
-import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
 import { latestResult, waitingVoters, type VoteView } from '../../shared/vote.ts';
@@ -7,12 +7,13 @@ import { DetailCard } from '../components/DetailCard.tsx';
 import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { RandomPicker } from '../components/RandomPicker.tsx';
-import { useAmbience, useNow, useTeamState } from '../lib/hooks.ts';
+import { useAmbience, useNow, useReducedMotion, useTeamState } from '../lib/hooks.ts';
+import { reactions as planReactions, type VoteSnapshot } from '../lib/voteReactions.ts';
 import { shownStatus } from '../lib/status.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
 import { isNotWorking, placeGroup, placeName, type PlaceGroup } from '../lib/layout.ts';
 import Map2D from '../map/Map2D.tsx';
-import type { FocusRequest, VoteMarks } from '../map/types.ts';
+import type { FocusRequest, ReactionPlay, VoteMarks } from '../map/types.ts';
 import { media, theme } from '../styles/theme.ts';
 import { Button, Count, Segmented, Wordmark } from '../styles/ui.ts';
 
@@ -378,6 +379,17 @@ export function MonitorPage() {
     () => (voteMarksOn ? { waiting: waitingVoters(allVotes, now), result: latestResult(allVotes, now) } : null),
     [voteMarksOn, allVotes, now],
   );
+  // Characters react to votes coming in and closing, unless motion is turned down.
+  const reduced = useReducedMotion();
+  const lastLook = useRef<VoteSnapshot | null>(null);
+  const [reactions, setReactions] = useState<ReactionPlay | null>(null);
+  useEffect(() => {
+    if (!votes) return;
+    const look = { votes, at: new Date() };
+    const list = planReactions(lastLook.current, look);
+    lastLook.current = look;
+    if (list.length && !reduced) setReactions({ id: look.at.getTime(), list });
+  }, [votes, now, reduced]);
 
   useEffect(() => {
     document.title = 'Team Minimap';
@@ -447,7 +459,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look, votes: allVotes, voteMarks };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look, votes: allVotes, voteMarks, reactions };
 
   return (
     <Page>
