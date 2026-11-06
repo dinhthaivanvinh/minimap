@@ -14,6 +14,7 @@ export interface MapProps {
   selected: string | null;
   focus: FocusRequest | null;
   onSelect: SelectHandler;
+  onArcade: (trigger: HTMLElement) => void;
   /** The time of day and weather to show (lib/ambience.ts). */
   look: Ambience;
 }

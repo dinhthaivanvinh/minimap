@@ -101,7 +101,7 @@ test('the park fills the space the lobby and beach do not need', () => {
   assert.ok(park.x >= find('lobby').x + find('lobby').w);
   assert.ok(park.x + park.w <= find('off').x);
   assert.ok(find('off').x + find('off').w <= width);
-  assert.equal(computeLayout(TWO_OFFICES, crowd({ lobby: 15, off: 8 })).park, null, 'no park when people need the room');
+  assert.ok(computeLayout(TWO_OFFICES, crowd({ lobby: 15, off: 8 })).park!.w >= 8, 'the arcade keeps its reserved space on busy days');
 });
 
 test('people in the small rooms stay inside them', () => {
@@ -246,4 +246,17 @@ test('places are grouped into working, not working and not checked in', () => {
 test('someone whose office was removed waits in the lobby', () => {
   const { seats } = computeLayout(TWO_OFFICES, [user('a', 'closed-office')]);
   assert.equal(seats.get('a')!.zone.id, 'lobby');
+});
+
+
+test('the arcade park remains clear of rooms and people in both map orientations', () => {
+  for (const portrait of [false,true]) for (const count of [0,15,100]) {
+    const layout=computeLayout(TWO_OFFICES,crowd({lobby:count,off:count}),{portrait});
+    const park=layout.park;
+    assert.ok(park);
+    assert.ok(park.w>=8 && park.h>=13);
+    assert.ok(park.x>=0 && park.y>=0 && park.x+park.w<=layout.width+.001 && park.y+park.h<=layout.height+.001);
+    for (const zone of layout.zones) assert.ok(!overlaps({...park,kind:'lobby',id:'arcade',name:'arcade',count:0},zone),'the arcade does not occupy a team room');
+    for (const seat of layout.seats.values()) assert.ok(!(seat.x>park.x && seat.x<park.x+park.w && seat.y>park.y && seat.y<park.y+park.h));
+  }
 });

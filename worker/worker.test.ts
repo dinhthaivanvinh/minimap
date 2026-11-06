@@ -230,3 +230,24 @@ test(
     assert.equal(user?.status, '');
   },
 );
+
+test('basketball round tickets and rankings survive Durable Object eviction and backup restore', async (t) => {
+  const { api, join, evict } = await setup(t);
+  const token = await join('hooper');
+  assert.equal((await api('POST', '/api/basketball/round')).status, 401);
+  const round = await api('POST', '/api/basketball/round', {}, { Authorization: `Bearer ${token}` });
+  assert.equal(round.status, 201);
+  await evict();
+  const backup = (await api('GET', '/api/admin/data', undefined, ADMIN)).json;
+  assert.equal(backup.users[0].basketballRound.ticket, round.json.ticket);
+  const week = new Date();
+  week.setUTCDate(week.getUTCDate() - (week.getUTCDay() + 6) % 7);
+  const entry = { username: 'hooper', score: 42, at: new Date().toISOString() };
+  backup.basketball = { week: week.toISOString().slice(0, 10), allTime: [entry], weekly: [entry] };
+  assert.equal((await api('PUT', '/api/admin/data', backup, ADMIN)).status, 200);
+  await evict();
+  const rankings = (await api('GET', '/api/basketball')).json;
+  assert.deepEqual(rankings.allTime, [entry]);
+  assert.deepEqual(rankings.weekly, [entry]);
+  assert.equal((await api('POST', '/api/basketball/score', { ...round.json, shots: [] }, { Authorization: `Bearer ${token}` })).status, 400);
+});

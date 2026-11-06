@@ -65,8 +65,8 @@ export class Minimap extends DurableObject<Env> {
       const saved = await ctx.storage.get<string>('data');
       this.core = createCore({
         saved: saved ? JSON.parse(saved) : null,
-        // Not awaited: Cloudflare holds back the reply until the write is safely stored.
-        save: (data) => void ctx.storage.put('data', JSON.stringify(data)),
+        // Game routes await this promise before acknowledging a durable round or score.
+        save: (data) => ctx.storage.put('data', JSON.stringify(data)),
         onChange: (state) => {
           this.sendAll(`data: ${JSON.stringify(state)}\n\n`);
           this.syncAlarm();

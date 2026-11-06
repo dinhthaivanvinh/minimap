@@ -10,6 +10,7 @@ import { watchContextLoss } from '../lib/contextLoss.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
 import { computeLayout, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { box, clampTo, contains, grow, pickSpot, steer, type Box } from '../lib/wander.ts';
+import { createArcadeCabinet } from './arcade3d.ts';
 import { createCharacterBuilder } from './character3d.ts';
 
 export interface CameraPreset {
@@ -32,6 +33,7 @@ export interface ZoneLabelSlot {
 export interface SceneLabels {
   people: ReadonlyMap<string, HTMLElement>;
   zones: ZoneLabelSlot[];
+  arcade: HTMLElement | null;
 }
 
 export interface Scene3D {
@@ -47,6 +49,7 @@ export interface Scene3D {
 }
 
 interface SceneOptions {
+  onArcade: (trigger: HTMLElement) => void;
   onPick: (username: string, label: HTMLElement) => void;
   onCamera: (camera: CameraState) => void;
   /** The browser took away the 3D context and didn't give it back. */
@@ -203,7 +206,7 @@ function checkerTexture(a: string, b: string) {
   return texture;
 }
 
-export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone }: SceneOptions): Scene3D {
+export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade }: SceneOptions): Scene3D {
   const ramp = toonRamp();
   const materials = new Map<number, THREE.MeshToonMaterial>();
   const mat = (color: number): THREE.MeshToonMaterial => {
@@ -262,6 +265,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   controls.maxDistance = 230;
   controls.screenSpacePanning = false;
 
+  let arcade: THREE.Group | null = null;
+  let arcadeSlot: HTMLElement | null = null;
   const world = new THREE.Group();
   scene.add(world);
   const desks = new THREE.Group();
@@ -641,9 +646,9 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     if (layout.park) {
       const { x, y, w, h } = layout.park;
       const middle = toWorld(x + w / 2, y + h / 2);
-      addTree(world, middle.x - w * 0.3, middle.z);
-      addTree(world, middle.x + w * 0.05, middle.z - h * 0.15);
-      addTree(world, middle.x + w * 0.32, middle.z + h * 0.1);
+      addTree(world, middle.x - w * 0.3, middle.z - h * 0.28);
+      addTree(world, middle.x + w * 0.05, middle.z - h * 0.36);
+      addTree(world, middle.x + w * 0.32, middle.z - h * 0.25);
     }
 
     for (const z of layout.zones) {
@@ -656,6 +661,21 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       object.center.set(0, 0.5);
       world.add(object);
       zoneLabels.set(z.id, label);
+    }
+
+    arcade = null;
+    arcadeSlot = null;
+    if (layout.park) {
+      const park = layout.park;
+      const at = toWorld(park.x + park.w / 2, park.y + park.h * 0.8);
+      const cabinet = createArcadeCabinet();
+      arcade = cabinet.group;
+      arcadeSlot = cabinet.playElement;
+      arcade.position.set(at.x, 0.1, at.z);
+      arcade.rotation.y = -0.22;
+      arcade.scale.setScalar(0.75);
+      world.add(arcade);
+      block(at.x, at.z, 3.2, 2.4);
     }
 
     buildPresets();
@@ -691,8 +711,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
           node.geometry.dispose();
           // Tiled floors have their own material and texture; the rest are shared.
           const material = node.material as THREE.MeshToonMaterial;
-          if (material.map) {
-            material.map.dispose();
+          if (material.map || node.userData.ownedMaterial) {
+            material.map?.dispose();
             material.dispose();
           }
         }
@@ -876,12 +896,17 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   }
 
   function onPointerUp(e: PointerEvent) {
-    if (!downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
+    if (e.button !== 0 || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(pointer, camera);
     const meshes = [...characters.values()].map((c) => c.group);
-    const hit = raycaster.intersectObjects(meshes, true).find((h) => h.object.userData.username);
+    if (arcade) meshes.push(arcade);
+    const hit = raycaster.intersectObjects(meshes, true).find((h) => h.object.userData.username || h.object.userData.arcade);
+    if (hit?.object.userData.arcade && arcadeSlot) {
+      onArcade(arcadeSlot.querySelector<HTMLElement>('[data-arcade-play]') ?? arcadeSlot);
+      return;
+    }
     const username = hit?.object.userData.username as string | undefined;
     const character = username ? characters.get(username) : undefined;
     if (username && character) onPick(username, character.labelElement);
@@ -966,7 +991,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       const element = zoneLabels.get(id);
       return element ? [{ id, name, count, element }] : [];
     });
-    return { people: labelElements, zones };
+    return { people: labelElements, zones, arcade: arcadeSlot };
   }
 
   // ---- Animation --------------------------------------------------------
@@ -1237,6 +1262,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
         if (!(node instanceof THREE.Mesh)) return;
         node.geometry.dispose();
         (node.material as THREE.Material).dispose();
+        if (node.userData.ownedMaterial) (node.material as THREE.MeshStandardMaterial).map?.dispose();
         (node.userData.fadeMaterial as THREE.Material | undefined)?.dispose();
       });
       for (const character of characters.values()) character.bodyMaterial.dispose();
