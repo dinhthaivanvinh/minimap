@@ -2,11 +2,13 @@
 //
 // Cloudflare serves the built pages in dist/ by itself. Everything else comes here:
 // /me and /admin get the same page as /, and /api/ goes to one Durable Object that holds
-// the whole team. It runs the same API as the Node.js server (server/core.ts), keeps the
-// data in its own storage, and sends live updates to every open map.
+// the whole team. It runs the same API as the Node.js server (server/core.ts and each
+// feature's folder), keeps the data in its own storage (one key for the team and one for
+// each feature), and sends live updates to every open map.
 
 import { DurableObject } from 'cloudflare:workers';
-import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type Core, type JsonBody } from '../server/core.ts';
+import { createBasketball, takeOldBasketball, type Basketball } from '../server/basketball/core.ts';
+import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type Core, type JsonBody } from '../server/core.ts';
 
 interface Env {
   ASSETS: Fetcher;
@@ -55,6 +57,7 @@ async function readJson(request: Request, maxBytes = MAX_BODY): Promise<JsonBody
 
 export class Minimap extends DurableObject<Env> {
   private core!: Core;
+  private basketball!: Basketball;
   private clients = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private ticker: ReturnType<typeof setInterval> | undefined;
   private weatherAt = 0;
@@ -63,10 +66,12 @@ export class Minimap extends DurableObject<Env> {
     super(ctx, env);
     void ctx.blockConcurrencyWhile(async () => {
       const saved = await ctx.storage.get<string>('data');
+      const teamSaved = saved ? JSON.parse(saved) : null;
+      const oldBasketball = takeOldBasketball(teamSaved);
       this.core = createCore({
-        saved: saved ? JSON.parse(saved) : null,
-        // Game routes await this promise before acknowledging a durable round or score.
-        save: (data) => ctx.storage.put('data', JSON.stringify(data)),
+        saved: teamSaved,
+        // Not awaited: Cloudflare holds back the reply until the write is safely stored.
+        save: (data) => void ctx.storage.put('data', JSON.stringify(data)),
         onChange: (state) => {
           this.sendAll(`data: ${JSON.stringify(state)}\n\n`);
           this.syncAlarm();
@@ -75,6 +80,18 @@ export class Minimap extends DurableObject<Env> {
         resetAt: env.RESET_AT || '05:00',
         timeZone: env.TZ || 'UTC',
       });
+
+      const basketballSaved = await ctx.storage.get<string>('basketball');
+      this.basketball = createBasketball({
+        saved: basketballSaved ? JSON.parse(basketballSaved) : oldBasketball,
+        // Awaited by the game, so it only says a score is stored once it is.
+        save: (data) => ctx.storage.put('basketball', JSON.stringify(data)),
+        team: this.core.team,
+      });
+      this.core.attach(this.basketball.feature);
+      // Scores from the team's value get their own key before the team's is written without them.
+      if (!basketballSaved && oldBasketball) await this.basketball.save();
+
       this.runTimedChanges();
       this.core.save();
       this.syncAlarm();
@@ -106,12 +123,13 @@ export class Minimap extends DurableObject<Env> {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/api/events') return this.openEvents();
 
-    const { status, body, headers } = await this.core.handle({
+    const req: ApiRequest = {
       method: request.method,
       url,
       header: (name) => request.headers.get(name) ?? undefined,
       readJson: (maxBytes) => readJson(request, maxBytes),
-    });
+    };
+    const { status, body, headers } = (await this.basketball.handle(req)) ?? (await this.core.handle(req));
     return new Response(JSON.stringify(body), { status, headers });
   }
 

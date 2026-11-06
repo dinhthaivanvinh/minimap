@@ -1,11 +1,12 @@
 // Team Minimap server for Node.js. Built-ins only: run with `node server/server.ts`.
-// The API lives in core.ts; this file adds the web server, the data file, live updates
-// and the timers. worker/index.ts does the same job on Cloudflare.
+// The API lives in core.ts and each feature's own folder; this file adds the web server,
+// the data files, live updates and the timers. worker/index.ts does the same job on Cloudflare.
 
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type Data, type JsonBody } from './core.ts';
+import { createBasketball, takeOldBasketball } from './basketball/core.ts';
+import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type JsonBody } from './core.ts';
 
 export { latestResetDate } from './core.ts';
 
@@ -35,23 +36,49 @@ const MIME: Record<string, string> = {
 // React decides which page to show, so these all serve the same file.
 const PAGES = new Set(['/', '/me', '/admin']);
 
+function readFile(file: string): any {
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+}
+
+// Writes a copy first, so a crash halfway never leaves a broken file.
+function writeFile(file: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, file);
+}
+
 export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...options }: AppOptions) {
   const sseClients = new Set<Res>();
+  // Each feature keeps its own file next to the team's.
+  const basketballFile = path.join(path.dirname(dataFile), 'basketball.json');
 
+  const teamSaved = readFile(dataFile);
+  const oldBasketball = takeOldBasketball(teamSaved);
   const core = createCore({
     ...options,
-    saved: fs.existsSync(dataFile) ? JSON.parse(fs.readFileSync(dataFile, 'utf8')) : null,
-    save(data: Data) {
-      fs.mkdirSync(path.dirname(dataFile), { recursive: true });
-      const tmp = `${dataFile}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-      fs.renameSync(tmp, dataFile);
-    },
+    saved: teamSaved,
+    save: (data) => writeFile(dataFile, data),
     onChange(state) {
       const payload = `data: ${JSON.stringify(state)}\n\n`;
       for (const res of sseClients) res.write(payload);
     },
   });
+
+  const basketballSaved = readFile(basketballFile);
+  const basketball = createBasketball({
+    saved: basketballSaved ?? oldBasketball,
+    save: (data) => writeFile(basketballFile, data),
+    team: core.team,
+    now: options.now,
+  });
+  core.attach(basketball.feature);
+  // Scores from the team's file get their own file before the team's file is written without them.
+  if (!basketballSaved && oldBasketball) void basketball.save();
+
+  async function answer(req: ApiRequest) {
+    return (await basketball.handle(req)) ?? (await core.handle(req));
+  }
 
   function readJson(req: Req, maxBytes = MAX_BODY): Promise<JsonBody> {
     return new Promise((resolve, reject) => {
@@ -93,7 +120,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
 
   async function handleApi(req: Req, res: Res, url: URL): Promise<void> {
     if (req.method === 'GET' && url.pathname === '/api/events') return openEvents(req, res);
-    const { status, body, headers } = await core.handle({
+    const { status, body, headers } = await answer({
       method: req.method ?? 'GET',
       url,
       header: (name) => {

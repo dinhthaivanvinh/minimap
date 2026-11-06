@@ -14,7 +14,7 @@ RUN apk add --no-cache tzdata
 
 WORKDIR /app
 COPY package.json ./
-COPY server/server.ts server/core.ts ./server/
+COPY server ./server
 COPY shared ./shared
 COPY --from=build /app/dist ./dist
 

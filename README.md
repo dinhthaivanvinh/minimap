@@ -27,7 +27,7 @@ You need [Node.js](https://nodejs.org) 24 or newer.
 
 4. Open http://localhost:8080/admin, add some usernames, then claim one at http://localhost:8080/me.
 
-Data is saved in `data/data.json`. Delete that file while the server is stopped to start over.
+Data is saved in `data/data.json`, and the basketball arcade's records in `data/basketball.json`. Delete those files while the server is stopped to start over.
 
 ## Develop
 
@@ -65,7 +65,8 @@ npm test
 
 | Folder | What's in it |
 |---|---|
-| `server/` | The API, daily reset and weather (`core.ts`), the Node.js server and data file (`server.ts`), plus their tests |
+| `server/` | The API, daily reset and weather (`core.ts`), the Node.js server and data files (`server.ts`), plus their tests |
+| `server/basketball/` | The basketball arcade's API and records, kept apart from the team's data |
 | `worker/` | The Cloudflare Worker and Durable Object that run the same API |
 | `shared/` | Types used by both the server and the frontend |
 | `src/pages/` | The Monitor, User and Admin pages |
@@ -98,8 +99,10 @@ The container restarts by itself after a crash or reboot. Data is kept in the Do
 
 **Back up the data**
 
+This copies the whole data folder: the team's `data.json` and the arcade's `basketball.json`. **Download backup** on the Admin page also saves both, in one file.
+
 ```bash
-docker compose cp minimap:/app/data/data.json ./backup.json
+docker compose cp minimap:/app/data ./backup
 ```
 
 ## Deploy to Cloudflare
@@ -214,6 +217,6 @@ Avoid `$` in `ADMIN_PASSWORD` when using Docker, because Docker Compose treats i
 
 Open the arcade cabinet’s **Play** button in the park. The illustrated 2D cabinet sits inside the floor plan; the 3D cabinet is a scene object that follows rotation and zoom and can also be clicked directly. The park keeps a reserved space for it even on busy days, with a separate arcade area in the portrait layout. Landscape reserves an 8-unit park even on busy days; portrait adds a 32-unit park row and a 3-unit gap, so the fitted rooms become a little smaller. The arcade opens in the current map mode, with its own 2D/3D switch that keeps the round in progress. The 2D arena is illustrated; the 3D arena has a rendered court, backboard, net and basketball. Your saved character shoots the ball, while up to six randomly selected teammates stand around the sidelines using their own saved designs. Every character has a nameplate. Each new round samples a fresh crowd, which stays the same when switching views. Up to two supporters carry cheering signs with different front-facing or tilted poses, without arms or hands; the holders and signs stay fixed for the round. Baskets trigger a bigger celebration. Guest practice uses a default player, and reduced motion keeps character poses still. If 3D is unavailable, the game falls back to 2D. Shoot with touch, mouse, or Space/Enter on the Shoot button. A round lasts 60 seconds; shots recharge every 450 ms. A basket earns 2 points, with a bonus for each three consecutive baskets (up to +5 per shot). The aim meter completes a back-and-forth cycle in 2.4 seconds. The target starts at 34% width and narrows with the streak to 18%. Its seeded position changes after every shot and stays fixed while aiming; the server replays the same positions. Reduced motion keeps the ball and characters still, while the aim meter stays smooth so shots remain playable. Escape or Close returns focus to the cabinet; closing an active round abandons it.
 
-Log in on **Update my status** to post under your existing username. Guests can practice. Weekly rankings start Monday at 00:00 UTC and use the round's start week. Weekly and all-time boards keep one personal best per member, with earlier results winning ties. Records live in the same Node data file or Cloudflare Durable Object storage as the team, survive daily resets, and are included in admin backup/export and restore. Deleting a member removes their rankings. Older backups without arcade data import with empty rankings.
+Log in on **Update my status** to post under your existing username. Guests can practice. Weekly rankings start Monday at 00:00 UTC and use the round's start week. Weekly and all-time boards keep one personal best per member, with earlier results winning ties. Records are kept apart from the team's data: in `data/basketball.json` next to `data.json` on Node.js, and under their own `basketball` key in the Durable Object on Cloudflare. Records that an older version kept inside the team's data move there by themselves on the next start. They survive daily resets, and are still included in the admin's one backup file (under `basketball`) and in restore. Deleting a member removes their rankings. Older backups without arcade data import with empty rankings.
 
 The common API exposes `GET /api/basketball`, authenticated `POST /api/basketball/round`, and authenticated `POST /api/basketball/score` (`ticket`, `shots` in elapsed milliseconds). The server signs rounds, checks identity, duration and shot cadence, and replays the game rules to calculate points. Starting another round replaces the previous ticket. Identical submissions can be retried for 24 hours after a round starts, including after a server restart; changing a completed round's shots is rejected. Save failures appear in the game with Retry, and an unsaved completed round stays available while the dialog is closed. Reloading the page discards local unsaved shots. Leaderboards are honour-based: a signed-in member can submit fabricated, mechanically valid shot timings without playing. Server validation rejects invalid rounds and scores, but does not prove human play.
