@@ -9,7 +9,7 @@ A small React + TypeScript app that shows where the team works today, on a 2D an
 - **Node.js** (`server/server.ts`): data is kept in a JSON file, `data/data.json`. Used locally and in Docker.
 - **Cloudflare Workers** (`worker/index.ts`): the same data is kept as one value (key `data`) in the `Minimap` Durable Object named `team`. Only `main` is deployed.
 
-Features with their own data live in their own folder (`server/basketball/`) and keep their own file (`data/basketball.json`) or storage key (`basketball`).
+Features with their own data live in their own folder (`server/basketball/`, `server/vote/`) and keep their own file (`data/basketball.json`, `data/vote.json`) or storage key (`basketball`, `vote`).
 
 `core.ts` never knows where data comes from or goes to. The host hands it `saved`, `save()` and `onChange()`, and does the same for each feature. A feature's `save()` may return a promise: on Cloudflare it resolves once the write is stored.
 
@@ -20,7 +20,7 @@ Features with their own data live in their own folder (`server/basketball/`) and
 - Don't add a dependency when a few lines will do. The Node server uses built-ins only, and should stay that way.
 - Check every value that comes from a request on the server (types, lengths, limits), like the `clean*` functions in `core.ts` do. Throw `ApiError(status, message)` for bad input. Never trust the browser.
 - Messages shown to people are plain, short sentences that say what to do next.
-- Keep logic that doesn't touch React, the DOM or three.js in `src/lib/*.ts` or `shared/*.ts`, with a `*.test.ts` next to it. That is how the picker, layout, ambience, status, drawing, wander and basketball rules are built.
+- Keep logic that doesn't touch React, the DOM or three.js in `src/lib/*.ts` or `shared/*.ts`, with a `*.test.ts` next to it. That is how the picker, layout, ambience, status, drawing, wander, basketball and voting rules are built. A `shared/*.test.ts` is type-checked by `server/tsconfig.json`, like the server's tests.
 - Comments say *why*, in plain words. Every file starts with a comment that says what it is for. Keep that comment, and write one for every new file.
 - TypeScript is run directly by Node (type stripping), so use erasable syntax only: no `enum`, no `namespace`, and no constructor parameter properties. Import local files with their `.ts` / `.tsx` extension.
 - Keep 2D and 3D in step. A change to how the map looks or behaves usually needs both `src/map/Map2D.tsx` and `src/map/scene3d.ts`, so put the shared rules in `src/lib/`. Every 3D view must still work in 2D when WebGL is missing or lost (`supportsWebGL`, `watchContextLoss`).
@@ -52,7 +52,7 @@ Layout for a feature called `<feature>`:
 
 How to connect it (see how `basketball` is wired):
 - In **both** `server/server.ts` and `worker/index.ts`, create the feature after the core with `team: core.team`, call `core.attach(feature.feature)`, and try its `handle` first: `(await feature.handle(req)) ?? (await core.handle(req))`. Give it its own `save`.
-- To know who is calling, use `team.player(req)` (throws a 401), `team.members()` and `team.sign(purpose, text)` (`Team` in `core.ts`). Never copy the PIN, token or lock logic. If a feature needs more from the team, add it to `Team`.
+- To know who is calling, use `team.player(req)` (throws a 401), `team.members()`, `team.sign(purpose, text)` and `team.requireAdmin(req)` (`Team` in `core.ts`). Never copy the PIN, token or lock logic. If a feature needs more from the team, add it to `Team`.
 - `core.attach` takes a `TeamFeature` (`core.ts`), which does two jobs:
   - **Backups:** the feature's data goes into the admin's one backup file under its `key`. `checkBackup` checks it against the people in that backup (throw `backupError`) before anything changes, then returns a restore function.
   - **Deleted people:** `forget(usernames)` drops what the feature keeps about them.
@@ -94,15 +94,15 @@ Paths are from the project root. Function names are given instead of line number
 | Feature | Code |
 |---|---|
 | Team API routes, data shape (`Data`), validation, `ApiError` | `server/core.ts`: `createCore` → `route()`; the routes are `if (route === 'METHOD /api/...')` blocks; `handle()` and `errorResponse` turn errors into JSON |
-| What features may use from the team | `core.ts`: `Team` (`core.team`), `TeamFeature` (`core.attach`), `backupError`, `safeEqual` |
-| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `serveStatic`, `runTimedChanges`, `start`) |
-| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data` and `basketball`, `alarm`, `syncAlarm`, `runTimedChanges`, SSE, ping) |
+| What features may use from the team | `core.ts`: `Team` (`core.team`: `player`, `members`, `sign`, `requireAdmin`), `TeamFeature` (`core.attach`), `backupError`, `safeEqual` |
+| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `sendAll`, `voteEvent`, `serveStatic`, `runTimedChanges`, `start`) |
+| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data`, `basketball` and `vote`, `alarm`, `syncAlarm`, `runTimedChanges`, SSE, ping), `voteEvent` |
 | Cloudflare settings (vars, bindings, build) | `wrangler.jsonc` |
-| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json` and `basketball.json`), `.dockerignore` |
+| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json`, `basketball.json` and `vote.json`), `.dockerignore` |
 | Types sent to the browser | `shared/types.ts` (`TeamState`, `TeamUser`, `ScheduledChange`, `Weather`, ...) |
 | Character design limits (server and editor) | `shared/look.ts` |
 | Frontend entry and page switch | `src/main.tsx` |
-| Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, `errorText`), `src/lib/hooks.ts` (`useTeamState`, `useNow`, `useAmbience`, ...) |
+| Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, which also takes features' named events such as `vote`, `errorText`), `src/lib/hooks.ts` (`useTeamState` gives the state and the votes, `useNow`, `useAmbience`, ...) |
 | Styles and shared controls | `src/styles/theme.ts`, `src/styles/ui.ts`, `src/styles/GlobalStyle.ts` |
 | 3D support and lost-context fallback | `src/lib/webgl.ts` (`supportsWebGL`), `src/lib/contextLoss.ts` (`watchContextLoss`, 10 s wait) |
 | CI | `.github/workflows/check.yml` |
@@ -118,14 +118,14 @@ Paths are from the project root. Function names are given instead of line number
 | Feature | Code |
 |---|---|
 | Page, filters, people list, 2D/3D switch | `src/pages/MonitorPage.tsx`: `MonitorPage`, `PeopleList`, `chooseMode`, `chooseFilter` |
-| Where rooms and seats go (both maps), park space kept for the arcade | `src/lib/layout.ts`: `computeLayout`, `FIXED_ZONES`, `placeGroup` |
+| Where rooms and seats go (both maps), park space kept for the arcade, lobby space kept for the notice board | `src/lib/layout.ts`: `computeLayout`, `FIXED_ZONES`, `placeGroup`, `noticeBoardSpot`, `standingArea` |
 | 2D map | `src/map/Map2D.tsx` (`ZoneRoom`, `Person`, `StreetDecor`), furniture `src/map/decor.tsx` |
 | 3D map | `src/map/Map3D.tsx` (React around the scene, 2D fallback), `src/map/scene3d.ts` (`createScene3D`: rooms, lights, weather, camera) |
 | 3D characters (map, claw machine, arcade) | `src/map/character3d.ts` |
 | 3D wandering | `src/lib/wander.ts` |
 | Person badge and detail card | `src/components/Badge.tsx`, `src/components/DetailCard.tsx` |
-| Map props and focus requests | `src/map/types.ts` |
-| Side panel: clocks, weather, QR code | `src/components/InfoPanel.tsx` |
+| Map props and focus requests (and the votes, vote marks and reactions the maps get) | `src/map/types.ts` |
+| Side panel: clocks, weather, QR code, a vote's last-hour countdown | `src/components/InfoPanel.tsx` (`VoteCountdown`) |
 
 ### Time of day and weather
 | Feature | Code |
@@ -173,6 +173,22 @@ Paths are from the project root. Function names are given instead of line number
 | Cabinet on the map with its Play button | `src/map/ArcadeCabinet.tsx` (`ArcadeCabinet2D`, `ArcadePlay`), `src/map/arcade3d.ts` (`createArcadeCabinet`) |
 | Tests | `server/basketball/basketball.test.ts` (including moving old scores), `src/lib/basketball.test.ts`, `src/lib/basketballCast.test.ts`, the arcade test in `worker/worker.test.ts` |
 
+### Voting
+| Feature | Code |
+|---|---|
+| Rules shared by browser and server (limits, open or closed, `clean*` checks, the safe view, results and ties, map summaries, banner text) | `shared/vote.ts` (`isOpen`, `canVote`, `cleanNewVote`, `cleanBallot`, `cleanOption`, `toView`, `results`, `mapSummary`, `latestResult`, `waitingVoters`, `waitingVotes`, `resultText`) |
+| API: create, ballot, options, extend, delete; queue with undo; caps of 30 open and 100 closed | `server/vote/core.ts`: `createVote` → `route()` with `GET/POST /api/vote`, `PATCH/DELETE /api/vote/:id`, `POST /api/vote/:id/ballot`, `POST /api/vote/:id/options`; `change` (queue, save, undo), `prune`, `views` |
+| Stored data | `VoteData` (`votes`, ballots as pairs): `data/vote.json` on Node, key `vote` on Cloudflare. Open or closed is never stored: it comes from `endsAt` and the time, so there is no timer or alarm |
+| Backup part, deleted people | `server/vote/core.ts`: `feature` (`checkVotes`, `forget`) |
+| Live updates | `onChange` → `event: vote` on `/api/events` (public views only, never `mine`), also sent when a stream opens |
+| Page `/vote`: tabs, form, cards, deep link | `src/pages/VotePage.tsx` (lazy in `main.tsx`), `src/components/VoteForm.tsx`, `src/components/VoteCard.tsx`, `src/components/VoteResults.tsx` |
+| Times in words, quick end picks | `src/lib/voteTime.ts` (`endsText`, `timeLeft`, `quickEnds`, `localInputValue`) |
+| Notice board (both maps) | `src/lib/noticeBoard.ts` (`boardNotes`, `countdown`, `voteLink`), `src/map/NoticeBoard2D.tsx`, `src/map/noticeBoard3d.ts` (canvas texture, `linkAt` for raycast); in `scene3d.ts`: `drawBoard` |
+| Results banner and "hasn't voted" marks | `MonitorPage.tsx` builds `VoteMarks` (switch `minimap.voteMarks`); 2D: `src/map/ResultBanner2D.tsx`, `src/components/BallotMark.tsx` (on `Badge`); 3D: `src/map/blimp3d.ts`, `scene3d.ts` `setVoteMarks`, `markBallot`, `animateVoteMarks`; `DetailCard.tsx` lists pending votes |
+| Character reactions | `src/lib/voteReactions.ts` (`reactions`), planned in `MonitorPage.tsx`; 2D: `Map2D.tsx` `usePlaying`; 3D: `scene3d.ts` `react`, `animateReaction`, `confettiAt`, with `hopHeight` from `wander.ts` |
+| 3D results skyline and ballot drop | `src/components/VoteSkyline3D.tsx` (lazy, bars when WebGL is missing or lost), `src/lib/skyline.ts` (`skylineTowers`), `src/components/BallotDrop.tsx` |
+| Tests | `shared/vote.test.ts`, `server/vote/vote.test.ts`, `src/lib/voteTime.test.ts`, `src/lib/noticeBoard.test.ts`, `src/lib/voteReactions.test.ts`, `src/lib/skyline.test.ts`, the vote test in `worker/worker.test.ts` |
+
 ### Random member picker (claw machine)
 | Feature | Code |
 |---|---|
@@ -190,7 +206,7 @@ Paths are from the project root. Function names are given instead of line number
 | What | Where |
 |---|---|
 | Test runner (fails when no tests run) | `scripts/run-tests.ts`, its own test `scripts/run-tests.test.ts` |
-| API tests (through a real Node server) | `server/server.test.ts` (`setup()` makes a temp data file), `server/basketball/basketball.test.ts` |
+| API tests (through a real Node server) | `server/server.test.ts` (`setup()` makes a temp data file), `server/basketball/basketball.test.ts`, `server/vote/vote.test.ts` |
 | Worker tests (real workerd) | `worker/worker.test.ts` |
-| Pure logic tests | `src/lib/*.test.ts` |
+| Pure logic tests | `src/lib/*.test.ts`, `shared/*.test.ts` |
 | 20 pretend users | `scripts/sample-team.ts` (`npm run test-members`) |

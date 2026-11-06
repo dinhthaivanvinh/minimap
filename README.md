@@ -7,6 +7,7 @@ A cute 2D and 3D map showing where your team is working today. It's a React and 
 | Map | `/` | Everyone. Add `?mode=3d` for a wall TV. If the browser takes away 3D graphics and doesn't give them back within 10 seconds, the screen switches to the 2D map until it's reloaded |
 | My status | `/me` | Team members claim a username, then set their nickname, place and status |
 | Admin | `/admin` | The admin creates usernames, and sets the team address, clocks and office location |
+| Team votes | `/vote` | Everyone sees open votes and results. Logged-in members start votes and vote. `/vote?id=<id>` opens one vote |
 
 ## Run on your own computer (no Docker)
 
@@ -27,7 +28,7 @@ You need [Node.js](https://nodejs.org) 24 or newer.
 
 4. Open http://localhost:8080/admin, add some usernames, then claim one at http://localhost:8080/me.
 
-Data is saved in `data/data.json`, and the basketball arcade's records in `data/basketball.json`. Delete those files while the server is stopped to start over.
+Data is saved in `data/data.json`, the basketball arcade's records in `data/basketball.json`, and team votes in `data/vote.json`. Delete those files while the server is stopped to start over.
 
 ## Develop
 
@@ -67,9 +68,10 @@ npm test
 |---|---|
 | `server/` | The API, daily reset and weather (`core.ts`), the Node.js server and data files (`server.ts`), plus their tests |
 | `server/basketball/` | The basketball arcade's API and records, kept apart from the team's data |
+| `server/vote/` | Team voting's API and votes, kept apart from the team's data |
 | `worker/` | The Cloudflare Worker and Durable Object that run the same API |
 | `shared/` | Types used by both the server and the frontend |
-| `src/pages/` | The Monitor, User and Admin pages |
+| `src/pages/` | The Monitor, User, Admin and Team votes pages |
 | `src/components/` | Badge, detail card, characters and the clocks, weather and QR panel |
 | `src/map/` | The 2D map, and the 3D map with its three.js scene |
 | `src/lib/` | API calls, React hooks, where rooms and seats go, and the time-of-day look (`ambience.ts`) |
@@ -99,7 +101,7 @@ The container restarts by itself after a crash or reboot. Data is kept in the Do
 
 **Back up the data**
 
-This copies the whole data folder: the team's `data.json` and the arcade's `basketball.json`. **Download backup** on the Admin page also saves both, in one file.
+This copies the whole data folder: the team's `data.json`, the arcade's `basketball.json` and the votes' `vote.json`. **Download backup** on the Admin page also saves all three, in one file.
 
 ```bash
 docker compose cp minimap:/app/data ./backup
@@ -159,7 +161,7 @@ On the Admin page, under **Backup**:
 - **Download backup** saves everything, PINs included, to a file. Keep backups private: with one, anyone could work out every PIN.
 - **Restore from a file** replaces all usernames, PINs and settings with a backup's. It also accepts the `data.json` from the office server, which is how you move to Cloudflare.
 
-A restore brings over usernames, nicknames, PINs, characters, scheduled changes, offices, clocks and the weather location, and people stay logged in. If the backup is from before the last morning reset, places, statuses and scheduled changes are cleared, as on any morning. Otherwise, scheduled changes that are overdue apply straight away. Backups can be up to 2 MB.
+A restore brings over usernames, nicknames, PINs, characters, scheduled changes, offices, clocks, the weather location, arcade records and team votes, and people stay logged in. If the backup is from before the last morning reset, places, statuses and scheduled changes are cleared, as on any morning. Otherwise, scheduled changes that are overdue apply straight away. Backups can be up to 2 MB.
 
 ## Random member picker
 
@@ -183,6 +185,10 @@ Once the main office location is set, the 2D and 3D maps follow the time of day 
 The map also shows the office's current weather: drifting clouds (with their shadows passing over the 3D town), fog, drizzle, rain and snow, and thunderstorms with an occasional soft flash of lightning (never a strobe). Rain and snow fall behind people and their names, so everyone stays easy to read. People outdoors (in **Out of Office** and **Off today**) open umbrellas in rain and snow, puddles shine on the street while it rains, snow settles on the room tops, roofs and trees, and trees sway in the wind. With reduced motion turned on in the device's settings, the weather is shown as a still picture, with no lightning or swaying.
 
 Each screen can turn the effects off with the **Weather** button on the map's toolbar, which the browser remembers. The button shows when an office location is set and the setting above is on.
+
+### Votes on the map
+
+People invited to an open vote that has **Show on the map** turned on, and who haven't voted yet, get a small ballot over their head. For 3 hours after a vote closes with at least one ballot, its result hangs on a banner across the street in 2D, or trails behind a blimp over the town in 3D. Each screen can hide the ballots and the banner with the **Votes** button on the map's toolbar, which the browser remembers. The notice board, the wall TV countdown and the people's reactions stay.
 
 To preview another time of day on one screen, add `?time=dawn`, `day`, `dusk`, `night` or a time such as `?time=21:30` (in the time zone of the screen showing the map, not the office's) to the map's address (for example `/?mode=3d&time=dusk`). To preview weather, add `?weather=` with `clear`, `partly`, `windy`, `cloudy`, `fog`, `drizzle`, `rain`, `downpour`, `snow` or `storm`. Previews show even when the effects are turned off. They can be combined, as in `/?weather=storm&time=night`, and only change that screen. Without an office location, the preview uses a 06:00 sunrise and an 18:00 sunset.
 
@@ -212,6 +218,22 @@ Avoid `$` in `ADMIN_PASSWORD` when using Docker, because Docker Compose treats i
 - **Weather:** the server gets it from [Open-Meteo](https://open-meteo.com) every 15 minutes, sending only the office coordinates. It also gets the sunrise and sunset times, cloud cover, rain amount and wind speed for the map's daylight and weather. Browsers never contact it. The server needs internet access for this, and everything else works without it. If updates fail, the last reading stays for up to 3 hours, then the map shows "Weather unavailable". Check [Open-Meteo's terms](https://open-meteo.com/en/terms) for your use, because its free service is for non-commercial use. Its data license requires the credit line shown under the weather, so keep that in place.
 - **Working from home:** teammates can only update their status if they can reach the server, for example over your VPN.
 - **Security:** this is built for a trusted office network. The Node.js server uses plain HTTP, so passwords and PINs are not encrypted on the network. Put a reverse proxy with HTTPS in front before exposing it more widely, or deploy to Cloudflare, which uses HTTPS.
+
+## Team votes
+
+Anyone logged in on **My status** can start a vote on `/vote` (or from the notice board in the lobby): a lunch place, a sprint name, a retro topic. They pick its name, when it ends (up to 90 days away), 2 to 20 options, and who can vote (they are always invited themselves). Three settings are fixed once the vote is made:
+
+- **Single** or **multiple** choice.
+- **Custom options**: invited voters can add options while the vote is open, up to 20 in all.
+- **Named** or **anonymous**. A named vote shows who picked each option. An anonymous vote shows only counts: the server never sends anyone's picks to anyone else, not to the creator, the admin or the map. Each voter still sees their own picks. Who *has voted* is shown on both kinds, for turnout and the map's markers.
+
+Invited people can vote, and change their vote, until the end time; the server closes the vote exactly then. Results are live for everyone, logged in or not, so a wall TV can show them. The creator can change the end time while the vote is open, and the creator or the admin (with the admin password saved in that browser tab) can delete a vote. There can be up to 30 open votes, and the newest 100 closed votes are kept in **History**; older ones are dropped by themselves.
+
+On the map, the **notice board** at the edge of the lobby shows up to four open votes, ending soonest first, with a **+N** for the rest. A note turns red and pulses in a vote's last hour. In its last hour, the side panel also counts it down for the wall TV: *Team lunch closes in 42 min, 2 people left*. Clicking a note opens that vote; clicking the board opens `/vote`. Clicking someone shows which votes they haven't voted on yet. When someone votes, their character hops. When a named vote closes, the people who picked the winner cheer and everyone else invited claps; when an anonymous vote closes, everyone invited gets the same confetti, so no reaction gives away a pick. With reduced motion turned on, none of this moves. A vote's results can also be seen as a 3D **Skyline**, with bars when 3D isn't available.
+
+Votes are kept apart from the team's data: in `data/vote.json` on Node.js, and under their own `vote` key in the Durable Object on Cloudflare. The admin's backup file holds them under `vote`, **with every ballot, anonymous ones included**, because a restore needs them; keep backups private. A restore checks that every creator, voter and ballot belongs to someone in the backup. Deleting a member removes their ballots and invitations, so old results may drop by one; votes they made stay, shown as made by *a former member*, and only the admin can delete them.
+
+The API: `GET /api/vote` (anyone; adds the caller's own picks as `mine` when a login is sent), and with a login: `POST /api/vote`, `PATCH /api/vote/:id` (`endsAt`, creator only), `POST /api/vote/:id/ballot` (`choices`), `POST /api/vote/:id/options` (`text`) and `DELETE /api/vote/:id` (the creator, or the admin with `x-admin-password`). Live updates come on `/api/events` as `event: vote`.
 
 ## Basketball arcade
 
