@@ -1,5 +1,4 @@
 // Monitor page: filters, the people list, and switching between 2D and 3D.
-import { Basketball } from '../components/Basketball.tsx';
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
@@ -18,6 +17,8 @@ import { Button, Count, Segmented, Wordmark } from '../styles/ui.ts';
 
 // three.js is large, so it only loads when someone opens the 3D map.
 const Map3D = lazy(() => import('../map/Map3D.tsx'));
+// The arcade is a whole game, so it only loads when someone presses Play.
+const Basketball = lazy(() => import('../components/Basketball.tsx').then((m) => ({ default: m.Basketball })));
 
 const MODE_KEY = 'minimap.mode';
 const WEATHER_KEY = 'minimap.weather';
@@ -275,7 +276,8 @@ function save(key: string, value: string): void {
 }
 
 // Falls back to the 2D map if the 3D map can't load or crashes.
-class Map3DGuard extends Component<{ onFail: () => void; children: ReactNode }, { failed: boolean }> {
+// Keeps the map running when a part fails or can't be downloaded: that part just isn't shown.
+class Guard extends Component<{ what: string; onFail?: () => void; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -283,8 +285,8 @@ class Map3DGuard extends Component<{ onFail: () => void; children: ReactNode }, 
   }
 
   componentDidCatch(error: unknown) {
-    console.error('Could not show the 3D map', error);
-    this.props.onFail();
+    console.error(`Could not show ${this.props.what}`, error);
+    this.props.onFail?.();
   }
 
   render() {
@@ -485,14 +487,21 @@ export function MonitorPage() {
           <MapHost>
             {mapProps && mode === '2d' && <Map2D {...mapProps} />}
             {mapProps && mode === '3d' && (
-              <Map3DGuard onFail={fallBackTo2D}>
+              <Guard what="the 3D map" onFail={fallBackTo2D}>
                 <Suspense fallback={null}>
                   <Map3D {...mapProps} onFail={fallBackTo2D} />
                 </Suspense>
-              </Map3DGuard>
+              </Guard>
             )}
           </MapHost>
-          <Basketball initialView={mode} users={users} request={arcadeRequest} />
+          {/* Loaded on the first Play, then kept, so a finished round that wasn't saved stays available. */}
+          {arcadeRequest && (
+            <Guard what="the basketball arcade">
+              <Suspense fallback={null}>
+                <Basketball initialView={mode} users={users} request={arcadeRequest} />
+              </Suspense>
+            </Guard>
+          )}
           {!online && <OfflineNote role="status">Reconnecting to the server</OfflineNote>}
           {state && !state.users.length && (
             <EmptyNote>No team members yet. Add usernames on the <a href="/admin">Admin page</a>.</EmptyNote>

@@ -239,7 +239,8 @@ test('basketball round tickets and rankings survive Durable Object eviction and 
   assert.equal(round.status, 201);
   await evict();
   const backup = (await api('GET', '/api/admin/data', undefined, ADMIN)).json;
-  assert.equal(backup.users[0].basketballRound.ticket, round.json.ticket);
+  // The arcade keeps its tickets under its own storage key, not in the team's data.
+  assert.equal(backup.users[0].basketballRound, undefined);
   const week = new Date();
   week.setUTCDate(week.getUTCDate() - (week.getUTCDay() + 6) % 7);
   const entry = { username: 'hooper', score: 42, at: new Date().toISOString() };

@@ -9,7 +9,9 @@ A small React + TypeScript app that shows where the team works today, on a 2D an
 - **Node.js** (`server/server.ts`): data is kept in a JSON file, `data/data.json`. Used locally and in Docker.
 - **Cloudflare Workers** (`worker/index.ts`): the same data is kept as one value (key `data`) in the `Minimap` Durable Object named `team`. Only `main` is deployed.
 
-`core.ts` never knows where data comes from or goes to. The host hands it `saved`, `save()` and `onChange()`. `save()` may return a promise: on Cloudflare it resolves once the write is stored.
+Features with their own data live in their own folder (`server/basketball/`) and keep their own file (`data/basketball.json`) or storage key (`basketball`).
+
+`core.ts` never knows where data comes from or goes to. The host hands it `saved`, `save()` and `onChange()`, and does the same for each feature. A feature's `save()` may return a promise: on Cloudflare it resolves once the write is stored.
 
 ## House rules
 
@@ -35,28 +37,32 @@ A small React + TypeScript app that shows where the team works today, on a 2D an
 - Use the shared controls in `src/styles/ui.ts` and the tokens in `src/styles/theme.ts` before making new ones.
 
 ### API and data: a new feature gets its own module and its own data file
-Don't add new features to `server/core.ts` or to the main `Data` / `data.json`. For example, game scores belong in `data/<game>.json`, not in `data.json`. The basketball arcade was built before this rule and doesn't follow it yet (see [Known exceptions](#known-exceptions)), so don't copy its layout.
+Don't add new features to `server/core.ts` or to the main `Data` / `data.json`. For example, game scores belong in `data/<game>.json`, not in `data.json`. **Copy `server/basketball/`**: it is the working example of everything below.
 
 Layout for a feature called `<feature>`:
 
 | What | Where |
 |---|---|
-| API and rules | `server/<feature>/core.ts`: `create<Feature>Core({ saved, save, onChange, now })` returns `{ handle, publicState, save }`. `handle(req)` answers only `/api/<feature>/...` and returns `null` for any other path. |
-| Tests | `server/<feature>/<feature>.test.ts` (`npm test` finds it by itself). Add `server/**/*.test.ts` to `.dockerignore` if it only lists `server/*.test.ts`. |
+| API and rules | `server/<feature>/core.ts`: `create<Feature>({ saved, save, team, now })` returns `{ handle, save, feature }`. `handle(req)` answers only `/api/<feature>/...` and returns `null` for any other path. |
+| Tests | `server/<feature>/<feature>.test.ts` (`npm test` finds it, and `.dockerignore` already leaves out `server/**/*.test.ts`) |
 | Types and rules shared with the browser | `shared/<feature>.ts` |
 | Data on Node.js | `data/<feature>.json`, next to the main data file: `path.join(path.dirname(dataFile), '<feature>.json')`. Write a `.tmp` file and rename it, as `server.ts` does. |
 | Data on Cloudflare | Its own storage key `<feature>` in the same Durable Object: `ctx.storage.get('<feature>')` / `ctx.storage.put('<feature>', ...)`. Never write it into the `data` value. |
 | Page | `src/pages/<Feature>Page.tsx` (see the UI rules above) |
 
-How to connect it:
-- In **both** `server/server.ts` and `worker/index.ts`, create the feature core next to the main one and try it first, for example `(await feature.handle(req)) ?? (await core.handle(req))`. Give it its own `save`.
-- If a reply tells someone their data is stored (a score, a payment, a booking), `await` the save before replying, and undo the change in memory if the save fails, as the basketball score route does.
+How to connect it (see how `basketball` is wired):
+- In **both** `server/server.ts` and `worker/index.ts`, create the feature after the core with `team: core.team`, call `core.attach(feature.feature)`, and try its `handle` first: `(await feature.handle(req)) ?? (await core.handle(req))`. Give it its own `save`.
+- To know who is calling, use `team.player(req)` (throws a 401), `team.members()` and `team.sign(purpose, text)` (`Team` in `core.ts`). Never copy the PIN, token or lock logic. If a feature needs more from the team, add it to `Team`.
+- `core.attach` takes a `TeamFeature` (`core.ts`), which does two jobs:
+  - **Backups:** the feature's data goes into the admin's one backup file under its `key`. `checkBackup` checks it against the people in that backup (throw `backupError`) before anything changes, then returns a restore function.
+  - **Deleted people:** `forget(usernames)` drops what the feature keeps about them.
+- Moving data that used to live in `data.json`: take it out of the saved team data before `createCore` reads it (as `takeOldBasketball` does), and save the feature's own copy before the team's is written again.
+- If a reply tells someone their data is stored (a score, a payment, a booking), `await` the save before replying, and undo the change in memory if the save fails. Put changes in a queue, so saves happen one at a time (`queue` / `saveOrUndo` in `server/basketball/core.ts`).
 - A Cloudflare value can be at most 2 MB. Keep feature data small, cap list lengths, and drop old entries.
-- If the feature needs to know who is calling, ask the main core. Have `createCore` return `userFromToken` / `requireAdmin` and pass them in. Never copy the PIN, token or lock logic.
+- Keep per-person data in a `Map`, not a plain object: a username such as `__proto__` breaks a plain object.
 - Live updates: send the feature's own `onChange` events over the existing `/api/events` stream with an event name (`event: <feature>`), or poll. Don't put feature state into `TeamState`.
 - Things that must happen at a set time: Node runs `runTimedChanges` every 30 s, but a Durable Object sleeps and has **only one alarm**. Add the feature's next time to the time `syncAlarm` sets (the earliest time wins), and run the feature's catch-up from `runTimedChanges` in both hosts. The daily reset always goes first.
-- Backups (`GET/PUT /api/admin/data`) cover only the main data. If the feature's data must survive a move, add `GET/PUT /api/<feature>/data` for the admin, and say so on the Admin page.
-- When a user is deleted, remove their rows from the feature's data too.
+- Docker copies the whole `server/` folder, so a new feature folder needs no Dockerfile change.
 
 ### Before you finish
 Run all three. CI (`.github/workflows/check.yml`) runs the same commands on every pull request:
@@ -80,10 +86,6 @@ To see a change: run `npm run dev:api` and `npm run dev` together (Vite at http:
 - Update `README.md` when what people do or set up changes.
 - Branch from `main`. Don't commit to `main` or push without being asked.
 
-## Known exceptions
-
-The **basketball arcade** keeps its data in the main data: `data.basketball` (leaderboards) and `user.basketballRound` (the round ticket of each user), with its routes inside `core.ts`. Its dialog opens from `MonitorPage`, which imports it directly. So the scores are in admin backups, and `checkBackup` checks them. If you move it to `server/basketball/` with its own data, keep the scores that are already saved (read them from `data.basketball` once) and keep them in a backup.
-
 ## Feature map
 
 Paths are from the project root. Function names are given instead of line numbers, because line numbers change. Inside a table, a bare file name such as `core.ts` means the file named in full above it.
@@ -91,11 +93,12 @@ Paths are from the project root. Function names are given instead of line number
 ### Hosts and plumbing
 | Feature | Code |
 |---|---|
-| All API routes, data shape (`Data`), validation, `ApiError` | `server/core.ts`: `createCore` → `route()`; the routes are `if (route === 'METHOD /api/...')` blocks; `handle()` turns errors into JSON |
-| Node server: static files, data file, SSE, timers | `server/server.ts`: `createApp` (`save`, `openEvents`, `serveStatic`, `runTimedChanges`, `start`) |
-| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage, `alarm`, `syncAlarm`, `runTimedChanges`, SSE, ping) |
+| Team API routes, data shape (`Data`), validation, `ApiError` | `server/core.ts`: `createCore` → `route()`; the routes are `if (route === 'METHOD /api/...')` blocks; `handle()` and `errorResponse` turn errors into JSON |
+| What features may use from the team | `core.ts`: `Team` (`core.team`), `TeamFeature` (`core.attach`), `backupError`, `safeEqual` |
+| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `serveStatic`, `runTimedChanges`, `start`) |
+| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data` and `basketball`, `alarm`, `syncAlarm`, `runTimedChanges`, SSE, ping) |
 | Cloudflare settings (vars, bindings, build) | `wrangler.jsonc` |
-| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`), `.dockerignore` |
+| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json` and `basketball.json`), `.dockerignore` |
 | Types sent to the browser | `shared/types.ts` (`TeamState`, `TeamUser`, `ScheduledChange`, `Weather`, ...) |
 | Character design limits (server and editor) | `shared/look.ts` |
 | Frontend entry and page switch | `src/main.tsx` |
@@ -155,19 +158,20 @@ Paths are from the project root. Function names are given instead of line number
 | Log in | `src/pages/AdminPage.tsx`: `LoginPanel`; `GET /api/admin/check` |
 | Add, release, delete usernames | `AdminPage.tsx`: `AddUserForm`, `TeamPanel`; `POST /api/admin/users`, `POST /api/admin/users/:name/release`, `DELETE /api/admin/users/:name` |
 | Team address, clocks, office location | `AdminPage.tsx`: `AddressForm`, `ClocksForm`, `OfficeForm`; `PATCH /api/admin/settings`, `cleanPublicUrl` / `cleanClocks` / `cleanOffice` |
-| Backup and restore (includes schedules and basketball) | `AdminPage.tsx`: `BackupPanel`; `GET/PUT /api/admin/data`, `checkBackup` |
+| Backup and restore (includes schedules, and each attached feature under its key) | `AdminPage.tsx`: `BackupPanel`; `GET/PUT /api/admin/data`, `checkBackup`, each feature's `checkBackup` |
 
 ### Basketball arcade
 | Feature | Code |
 |---|---|
 | Game rules shared by browser and server (timing, aim, scoring, replay, ranking, week) | `shared/basketball.ts` (`replay`, `shoot`, `rank`, `weekKey`, `ROUND_MS`, `MAX_ROUND_SCORE`) |
-| API: leaderboards, signed round tickets, score check | `core.ts`: `GET /api/basketball`, `POST /api/basketball/round`, `POST /api/basketball/score`; `boards`, `signRound`, `gameWrite` (saves one at a time) |
-| Stored data | `Data.basketball` and `StoredUser.basketballRound` in `core.ts` (see [Known exceptions](#known-exceptions)) |
-| Game dialog, round flow, retry, leaderboards | `src/components/Basketball.tsx` (opened from `MonitorPage.tsx`) |
+| API: leaderboards, signed round tickets, score check | `server/basketball/core.ts`: `createBasketball` → `route()` with `GET /api/basketball`, `POST /api/basketball/round`, `POST /api/basketball/score`; `boards`, `queue`, `saveOrUndo` |
+| Stored data | `BasketballData` (`records`, `rounds` by username): `data/basketball.json` on Node, key `basketball` on Cloudflare |
+| Backup part, deleted people, moving old data | `server/basketball/core.ts`: `feature` (`checkRecords`, `forget`), `takeOldBasketball` |
+| Game dialog, round flow, retry, leaderboards | `src/components/Basketball.tsx` (loaded with `lazy()` on the first Play in `MonitorPage.tsx`, inside `Guard`) |
 | 2D court, with the 3D court loaded lazily | `src/components/BasketballCourt.tsx` (`ballPose`), `src/components/BasketballCourt3D.tsx` |
 | Court lines, crowd and banners | `src/lib/basketballCourt.ts`, `src/lib/basketballCast.ts` (`pickTeammates`, `pickCrowd`) |
 | Cabinet on the map with its Play button | `src/map/ArcadeCabinet.tsx` (`ArcadeCabinet2D`, `ArcadePlay`), `src/map/arcade3d.ts` (`createArcadeCabinet`) |
-| Tests | `server/basketball.test.ts`, `src/lib/basketball.test.ts`, `src/lib/basketballCast.test.ts` |
+| Tests | `server/basketball/basketball.test.ts` (including moving old scores), `src/lib/basketball.test.ts`, `src/lib/basketballCast.test.ts`, the arcade test in `worker/worker.test.ts` |
 
 ### Random member picker (claw machine)
 | Feature | Code |
@@ -186,7 +190,7 @@ Paths are from the project root. Function names are given instead of line number
 | What | Where |
 |---|---|
 | Test runner (fails when no tests run) | `scripts/run-tests.ts`, its own test `scripts/run-tests.test.ts` |
-| API tests (through a real Node server) | `server/server.test.ts` (`setup()` makes a temp data file), `server/basketball.test.ts` |
+| API tests (through a real Node server) | `server/server.test.ts` (`setup()` makes a temp data file), `server/basketball/basketball.test.ts` |
 | Worker tests (real workerd) | `worker/worker.test.ts` |
 | Pure logic tests | `src/lib/*.test.ts` |
 | 20 pretend users | `scripts/sample-team.ts` (`npm run test-members`) |
