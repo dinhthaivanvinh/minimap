@@ -14,18 +14,29 @@ export function officeAssembly(state: Pick<TeamState, 'places' | 'users'>) {
 }
 export function heroPose(index: number, count: number, elapsed: number, reduced = false) {
   const arrival = 1200 + (index / Math.max(1, count - 1)) * 3600;
-  const p = reduced ? 1 : Math.max(0, Math.min(1, (elapsed - arrival) / 1000));
-  const ease = 1 - (1 - p) ** 3;
-  const impact = reduced ? 0 : Math.max(0, 1 - Math.abs(p - 0.8) / 0.2);
+  // Open, cross the doorway, settle forward, then close behind the hero.
+  const p = reduced ? 1 : Math.max(0, Math.min(1, (elapsed - arrival) / 1400));
+  const window = (start: number, end: number) => Math.max(0, Math.min(1, (p - start) / (end - start)));
+  const smooth = (v: number) => v * v * (3 - 2 * v);
+  const emerge = smooth(window(0.18, 0.72));
+  const settle = smooth(window(0.72, 0.86));
+  const portalScale = reduced ? 0 : smooth(window(0, 0.18)) * (1 - smooth(window(0.82, 1)));
   return {
-    visible: p > 0,
-    impact,
-    opacity: Math.min(1, p * 3),
-    portal: reduced ? 0 : Math.max(elapsed >= 6500 ? 0.28 : 0, 1 - Math.abs(p - 0.3) / 0.7),
-    x: p === 1 ? 0 : (index % 2 ? 1 : -1) * (1 - ease) * 100,
-    y: p === 1 ? 0 : p < 0.8 ? -75 * (1 - p / 0.8) ** 2 : Math.sin(((p - 0.8) / 0.2) * Math.PI) * 2.5,
-    scale: 0.65 + ease * 0.35,
-    lean: reduced || p === 1 ? 0 : (index % 2 ? 1 : -1) * (1 - p) * 12,
+    progress: p,
+    emerge,
+    visible: emerge > 0,
+    impact: reduced ? 0 : Math.max(0, 1 - Math.abs(p - 0.86) / 0.12),
+    opacity: emerge,
+    portal: portalScale > 0 ? 1 : 0,
+    portalScale,
+    portalRotation: p * Math.PI * 3,
+    // Both renderers start at the fixed doorway, never at a scene edge.
+    x: 0,
+    y: settle === 1 ? 0 : (1 - emerge) * -18 - (1 - settle) * 8,
+    scale: 0.82 + emerge * 0.18,
+    lean: reduced || emerge === 1 ? 0 : Math.sin(emerge * Math.PI * 2) * 3,
+    forward: emerge * 0.75 + settle * 0.25,
+    depthScale: 0.025 + emerge * 0.975,
   };
 }
 export function heroGrid(count: number) {

@@ -65,3 +65,48 @@ test('the formation has a lead and staggered wings, with bounded positions for l
       assert.equal(heroPose(i, count, 0, true).impact, 0);
     }
 });
+
+test('a doorway opens before emergence, stays open through crossing, then closes', () => {
+  const at = (p: number) => heroPose(0, 1, 1200 + p * 1400);
+  assert.equal(at(0).portalScale, 0);
+  assert.equal(at(0.1).visible, false);
+  assert.ok(at(0.1).portalScale > 0 && at(0.1).portalScale < 1);
+  assert.equal(at(0.18).portalScale, 1);
+  assert.equal(at(0.18).emerge, 0);
+  const crossing = at(0.45);
+  assert.ok(crossing.visible && crossing.emerge > 0 && crossing.emerge < 1);
+  assert.ok(crossing.depthScale > 0.025 && crossing.depthScale < 1);
+  assert.equal(crossing.portalScale, 1);
+  const through = at(0.75);
+  assert.equal(through.emerge, 1);
+  assert.equal(through.depthScale, 1);
+  assert.equal(through.portalScale, 1);
+  assert.ok(through.forward > crossing.forward);
+  assert.ok(at(0.9).portalScale > 0 && at(0.9).portalScale < 1);
+  assert.equal(at(1).portalScale, 0);
+  assert.equal(at(1).portal, 0);
+  assert.equal(at(1).forward, 1);
+  assert.ok(at(0.6).portalRotation > at(0.3).portalRotation);
+  for (let step = 0; step <= 100; step++) assert.equal(at(step / 100).x, 0);
+});
+
+test('doorways remain staggered and every portal closes before the finale', () => {
+  assert.ok(heroPose(0, 9, 1400).portalScale > 0);
+  assert.equal(heroPose(1, 9, 1400).portalScale, 0);
+  assert.equal(heroPose(8, 9, 1400).portalScale, 0);
+  for (const count of [1, 9, 100]) {
+    for (let index = 0; index < count; index++) {
+      const end = heroPose(index, count, 6500);
+      assert.equal(end.portalScale, 0);
+      assert.equal(end.emerge, 1);
+      assert.equal(end.forward, 1);
+      const still = heroPose(index, count, 0, true);
+      assert.equal(still.portalScale, 0);
+      assert.equal(still.opacity, 1);
+      assert.equal(still.scale, 1);
+      assert.equal(still.depthScale, 1);
+      assert.equal(still.y, 0);
+    }
+  }
+  assert.equal(ASSEMBLY_MS, 10_500);
+});

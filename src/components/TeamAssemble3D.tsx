@@ -89,7 +89,8 @@ export default function TeamAssemble3D(props: {
       })(),
       { y: -0.2 },
     );
-    floor.scale.z = 0.75; floor.castShadow=false;
+    floor.scale.z = 0.75;
+    floor.castShadow = false;
     scene.add(floor);
     for (let i = -7; i <= 7; i++) {
       const h = 5 + ((i * i + 7) % 10);
@@ -115,11 +116,14 @@ export default function TeamAssemble3D(props: {
         y: 7,
         z: -depth / 2,
       });
-      beam.rotation.z = side * 0.28; beam.castShadow=false; beam.receiveShadow=false;
+      beam.rotation.z = side * 0.28;
+      beam.castShadow = false;
+      beam.receiveShadow = false;
       scene.add(beam);
     }
     const heroes = props.members.map((user, index) => {
       const formation = heroFormation(index, props.members.length);
+      const size = formation.scale * 1.15;
       const x = (formation.x - 0.5) * span,
         z = (formation.y - 0.68) * 24;
       const group = new THREE.Group(),
@@ -172,11 +176,24 @@ export default function TeamAssemble3D(props: {
       materials.add(portalMat);
       const portal = mesh(new THREE.TorusGeometry(1.75, 0.06, 10, 80), portalMat, {
         x,
-        y: 1.5,
-        z: z - 1.1,
+        y: 1.6 * size,
+        z: z - 1.8 * size,
       });
-      portal.castShadow=false; portal.receiveShadow=false;
+      portal.castShadow = false;
+      portal.receiveShadow = false;
       scene.add(portal);
+      const shimmerMat = new THREE.MeshBasicMaterial({
+        color: index % 2 ? 0x9a5629 : 0x236e91,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      materials.add(shimmerMat);
+      const shimmer = mesh(new THREE.CircleGeometry(1.68, 64), shimmerMat, { shadow: false });
+      shimmer.receiveShadow = false;
+      portal.add(shimmer);
       const sparks = new Float32Array(80 * 3);
       for (let j = 0; j < 80; j++) {
         const a = (j / 80) * Math.PI * 2,
@@ -203,9 +220,11 @@ export default function TeamAssemble3D(props: {
       });
       materials.add(impactMat);
       const impact = mesh(new THREE.RingGeometry(0.85, 1, 64), impactMat, { x, y: 0.015, z });
-      impact.rotation.x = -Math.PI / 2; impact.castShadow=false; impact.receiveShadow=false;
+      impact.rotation.x = -Math.PI / 2;
+      impact.castShadow = false;
+      impact.receiveShadow = false;
       scene.add(impact);
-      return { group, inner, portal, portalMat, impact, impactMat, formation, x, z };
+      return { group, inner, portal, portalMat, shimmerMat, sparkMat, impact, impactMat, size, x, z };
     });
     let cameraDistance = 24;
     const resize = () => {
@@ -241,14 +260,18 @@ export default function TeamAssemble3D(props: {
       heroes.forEach((hero, index) => {
         const pose = heroPose(index, heroes.length, elapsed, reduced);
         hero.group.visible = pose.visible;
-        hero.group.position.set(hero.x + pose.x * 0.025, Math.max(0, -pose.y * 0.045), hero.z);
-        hero.group.scale.setScalar(pose.scale * hero.formation.scale * 1.15);
+        hero.group.position.set(hero.x, 0, hero.z - (1 - pose.forward) * 1.8 * hero.size);
+        hero.group.scale.setScalar(pose.scale * hero.size);
+        hero.inner.scale.z = pose.depthScale;
         hero.inner.rotation.z = (pose.lean * Math.PI) / 180;
         hero.portal.visible = pose.portal > 0.01;
+        hero.portal.scale.setScalar(pose.portalScale * hero.size);
         hero.portalMat.opacity = pose.portal * 0.95;
+        hero.shimmerMat.opacity = pose.portal * (0.18 + Math.sin(pose.progress * Math.PI * 12) * 0.06);
+        hero.sparkMat.opacity = pose.portal;
         hero.impactMat.opacity = pose.impact * 0.7;
         hero.impact.scale.setScalar(1 + (1 - pose.impact) * 3);
-        if (!reduced) hero.portal.rotation.z = elapsed / 800 + index;
+        hero.portal.rotation.z = pose.portalRotation + index;
       });
       renderer.render(scene, camera);
       labels.render(scene, camera);

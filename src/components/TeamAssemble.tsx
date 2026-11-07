@@ -1,6 +1,6 @@
 import type { TeamUser } from '../../shared/types.ts';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import styled from 'styled-components';
+import styled, { keyframes } from 'styled-components';
 import { ASSEMBLY_MS, heroGrid, heroPose, heroFormation } from '../lib/assembly.ts';
 import { useReducedMotion } from '../lib/hooks.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
@@ -154,11 +154,19 @@ const Lineup = styled.div<{ $columns: number; $rows: number }>`
   overflow: hidden;
   --hero-size: clamp(80px, 22cqw, 190px);
 `;
+const rimSpin = keyframes`
+  to { transform: rotate(360deg); }
+`;
 const Hero = styled.div`
   position: absolute;
   width: var(--hero-size);
   text-align: center;
   transform-origin: 50% 100%;
+  .body {
+    position: relative;
+    aspect-ratio: 1;
+    transform-origin: 50% 100%;
+  }
   .figure {
     margin: auto;
     width: min(100%, var(--hero-size));
@@ -185,14 +193,32 @@ const Hero = styled.div`
   }
   .portal {
     position: absolute;
-    inset: -16px -4% 18%;
-    transform: rotate(-12deg);
+    width: 115%;
+    aspect-ratio: 1;
+    left: -7.5%;
+    top: -7.5%;
     border: 2px solid #ffb36b;
     border-radius: 50%;
+    background: radial-gradient(circle, #72ecd033, #184e6977 55%, #ffb36b44 68%, transparent 70%);
     box-shadow:
       0 0 25px #ffb85c,
       inset 0 0 18px #72ecd0;
     pointer-events: none;
+    &::after {
+      content: '';
+      position: absolute;
+      inset: -5px;
+      border: 3px dashed #ffe1aa;
+      border-radius: 50%;
+      box-shadow: 0 0 9px #ffad68;
+      animation: ${rimSpin} 1.1s linear infinite;
+      animation-play-state: inherit;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      &::after {
+        animation: none;
+      }
+    }
   }
   span {
     display: block;
@@ -376,21 +402,39 @@ export function TeamAssemble({
                     left: `${formation.x * 100}%`,
                     top: `${formation.y * 100}%`,
                     zIndex: Math.round(formation.y * 100),
-                    opacity: pose.opacity,
-                    transform: `translate(-50%,-100%) translate(${pose.x}px,${pose.y}px) scale(${pose.scale * formation.scale}) rotate(${pose.lean}deg)`,
+                    transform: `translate(-50%,-100%) scale(${formation.scale})`,
                   }}
                 >
-                  <div className="portal" aria-hidden="true" style={{ opacity: pose.portal }} />
-                  <div className="cape" aria-hidden="true" />
+                  <div
+                    className="portal"
+                    aria-hidden="true"
+                    style={{
+                      opacity: pose.portal,
+                      transform: `scale(${pose.portalScale})`,
+                      animationPlayState: pose.portal > 0 && !reduced ? 'running' : 'paused',
+                    }}
+                  />
                   <div
                     className="impact"
                     aria-hidden="true"
                     style={{ opacity: pose.impact, transform: `scale(${1 + (1 - pose.impact) * 2})` }}
                   />
-                  <div className="figure">
-                    <Mochi user={user} />
+                  <div
+                    className="body"
+                    style={{
+                      opacity: pose.opacity,
+                      clipPath: pose.emerge === 1 ? 'none' : `circle(${pose.emerge * 85}% at 50% 55%)`,
+                      transform: `translateY(${pose.y}px) scale(${pose.scale}) rotate(${pose.lean}deg)`,
+                    }}
+                  >
+                    <div className="cape" aria-hidden="true" />
+                    <div className="figure">
+                      <Mochi user={user} />
+                    </div>
                   </div>
-                  <span style={{ fontSize: 11 / formation.scale }}>{user.nickname || user.username}</span>
+                  <span style={{ fontSize: 11 / formation.scale, opacity: pose.opacity }}>
+                    {user.nickname || user.username}
+                  </span>
                 </Hero>
               );
             })}
