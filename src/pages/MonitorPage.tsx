@@ -1,17 +1,19 @@
 // Monitor page: filters, the people list, and switching between 2D and 3D.
-import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
+import { latestResult, waitingVoters, type VoteView } from '../../shared/vote.ts';
 import { DetailCard } from '../components/DetailCard.tsx';
 import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { RandomPicker } from '../components/RandomPicker.tsx';
-import { useAmbience, useTeamState } from '../lib/hooks.ts';
+import { useAmbience, useNow, useReducedMotion, useTeamState } from '../lib/hooks.ts';
+import { reactions as planReactions, type VoteSnapshot } from '../lib/voteReactions.ts';
 import { shownStatus } from '../lib/status.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
 import { isNotWorking, placeGroup, placeName, type PlaceGroup } from '../lib/layout.ts';
 import Map2D from '../map/Map2D.tsx';
-import type { FocusRequest } from '../map/types.ts';
+import type { FocusRequest, ReactionPlay, VoteMarks } from '../map/types.ts';
 import { media, theme } from '../styles/theme.ts';
 import { Button, Count, Segmented, Wordmark } from '../styles/ui.ts';
 
@@ -21,7 +23,9 @@ const Map3D = lazy(() => import('../map/Map3D.tsx'));
 const Basketball = lazy(() => import('../components/Basketball.tsx').then((m) => ({ default: m.Basketball })));
 
 const MODE_KEY = 'minimap.mode';
+const NO_VOTES: VoteView[] = [];
 const WEATHER_KEY = 'minimap.weather';
+const VOTE_MARKS_KEY = 'minimap.voteMarks';
 
 type Filter = 'all' | 'office' | 'wfh' | 'notWorking';
 type Mode = '2d' | '3d';
@@ -350,7 +354,7 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }
 
 export function MonitorPage() {
-  const { state, online } = useTeamState();
+  const { state, online, votes } = useTeamState();
   const has3D = useMemo(supportsWebGL, []);
   const [filter, setFilter] = useState<Filter>('all');
   const [mode, setMode] = useState<Mode>(() => {
@@ -366,6 +370,26 @@ export function MonitorPage() {
   const [weatherOn, setWeatherOn] = useState(() => readSaved(WEATHER_KEY) !== 'off');
   const weatherAllowed = Boolean(state?.settings.officeName) && state?.settings.mapWeather !== false;
   const look = useAmbience(state?.weather ?? null, weatherAllowed && weatherOn);
+  // A wall TV can hide the "hasn't voted" markers and the results banner.
+  const [voteMarksOn, setVoteMarksOn] = useState(() => readSaved(VOTE_MARKS_KEY) !== 'off');
+  // Votes open and close by the clock, with no message from the server.
+  const now = useNow(15_000);
+  const allVotes = votes ?? NO_VOTES;
+  const voteMarks = useMemo<VoteMarks | null>(
+    () => (voteMarksOn ? { waiting: waitingVoters(allVotes, now), result: latestResult(allVotes, now) } : null),
+    [voteMarksOn, allVotes, now],
+  );
+  // Characters react to votes coming in and closing, unless motion is turned down.
+  const reduced = useReducedMotion();
+  const lastLook = useRef<VoteSnapshot | null>(null);
+  const [reactions, setReactions] = useState<ReactionPlay | null>(null);
+  useEffect(() => {
+    if (!votes) return;
+    const look = { votes, at: new Date() };
+    const list = planReactions(lastLook.current, look);
+    lastLook.current = look;
+    if (list.length && !reduced) setReactions({ id: look.at.getTime(), list });
+  }, [votes, now, reduced]);
 
   useEffect(() => {
     document.title = 'Team Minimap';
@@ -435,7 +459,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look, votes: allVotes, voteMarks, reactions };
 
   return (
     <Page>
@@ -475,6 +499,19 @@ export function MonitorPage() {
             </button>
           </Segmented>
         )}
+        <Segmented role="group" aria-label="Votes on the map">
+          <button
+            type="button"
+            aria-pressed={voteMarksOn}
+            title="Show who hasn't voted yet, and the latest result"
+            onClick={() => {
+              save(VOTE_MARKS_KEY, voteMarksOn ? 'off' : 'on');
+              setVoteMarksOn(!voteMarksOn);
+            }}
+          >
+            Votes
+          </button>
+        </Segmented>
         <TopBarSpacer />
         <Button type="button" disabled={!state?.users.length} onClick={() => { closeCard(); setPickerOpen(true); }}>
           Random picker
@@ -509,7 +546,7 @@ export function MonitorPage() {
         </MapArea>
 
         <Side>
-          {state && <InfoPanel state={state} />}
+          {state && <InfoPanel state={state} votes={allVotes} />}
           <People aria-label="Team members">
             {state && <PeopleList state={state} people={people} filter={filter} selected={selection?.username ?? null} onPick={pickFromList} />}
           </People>
@@ -519,7 +556,7 @@ export function MonitorPage() {
       {state && pickerOpen && <RandomPicker users={users} initialView={mode} onClose={closePicker} />}
 
       {state && selection && selectedUser && (
-        <DetailCard user={selectedUser} places={state.places} anchor={selection.anchor} onClose={closeCard} />
+        <DetailCard user={selectedUser} places={state.places} votes={allVotes} anchor={selection.anchor} onClose={closeCard} />
       )}
     </Page>
   );

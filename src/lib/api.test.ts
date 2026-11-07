@@ -13,6 +13,11 @@ class FakeEventSource {
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
+  listeners = new Map<string, (event: { data: string }) => void>();
+
+  addEventListener(name: string, listener: (event: { data: string }) => void) {
+    this.listeners.set(name, listener);
+  }
 
   constructor() {
     FakeEventSource.opened.push(this);
@@ -46,9 +51,10 @@ const latest = () => opened().at(-1)!;
 function start() {
   const onState = mock.fn<(state: TeamState) => void>();
   const onConnection = mock.fn<(online: boolean) => void>();
-  const stop = subscribe(onState, onConnection);
+  const onVotes = mock.fn<(votes: unknown[]) => void>();
+  const stop = subscribe(onState, onConnection, onVotes);
   const lastOnline = () => onConnection.mock.calls.at(-1)?.arguments[0];
-  return { onState, lastOnline, stop };
+  return { onState, onVotes, lastOnline, stop };
 }
 
 beforeEach(() => {
@@ -67,6 +73,13 @@ test('passes on each new state', () => {
   latest().onmessage?.({ data: '{"users":[]}' });
   assert.deepEqual(onState.mock.calls[0]?.arguments[0], { users: [] });
   assert.equal(lastOnline(), true);
+});
+
+test('passes on votes from their own event, apart from the state', () => {
+  const { onState, onVotes } = start();
+  latest().listeners.get('vote')?.({ data: '[{"id":"v1"}]' });
+  assert.deepEqual(onVotes.mock.calls[0]?.arguments[0], [{ id: 'v1' }]);
+  assert.equal(onState.mock.calls.length, 0);
 });
 
 test('leaves a dropped connection to the browser', () => {

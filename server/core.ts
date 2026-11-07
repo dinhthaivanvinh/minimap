@@ -66,6 +66,8 @@ export interface Team {
   members(): string[];
   /** Signs text with the team's secret. The purpose keeps signatures for different uses apart. */
   sign(purpose: string, text: string): string;
+  /** Checks the x-admin-password header, with the same lockout as the admin page. Throws a 401 or 429. */
+  requireAdmin(req: ApiRequest): void;
 }
 
 /** A feature that keeps its own data but still belongs in the admin's one backup file. */
@@ -669,6 +671,7 @@ export function createCore({
     },
     members: () => data.users.map((u) => u.username),
     sign: (purpose, text) => crypto.createHmac('sha256', data.secret).update(`${purpose}:${text}`).digest('hex'),
+    requireAdmin,
   };
 
   // Adds a feature's data to backups and restores, and tells it when people are deleted.

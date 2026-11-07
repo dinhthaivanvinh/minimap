@@ -6,6 +6,7 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createBasketball, takeOldBasketball } from './basketball/core.ts';
+import { createVote } from './vote/core.ts';
 import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type JsonBody } from './core.ts';
 
 export { latestResetDate } from './core.ts';
@@ -34,7 +35,7 @@ const MIME: Record<string, string> = {
 };
 
 // React decides which page to show, so these all serve the same file.
-const PAGES = new Set(['/', '/me', '/admin']);
+const PAGES = new Set(['/', '/me', '/admin', '/vote']);
 
 function readFile(file: string): any {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
@@ -52,6 +53,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   const sseClients = new Set<Res>();
   // Each feature keeps its own file next to the team's.
   const basketballFile = path.join(path.dirname(dataFile), 'basketball.json');
+  const voteFile = path.join(path.dirname(dataFile), 'vote.json');
 
   const teamSaved = readFile(dataFile);
   const oldBasketball = takeOldBasketball(teamSaved);
@@ -59,10 +61,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
     ...options,
     saved: teamSaved,
     save: (data) => writeFile(dataFile, data),
-    onChange(state) {
-      const payload = `data: ${JSON.stringify(state)}\n\n`;
-      for (const res of sseClients) res.write(payload);
-    },
+    onChange: (state) => sendAll(`data: ${JSON.stringify(state)}\n\n`),
   });
 
   const basketballSaved = readFile(basketballFile);
@@ -76,8 +75,26 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   // Scores from the team's file get their own file before the team's file is written without them.
   if (!basketballSaved && oldBasketball) void basketball.save();
 
+  const votes = createVote({
+    saved: readFile(voteFile),
+    save: (data) => writeFile(voteFile, data),
+    team: core.team,
+    // Its own event name, so maps tell it apart from the team's state.
+    onChange: (views) => sendAll(voteEvent(views)),
+    now: options.now,
+  });
+  core.attach(votes.feature);
+
+  function voteEvent(views: unknown): string {
+    return `event: vote\ndata: ${JSON.stringify(views)}\n\n`;
+  }
+
+  function sendAll(payload: string): void {
+    for (const res of sseClients) res.write(payload);
+  }
+
   async function answer(req: ApiRequest) {
-    return (await basketball.handle(req)) ?? (await core.handle(req));
+    return (await basketball.handle(req)) ?? (await votes.handle(req)) ?? (await core.handle(req));
   }
 
   function readJson(req: Req, maxBytes = MAX_BODY): Promise<JsonBody> {
@@ -114,6 +131,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
       'X-Accel-Buffering': 'no',
     });
     res.write(`data: ${JSON.stringify(core.publicState())}\n\n`);
+    res.write(voteEvent(votes.views()));
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
   }

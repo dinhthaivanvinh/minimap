@@ -1,13 +1,14 @@
 // Team Minimap on Cloudflare Workers.
 //
 // Cloudflare serves the built pages in dist/ by itself. Everything else comes here:
-// /me and /admin get the same page as /, and /api/ goes to one Durable Object that holds
+// /me, /admin and /vote get the same page as /, and /api/ goes to one Durable Object that holds
 // the whole team. It runs the same API as the Node.js server (server/core.ts and each
 // feature's folder), keeps the data in its own storage (one key for the team and one for
 // each feature), and sends live updates to every open map.
 
 import { DurableObject } from 'cloudflare:workers';
 import { createBasketball, takeOldBasketball, type Basketball } from '../server/basketball/core.ts';
+import { createVote, type Votes } from '../server/vote/core.ts';
 import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type Core, type JsonBody } from '../server/core.ts';
 
 interface Env {
@@ -19,9 +20,14 @@ interface Env {
 }
 
 // React decides which page to show, so these serve the same file as /.
-const PAGES = new Set(['/me', '/admin']);
+const PAGES = new Set(['/me', '/admin', '/vote']);
 const PING_MS = 25 * 1000;
 const encoder = new TextEncoder();
+
+// Votes have their own event name, so maps tell them apart from the team's state.
+function voteEvent(views: unknown): string {
+  return `event: vote\ndata: ${JSON.stringify(views)}\n\n`;
+}
 
 function json(status: number, body: unknown): Response {
   return Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -58,6 +64,7 @@ async function readJson(request: Request, maxBytes = MAX_BODY): Promise<JsonBody
 export class Minimap extends DurableObject<Env> {
   private core!: Core;
   private basketball!: Basketball;
+  private votes!: Votes;
   private clients = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private ticker: ReturnType<typeof setInterval> | undefined;
   private weatherAt = 0;
@@ -91,6 +98,16 @@ export class Minimap extends DurableObject<Env> {
       this.core.attach(this.basketball.feature);
       // Scores from the team's value get their own key before the team's is written without them.
       if (!basketballSaved && oldBasketball) await this.basketball.save();
+
+      const voteSaved = await ctx.storage.get<string>('vote');
+      this.votes = createVote({
+        saved: voteSaved ? JSON.parse(voteSaved) : null,
+        // Awaited, so a reply only says a vote or ballot is stored once it is.
+        save: (data) => ctx.storage.put('vote', JSON.stringify(data)),
+        team: this.core.team,
+        onChange: (views) => this.sendAll(voteEvent(views)),
+      });
+      this.core.attach(this.votes.feature);
 
       this.runTimedChanges();
       this.core.save();
@@ -129,7 +146,8 @@ export class Minimap extends DurableObject<Env> {
       header: (name) => request.headers.get(name) ?? undefined,
       readJson: (maxBytes) => readJson(request, maxBytes),
     };
-    const { status, body, headers } = (await this.basketball.handle(req)) ?? (await this.core.handle(req));
+    const { status, body, headers } =
+      (await this.basketball.handle(req)) ?? (await this.votes.handle(req)) ?? (await this.core.handle(req));
     return new Response(JSON.stringify(body), { status, headers });
   }
 
@@ -144,6 +162,7 @@ export class Minimap extends DurableObject<Env> {
     const writer = writable.getWriter();
     this.clients.add(writer);
     this.send(writer, `data: ${JSON.stringify(this.core.publicState())}\n\n`);
+    this.send(writer, voteEvent(this.votes.views()));
     // While a map is open, keep the connection alive and the reset and weather on time.
     this.ticker ??= setInterval(() => {
       this.sendAll(': ping\n\n');

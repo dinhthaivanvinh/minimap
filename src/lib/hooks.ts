@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { TeamState, Weather } from '../../shared/types.ts';
+import type { VoteView } from '../../shared/vote.ts';
 import { ambience, DAY, defaultSun, PREVIEW_WEATHER, previewTime, type Ambience, type WeatherInput } from './ambience.ts';
 import { subscribe } from './api.ts';
 
-export function useTeamState(): { state: TeamState | null; online: boolean } {
+/** The team's live state, and the team's votes (public views, without anyone's picks). */
+export function useTeamState(): { state: TeamState | null; online: boolean; votes: VoteView[] | null } {
   const [state, setState] = useState<TeamState | null>(null);
+  const [votes, setVotes] = useState<VoteView[] | null>(null);
   const [online, setOnline] = useState(true);
-  useEffect(() => subscribe(setState, setOnline), []);
-  return { state, online };
+  useEffect(() => subscribe(setState, setOnline, setVotes), []);
+  return { state, online, votes };
 }
 
 export function useElementSize(ref: RefObject<HTMLElement | null>): { width: number; height: number } {

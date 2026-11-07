@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { box, clampTo, contains, grow, MAX_HOP, pickSpot, steer, type Point } from './wander.ts';
+import {
+  hopHeight, box, clampTo, contains, grow, MAX_HOP, pickSpot, steer, type Point } from './wander.ts';
 
 // The same "random" numbers every run.
 function seeded(seed: number) {
@@ -58,4 +59,12 @@ test('walking around a desk in the way reaches the other side without going thro
 test('clamping keeps people inside, and a room shrunk to nothing keeps them in its middle', () => {
   assert.deepEqual(clampTo(room, { x: -5, z: 50 }), { x: 0, z: 30 });
   assert.deepEqual(clampTo(grow(box(0, 0, 2, 2), -3), { x: 9, z: -9 }), { x: 1, z: 1 });
+});
+
+test('a happy hop goes up once and lands where it started', () => {
+  assert.equal(hopHeight(0, 0.6), 0);
+  assert.equal(hopHeight(0.3, 0.6), 1.4, 'highest halfway');
+  assert.ok(hopHeight(0.15, 0.6) > 0 && hopHeight(0.15, 0.6) < 1.4);
+  assert.equal(hopHeight(0.6, 0.6), 0);
+  assert.equal(hopHeight(5, 0.6), 0, 'and stays down');
 });

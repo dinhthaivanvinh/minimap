@@ -77,6 +77,10 @@ const MIN_PARK = 8;
 const STREET_HEIGHT = 12;
 const MAX_STREET_HEIGHT = 20;
 const STREET_FITS = 8; // People who fit before the street needs to get wider.
+// The team's notice board for votes stands at the lobby's right edge. People stand clear of it.
+const BOARD_W = 12;
+const BOARD_SPACE = BOARD_W + 1;
+const MAX_BOARD_H = 15;
 
 export const FIXED_ZONES = {
   wfh: { name: 'Work from home', kind: 'wfh' },
@@ -154,8 +158,9 @@ function landscapeZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'
   const available = MAP_WIDTH - GAP * 4 - MIN_PARK;
   const wantedLobby = Math.max(MIN_LOBBY, count('lobby') * LOBBY_PERSON_WIDTH + 4);
   const wantedBeach = Math.max(MIN_BEACH, count('off') * BEACH_PERSON_WIDTH + 4);
-  const fit = Math.min(1, available / (wantedLobby + wantedBeach));
-  const lobbyWidth = wantedLobby * fit;
+  // The notice board keeps its space; the people in the lobby and on the beach share the rest.
+  const fit = Math.min(1, (available - BOARD_SPACE) / (wantedLobby + wantedBeach));
+  const lobbyWidth = BOARD_SPACE + wantedLobby * fit;
   const offWidth = wantedBeach * fit;
   zones.push(zone('lobby', FIXED_ZONES.lobby, GAP, bottomY, lobbyWidth, bottomHeight));
   zones.push(zone('off', FIXED_ZONES.off, MAP_WIDTH - GAP - offWidth, bottomY, offWidth, bottomHeight));
@@ -212,7 +217,7 @@ function portraitZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'>
   y += 28 + gap;
 
   const [lobbyWidth = 0, offWidth = 0] = shareLength(94, [
-    { min: 42, weight: count('lobby') * LOBBY_WEIGHT },
+    { min: 48, weight: count('lobby') * LOBBY_WEIGHT },
     { min: 34, weight: count('off') + 1 },
   ]);
   const bottomH = 23;
@@ -224,8 +229,23 @@ function portraitZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'>
   return { zones, width: 100, height: y, park };
 }
 
-/** Where people stand in a room: clear of its name, with a little margin from its edges. */
+/** Where the notice board for team votes stands: at the right edge of the lobby, in both layouts. */
+export function noticeBoardSpot(layout: Pick<MapLayout, 'zones'>): Rect | null {
+  const lobby = layout.zones.find((z) => z.kind === 'lobby');
+  if (!lobby) return null;
+  return { x: lobby.x + lobby.w - BOARD_SPACE, y: lobby.y + 1.5, w: BOARD_W, h: Math.min(lobby.h - 3, MAX_BOARD_H) };
+}
+
+/** Where people stand in a room: clear of its name and the lobby's notice board, with a little margin from its edges. */
 export function standingArea(z: Zone): Rect {
+  if (z.kind === 'lobby') {
+    const area = roomArea(z);
+    return { ...area, w: area.w - BOARD_SPACE };
+  }
+  return roomArea(z);
+}
+
+function roomArea(z: Zone): Rect {
   // A short street has no room below its name, so people stand beside it instead.
   if (z.kind === 'street' && z.h < SHORT_STREET) return { x: z.x + 15, y: z.y + 1, w: z.w - 19, h: z.h - 2 };
   // These rooms are kept small, so people stand closer to the room's name.

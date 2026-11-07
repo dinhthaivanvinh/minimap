@@ -1,5 +1,6 @@
 // Fetch and live-update helpers shared by all pages.
 import type { TeamState } from '../../shared/types.ts';
+import type { VoteView } from '../../shared/vote.ts';
 
 export class ApiFailure extends Error {
   status: number;
@@ -36,8 +37,13 @@ const RETRY_MAX_MS = 30_000;
 
 // Calls onState with each new state. EventSource retries a dropped connection by
 // itself, but gives up for good on an HTTP error, such as a proxy's 502 during a
-// restart. Only then do we open a new one.
-export function subscribe(onState: (state: TeamState) => void, onConnection: (online: boolean) => void): () => void {
+// restart. Only then do we open a new one. Votes come as their own `vote` event, sent
+// when the stream opens and after each change, so a reconnect always catches up.
+export function subscribe(
+  onState: (state: TeamState) => void,
+  onConnection: (online: boolean) => void,
+  onVotes?: (votes: VoteView[]) => void,
+): () => void {
   let source: EventSource;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let retryMs = RETRY_MIN_MS;
@@ -58,6 +64,7 @@ export function subscribe(onState: (state: TeamState) => void, onConnection: (on
       onConnection(true);
       onState(JSON.parse(event.data) as TeamState);
     };
+    if (onVotes) source.addEventListener('vote', (event) => onVotes(JSON.parse((event as unknown as { data: string }).data) as VoteView[]));
   }
 
   connect();

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamUser } from '../../shared/types.ts';
 import { statusKind } from '../lib/look.ts';
+import { BallotMark } from './BallotMark.tsx';
 import { shownStatus } from '../lib/status.ts';
 import { theme } from '../styles/theme.ts';
 import { DeskSvg, MochiSvg } from './Mochi.tsx';
@@ -131,11 +132,13 @@ interface BadgeProps {
   floating?: boolean;
   selected?: boolean;
   dimmed?: boolean;
+  /** Invited to a vote shown on the map, and hasn't voted yet. */
+  waiting?: boolean;
   onSelect: SelectHandler;
 }
 
 // A person's name with their status: shown if short, behind a "!" if long.
-export function Badge({ user, figure, floating, selected, dimmed, onSelect }: BadgeProps) {
+export function Badge({ user, figure, floating, selected, dimmed, waiting = false, onSelect }: BadgeProps) {
   const status = shownStatus(user);
   const kind = statusKind(status);
   return (
@@ -145,7 +148,7 @@ export function Badge({ user, figure, floating, selected, dimmed, onSelect }: Ba
       $dimmed={dimmed}
       data-badge
       data-username={user.username}
-      aria-label={status ? `${user.nickname}: ${status}` : user.nickname}
+      aria-label={`${status ? `${user.nickname}: ${status}` : user.nickname}${waiting ? ", hasn't voted yet" : ''}`}
       onClick={(event) => onSelect(user.username, event.currentTarget)}
     >
       {kind === 'short' && <BadgeStatus>{status}</BadgeStatus>}
@@ -154,6 +157,7 @@ export function Badge({ user, figure, floating, selected, dimmed, onSelect }: Ba
           !<BadgeTip>{status}</BadgeTip>
         </BadgeAlert>
       )}
+      <BallotMark on={waiting} />
       {figure}
       <BadgeName $selected={selected}>{user.nickname}</BadgeName>
     </BadgeButton>
