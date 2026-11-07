@@ -1,4 +1,6 @@
 // Monitor page: filters, the people list, and switching between 2D and 3D.
+import { TeamAssemble, type AssemblyCast } from '../components/TeamAssemble.tsx';
+import { officeAssembly } from '../lib/assembly.ts';
 import { Basketball } from '../components/Basketball.tsx';
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
@@ -359,6 +361,16 @@ export function MonitorPage() {
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [arcadeRequest, setArcadeRequest] = useState<{trigger: HTMLElement} | null>(null);
   const openArcade = useCallback((trigger: HTMLElement) => setArcadeRequest({trigger}), []);
+  const [assemblyCast, setAssemblyCast] = useState<AssemblyCast | null>(null);
+  const closeAssembly = useCallback(() => setAssemblyCast(null), []);
+  function openAssembly(trigger: HTMLElement) {
+    if (!state) return;
+    const attendance = officeAssembly(state);
+    if (attendance.unlocked) {
+      closeCard();
+      setAssemblyCast({members:structuredClone(attendance.members),total:attendance.total,trigger});
+    }
+  }
   const [pickerOpen, setPickerOpen] = useState(false);
   // Each screen can turn the town's daylight and weather off, if the admin has them on.
   const [weatherOn, setWeatherOn] = useState(() => readSaved(WEATHER_KEY) !== 'off');
@@ -433,7 +445,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, onAssemble: openAssembly, look };
 
   return (
     <Page>
@@ -506,6 +518,8 @@ export function MonitorPage() {
           </People>
         </Side>
       </Stage>
+
+      {assemblyCast && <TeamAssemble cast={assemblyCast} initialView={mode} onClose={closeAssembly}/>}
 
       {state && pickerOpen && <RandomPicker users={users} initialView={mode} onClose={closePicker} />}
 
