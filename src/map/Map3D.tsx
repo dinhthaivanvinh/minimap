@@ -1,4 +1,6 @@
 // The 3D map: React draws the controls and badges around a three.js scene.
+import { officeAssembly } from '../lib/assembly.ts';
+import { AssemblePlay } from '../components/AssemblyDecor.tsx';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import styled, { css } from 'styled-components';
@@ -167,12 +169,15 @@ export default function Map3D({
   focus,
   onSelect,
   onArcade,
+  onAssemble,
   look,
   votes,
   voteMarks,
   reactions,
   onFail,
 }: Map3DProps) {
+  const attendance = officeAssembly(state);
+  const officeIds = new Set(state.places.map(place=>place.id));
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene3D | null>(null);
   const [arcadeSlot, setArcadeSlot] = useState<HTMLElement | null>(null);
@@ -312,9 +317,10 @@ export default function Map3D({
 
       {zoneLabels.map((zone) =>
         createPortal(
-          <ZoneLabel>
+          <ZoneLabel style={attendance.unlocked && officeIds.has(zone.id) && zone.count>0 ? {background:'#fff0bf',borderColor:'#bd913c'} : undefined}>
             <span>{zone.name}</span>
             <ZoneLabelCount>{zone.count}</ZoneLabelCount>
+            {attendance.unlocked && officeIds.has(zone.id) && zone.count>0 && <AssemblePlay data-assemble-play aria-label={`Assemble team from ${zone.name}`} aria-haspopup="dialog" style={{marginLeft:8}} onClick={event=>onAssemble(event.currentTarget)}>✦ Assemble</AssemblePlay>}
           </ZoneLabel>,
           zone.element,
           zone.id,

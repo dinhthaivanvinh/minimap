@@ -160,6 +160,13 @@ Paths are from the project root. Function names are given instead of line number
 | Team address, clocks, office location | `AdminPage.tsx`: `AddressForm`, `ClocksForm`, `OfficeForm`; `PATCH /api/admin/settings`, `cleanPublicUrl` / `cleanClocks` / `cleanOffice` |
 | Backup and restore (includes schedules, and each attached feature under its key) | `AdminPage.tsx`: `BackupPanel`; `GET/PUT /api/admin/data`, `checkBackup`, each feature's `checkBackup` |
 
+### Office assembly celebration
+| Feature | Code |
+|---|---|
+| Attendance unlock, entrance timing, finale duration, formation | `src/lib/assembly.ts`, `src/lib/assembly.test.ts` |
+| Map decorations and entry point | `src/components/AssemblyDecor.tsx`, `Map2D.tsx`, `Map3D.tsx`, `scene3d.ts`; roster snapshot and dialog in `MonitorPage.tsx` |
+| Celebration, portal effects, office props | `src/components/TeamAssemble.tsx`, lazy `TeamAssemble3D.tsx`, `AssemblyProp.tsx`, `src/lib/assemblyProps.ts` |
+
 ### Basketball arcade
 | Feature | Code |
 |---|---|

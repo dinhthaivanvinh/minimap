@@ -1,6 +1,7 @@
 // The 3D scene: same rooms and seats as 2D, drawn with three.js. React owns the
 // page around it (Map3D.tsx) and renders each person's badge into the label
 // elements this scene hands back.
+import { officeAssembly } from '../lib/assembly.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
@@ -360,6 +361,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   let layout: MapLayout = computeLayout([], []);
   let center: Point = { x: 0, z: 0 };
   let buildKey = '';
+  let assembledOffices = new Set<string>();
   let deskKey = '';
   let presets: PresetView[] = [];
   let activePreset: string | null = 'overview';
@@ -736,6 +738,13 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     for (const z of layout.zones) {
       const c = zoneCenter(z);
       BUILDERS[z.kind](world, z, c);
+      if (assembledOffices.has(z.id)) {
+        const ring = mesh(new THREE.TorusGeometry(1.2,.14,10,48),0xffdb7d,{x:c.x,y:WALL_H+2,z:c.z-z.h/2});
+        world.add(ring);
+        world.add(mesh(new THREE.OctahedronGeometry(.65),0xffe9a8,{x:c.x,y:WALL_H+2,z:c.z-z.h/2+.15}));
+        const bulbs=Math.max(3,Math.floor(z.w/4));
+        for (let i=0;i<bulbs;i++) world.add(mesh(new THREE.SphereGeometry(.32,10,8),i%2 ? 0x9debd0 : 0xffd779,{x:c.x-z.w/2+2+i*(z.w-4)/Math.max(1,bulbs-1),y:WALL_H+.25,z:c.z-z.h/2+.25}));
+      }
 
       const label = document.createElement('div');
       const object = new CSS2DObject(label);
@@ -1151,7 +1160,9 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     layout = computeLayout(state.places, state.users);
 
     // Rooms change size with their people, which means rebuilding the town.
-    const key = layout.zones.map((z) => [z.id, z.name, z.x, z.y, z.w, z.h].join()).join(';');
+    const attendance = officeAssembly(state);
+    assembledOffices = new Set(attendance.unlocked ? attendance.members.map(user=>user.place!) : []);
+    const key = layout.zones.map((z) => [z.id, z.name, z.x, z.y, z.w, z.h].join()).join(';') + ':' + [...assembledOffices].sort().join(',');
     const isFirstBuild = !buildKey;
     if (key !== buildKey) {
       buildKey = key;

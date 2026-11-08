@@ -1,4 +1,6 @@
 // Monitor page: filters, the people list, and switching between 2D and 3D.
+import type { AssemblyCast } from '../components/TeamAssemble.tsx';
+import { officeAssembly } from '../lib/assembly.ts';
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
@@ -19,7 +21,8 @@ import { Button, Count, Segmented, Wordmark } from '../styles/ui.ts';
 
 // three.js is large, so it only loads when someone opens the 3D map.
 const Map3D = lazy(() => import('../map/Map3D.tsx'));
-// The arcade is a whole game, so it only loads when someone presses Play.
+// The celebration and arcade load only when their map buttons are pressed.
+const TeamAssemble = lazy(() => import('../components/TeamAssemble.tsx').then((m) => ({ default: m.TeamAssemble })));
 const Basketball = lazy(() => import('../components/Basketball.tsx').then((m) => ({ default: m.Basketball })));
 
 const MODE_KEY = 'minimap.mode';
@@ -365,6 +368,16 @@ export function MonitorPage() {
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [arcadeRequest, setArcadeRequest] = useState<{trigger: HTMLElement} | null>(null);
   const openArcade = useCallback((trigger: HTMLElement) => setArcadeRequest({trigger}), []);
+  const [assemblyCast, setAssemblyCast] = useState<AssemblyCast | null>(null);
+  const closeAssembly = useCallback(() => setAssemblyCast(null), []);
+  function openAssembly(trigger: HTMLElement) {
+    if (!state) return;
+    const attendance = officeAssembly(state);
+    if (attendance.unlocked) {
+      closeCard();
+      setAssemblyCast({members:structuredClone(attendance.members),total:attendance.total,trigger});
+    }
+  }
   const [pickerOpen, setPickerOpen] = useState(false);
   // Each screen can turn the town's daylight and weather off, if the admin has them on.
   const [weatherOn, setWeatherOn] = useState(() => readSaved(WEATHER_KEY) !== 'off');
@@ -459,7 +472,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, look, votes: allVotes, voteMarks, reactions };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, onAssemble: openAssembly, look, votes: allVotes, voteMarks, reactions };
 
   return (
     <Page>
@@ -552,6 +565,14 @@ export function MonitorPage() {
           </People>
         </Side>
       </Stage>
+
+      {assemblyCast && (
+        <Guard what="the team assembly" onFail={closeAssembly}>
+          <Suspense fallback={null}>
+            <TeamAssemble cast={assemblyCast} initialView={mode} onClose={closeAssembly}/>
+          </Suspense>
+        </Guard>
+      )}
 
       {state && pickerOpen && <RandomPicker users={users} initialView={mode} onClose={closePicker} />}
 

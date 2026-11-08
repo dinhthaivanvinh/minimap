@@ -1,4 +1,6 @@
 // The 2D floor plan, built from plain HTML and SVG.
+import { officeAssembly } from '../lib/assembly.ts';
+import { AssemblePlay, OfficeDecor } from '../components/AssemblyDecor.tsx';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import styled, { css, keyframes, type RuleSet } from 'styled-components';
 import type { TeamUser } from '../../shared/types.ts';
@@ -416,7 +418,7 @@ function percent(part: number, whole: number): string {
   return `${(part / whole) * 100}%`;
 }
 
-function ZoneRoom({ zone, layout, busy, snowy }: { zone: Zone; layout: MapLayout; busy: boolean; snowy: boolean }) {
+function ZoneRoom({ zone, layout, busy, snowy, assembled, onAssemble }: { zone: Zone; layout: MapLayout; busy: boolean; snowy: boolean; assembled: boolean; onAssemble: (trigger: HTMLElement)=>void }) {
   const style: CSSProperties = {
     left: percent(zone.x, layout.width),
     top: percent(zone.y, layout.height),
@@ -424,10 +426,12 @@ function ZoneRoom({ zone, layout, busy, snowy }: { zone: Zone; layout: MapLayout
     height: percent(zone.h, layout.height),
   };
   return (
-    <Room $kind={zone.kind} style={style}>
+    <Room $kind={zone.kind} style={style} data-office-assembled={assembled || undefined}>
+      {assembled && <OfficeDecor aria-hidden="true"/>}
       <RoomTitle>
         <RoomName>{zone.name}</RoomName>
         <RoomCount>{zone.count}</RoomCount>
+        {assembled && <AssemblePlay data-assemble-play aria-label={`Assemble team from ${zone.name}`} aria-haspopup="dialog" onClick={event=>onAssemble(event.currentTarget)}>✦ Assemble</AssemblePlay>}
       </RoomTitle>
       {snowy && <SnowCap />}
       {DECOR[zone.kind].map(({ art, width, left, right, top, bottom, large, sway: sways }, i) => (
@@ -551,7 +555,8 @@ function isPlain(look: Ambience): boolean {
   return look.daylight === 1 && look.warmth === 0 && look.weather.gloom === 0;
 }
 
-export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, look, votes, voteMarks, reactions }: MapProps) {
+export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, onAssemble, look, votes, voteMarks, reactions }: MapProps) {
+  const attendance = officeAssembly(state);
   const fillRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const daylight = {
@@ -628,7 +633,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, l
             </Park>
           )}
           {layout.zones.map((zone) => (
-            <ZoneRoom key={zone.id} zone={zone} layout={layout} busy={isBusy(zone)} snowy={snowy} />
+            <ZoneRoom key={zone.id} zone={zone} layout={layout} busy={isBusy(zone)} snowy={snowy} assembled={attendance.unlocked && zone.kind==='office' && zone.count>0} onAssemble={onAssemble} />
           ))}
           {board && <NoticeBoard2D spot={board} width={layout.width} height={layout.height} votes={votes} />}
           {hasWeather(look) && <Weather2D look={look} reduced={reduced} />}
