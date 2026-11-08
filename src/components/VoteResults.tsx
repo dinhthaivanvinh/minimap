@@ -84,7 +84,7 @@ export const Outcome = styled.p`
 `;
 
 /** Who won, or a tie, once the vote has closed. */
-export function ResultOutcome({ vote, closed }: { vote: VoteView; closed: boolean }) {
+function ResultOutcome({ vote, closed }: { vote: VoteView; closed: boolean }) {
   const { winners } = results(vote);
   if (!closed) return null;
   if (winners.length === 1) return <Outcome>🏆 {winners[0]!.text} wins</Outcome>;

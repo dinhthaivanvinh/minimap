@@ -385,8 +385,8 @@ export function MonitorPage() {
   const look = useAmbience(state?.weather ?? null, weatherAllowed && weatherOn);
   // A wall TV can hide the "hasn't voted" markers and the results banner.
   const [voteMarksOn, setVoteMarksOn] = useState(() => readSaved(VOTE_MARKS_KEY) !== 'off');
-  // Votes open and close by the clock, with no message from the server.
-  const now = useNow(15_000);
+  // Votes close by the clock, with no message from the server, or early with one.
+  const now = useNow(15_000, votes);
   const allVotes = votes ?? NO_VOTES;
   const voteMarks = useMemo<VoteMarks | null>(
     () => (voteMarksOn ? { waiting: waitingVoters(allVotes, now), result: latestResult(allVotes, now) } : null),

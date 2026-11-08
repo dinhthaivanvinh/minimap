@@ -187,6 +187,70 @@ test('the creator extends the end time; the creator or the admin deletes', async
   assert.deepEqual(await list(), []);
 });
 
+test('the creator closes an open vote early, and nobody can vote or add options after that', async (t) => {
+  const { api, join, as, create, ballot, list, clock } = await setup(t);
+  await join('ann', 'bob', 'cat');
+  const vote = await create('ann', { allowCustom: true });
+  const close = (headers: Record<string, string>) => api('POST', `/api/vote/${vote.id}/close`, undefined, headers);
+
+  assert.equal((await close({})).status, 401, 'not logged in');
+  const denied = await close(as('bob'));
+  assert.equal(denied.status, 403);
+  assert.equal(denied.json.error, 'Only the person who made this vote or the admin can close it.');
+  assert.equal((await api('POST', '/api/vote/missing/close', undefined, as('ann'))).status, 404);
+
+  clock.now = new Date(clock.now.getTime() + 10 * 60 * 1000);
+  const closed = await close(as('ann'));
+  assert.equal(closed.status, 200, closed.text);
+  assert.equal(closed.json.endsAt, clock.now.toISOString(), 'it ends at the moment it was closed');
+  assert.equal((await list())[0]!.endsAt, clock.now.toISOString());
+
+  const again = await close(as('ann'));
+  assert.equal(again.status, 409);
+  assert.equal(again.json.error, 'This vote has ended.');
+  const late = await ballot('bob', vote.id, ['o1']);
+  assert.equal(late.status, 409);
+  assert.equal(late.json.error, 'This vote has ended.');
+  const option = await api('POST', `/api/vote/${vote.id}/options`, { text: 'Tacos' }, as('bob'));
+  assert.equal(option.status, 409);
+  assert.equal(option.json.error, 'This vote has ended.');
+  assert.deepEqual((await list())[0]!.voted, []);
+});
+
+test('the admin closes anyone’s vote, a wrong password counts toward the lockout, and a former member’s vote is the admin’s to close', async (t) => {
+  const { api, join, as, create, list } = await setup(t);
+  await join('ann', 'bob');
+  const close = (id: string, headers: Record<string, string>) => api('POST', `/api/vote/${id}/close`, undefined, headers);
+
+  const theirs = await create('bob');
+  assert.equal((await close(theirs.id, ADMIN)).status, 200);
+  assert.equal((await close(theirs.id, ADMIN)).status, 409, 'already ended');
+
+  // Once the creator is deleted, only the admin may close it, even a new person with the same name.
+  const orphan = await create('bob');
+  assert.equal((await api('DELETE', '/api/admin/users/bob', undefined, ADMIN)).status, 200);
+  await join('bob');
+  assert.equal((await close(orphan.id, as('bob'))).status, 403);
+  assert.equal((await close(orphan.id, as('ann'))).status, 403);
+
+  for (let i = 0; i < 5; i++) assert.equal((await close(orphan.id, { 'x-admin-password': 'nope' })).status, 401);
+  assert.equal((await close(orphan.id, ADMIN)).status, 429, 'locked out like the admin page');
+  const open = (await list()).find((v) => v.id === orphan.id)!;
+  assert.equal(open.endsAt, orphan.endsAt, 'still open');
+});
+
+test('a failed save leaves the vote open with its old end time', async (t) => {
+  const { api, join, as, create, list, voteFile } = await setup(t);
+  await join('ann', 'bob');
+  const vote = await create('ann');
+
+  // A folder where the file should go makes every write fail.
+  fs.rmSync(voteFile);
+  fs.mkdirSync(path.join(voteFile, 'blocked'), { recursive: true });
+  assert.equal((await api('POST', `/api/vote/${vote.id}/close`, undefined, as('ann'))).status, 500);
+  assert.equal((await list())[0]!.endsAt, vote.endsAt);
+});
+
 test('at most 30 open votes, and only the newest 100 closed ones are kept', async (t) => {
   const { api, join, as, create, newVote, clock, list, voteFile } = await setup(t);
   await join('ann', 'bob');

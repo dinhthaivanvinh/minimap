@@ -285,7 +285,7 @@ const Countdown = styled.a`
 `;
 
 function VoteCountdown({ votes }: { votes: VoteView[] }) {
-  const card = countdown(votes, useNow(15_000));
+  const card = countdown(votes, useNow(15_000, votes));
   return card && <Countdown href={voteLink(card.id)}>{card.text}</Countdown>;
 }
 
