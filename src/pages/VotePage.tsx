@@ -33,10 +33,11 @@ const Empty = styled(Panel)`
 
 export function VotePage() {
   const { state, votes: liveVotes } = useTeamState();
-  const now = useNow(15_000);
   const [auth] = useState(() => savedLogin());
   const [adminPassword] = useState(() => savedAdminPassword());
   const [votes, setVotes] = useState<VoteView[] | null>(null);
+  // Read again when the votes change, so a vote closed early moves to History straight away.
+  const now = useNow(15_000, votes);
   // The viewer's own picks, which the live updates never carry.
   const [mine, setMine] = useState<ReadonlyMap<string, string[]>>(new Map());
   const [tab, setTab] = useState<Tab>('open');

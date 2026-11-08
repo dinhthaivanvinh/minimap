@@ -157,7 +157,7 @@ const More = styled.span`
 `;
 
 export function NoticeBoard2D({ spot, width, height, votes }: { spot: Rect; width: number; height: number; votes: VoteView[] }) {
-  const now = useNow(30_000);
+  const now = useNow(30_000, votes);
   const { notes, more } = boardNotes(votes, now);
   const style: CSSProperties = {
     left: `${(spot.x / width) * 100}%`,

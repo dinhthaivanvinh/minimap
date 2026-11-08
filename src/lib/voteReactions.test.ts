@@ -65,3 +65,11 @@ test('a last-second ballot and the close together: the bigger reaction plays', (
   const after = view([['ann', ['o1']], ['bob', ['o1']]]);
   assert.deepEqual(plan(snap([before], -1), snap([after], 1)), { ann: 'cheer', bob: 'cheer', cat: 'clap', dan: 'clap' }, 'bob cheers rather than hops');
 });
+
+test('a vote closed early, whose end moves from later to now between two looks, gets the closing reactions', () => {
+  const ballots: [string, string[]][] = [['ann', ['o1']], ['bob', ['o1']], ['cat', ['o2']]];
+  const before = view(ballots, { endsAt: at(3600).toISOString() });
+  const closed = view(ballots, { endsAt: at(0).toISOString() });
+  assert.deepEqual(plan(snap([before], -10), snap([before], -5)), {}, 'still open');
+  assert.deepEqual(plan(snap([before], -5), snap([closed], 1)), { ann: 'cheer', bob: 'cheer', cat: 'clap', dan: 'clap' });
+});

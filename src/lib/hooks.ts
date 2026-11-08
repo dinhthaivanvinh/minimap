@@ -27,13 +27,18 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): { width: num
   return size;
 }
 
-export function useNow(everyMs: number): Date {
-  const [now, setNow] = useState(() => new Date());
+/**
+ * The time, read again every `everyMs` and whenever `changed` changes. Pass the votes as
+ * `changed`: a vote closed early ends "now", which a clock read before the update hasn't reached.
+ */
+export function useNow(everyMs: number, changed?: unknown): Date {
+  const [tick, setTick] = useState(() => new Date());
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), everyMs);
+    const timer = setInterval(() => setTick(new Date()), everyMs);
     return () => clearInterval(timer);
   }, [everyMs]);
-  return now;
+  // `tick` and `changed` are only reasons to look at the clock again.
+  return useMemo(() => new Date(), [tick, changed]);
 }
 
 export interface Message {

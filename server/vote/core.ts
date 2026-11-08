@@ -1,4 +1,4 @@
-// Team voting's API: create votes, cast ballots, add options, extend and delete. It keeps
+// Team voting's API: create votes, cast ballots, add options, extend, close early and delete. It keeps
 // its own data (data/vote.json on Node.js, the `vote` key on Cloudflare), asks the team's
 // core who is calling, and only ever sends views that hide who picked what on anonymous
 // votes. Its raw data, ballots included, still goes into the admin's one backup file.
@@ -222,7 +222,7 @@ export function createVote({ saved, save: store, team, onChange = () => {}, now 
       });
     }
 
-    const match = pathname.match(/^\/api\/vote\/([^/]+)(?:\/(ballot|options))?$/);
+    const match = pathname.match(/^\/api\/vote\/([^/]+)(?:\/(ballot|options|close))?$/);
     if (!match) throw new ApiError(404, 'Not found.');
     const id = decodeURIComponent(match[1] ?? '');
     const action = `${req.method} ${match[2] ?? ''}`;
@@ -251,6 +251,25 @@ export function createVote({ saved, save: store, team, onChange = () => {}, now 
         }
         votes = votes.filter((v) => v !== vote);
         return jsonResponse(200, { ok: true });
+      });
+    }
+
+    if (action === 'POST close') {
+      // Closing only moves the end time to now. Open or closed is always worked out from
+      // `endsAt`, so the vote counts as closed straight away everywhere. A vote whose maker
+      // was deleted can only be closed by the admin.
+      const asAdmin = req.header('x-admin-password') !== undefined;
+      if (asAdmin) team.requireAdmin(req);
+      const username = asAdmin ? undefined : team.player(req).username;
+      return change(() => {
+        const vote = find(id);
+        if (!asAdmin && (vote.owner === null || vote.owner !== username)) {
+          throw new ApiError(403, 'Only the person who made this vote or the admin can close it.');
+        }
+        const at = now();
+        if (!isOpen(vote, at)) throw new ApiError(409, 'This vote has ended.');
+        vote.endsAt = at.toISOString();
+        return jsonResponse(200, toView(vote, username));
       });
     }
 

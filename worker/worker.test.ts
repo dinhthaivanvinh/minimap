@@ -279,6 +279,12 @@ test('votes survive Durable Object eviction, and reach open maps as their own ev
   const firstVotes = await live.nextEvent('vote');
   assert.equal(firstVotes[0].title, 'Lunch');
   assert.equal(firstVotes[0].mine, undefined, 'live updates never carry anyone’s picks');
+  // Closing early moves the end time to now, and open maps hear about it.
+  const closing = live.nextEvent('vote');
+  const closed = await api('POST', `/api/vote/${made.json.id}/close`, undefined, auth);
+  assert.equal(closed.status, 200);
+  assert.ok(Date.parse(closed.json.endsAt) <= Date.now());
+  assert.equal((await closing)[0].endsAt, closed.json.endsAt);
   const update = live.nextEvent('vote');
   assert.equal((await api('DELETE', `/api/vote/${made.json.id}`, undefined, ADMIN)).status, 200);
   assert.deepEqual(await update, []);
