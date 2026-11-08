@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ASSEMBLY_MS, heroGrid, heroPose, heroFormation, officeAssembly } from './assembly.ts';
+import {
+  ARRIVAL_MS,
+  assemblyMs,
+  FLYBY_CLOSEUP_MS,
+  FLYBY_RETURN_MS,
+  heroGrid,
+  heroPose,
+  heroFormation,
+  officeAssembly,
+} from './assembly.ts';
 import type { TeamUser } from '../../shared/types.ts';
 const places = [
   { id: 'main', name: 'Main', kind: 'office' as const },
@@ -40,7 +49,7 @@ test('all office heroes finish their entrances; reduced motion is an immediate s
     assert.ok(grid.columns * grid.rows >= count);
     for (let i = 0; i < count; i++) {
       assert.equal(heroPose(i, count, 0).visible, false);
-      const final = heroPose(i, count, ASSEMBLY_MS);
+      const final = heroPose(i, count, assemblyMs(count));
       assert.equal(final.visible, true);
       assert.equal(final.x, 0);
       assert.equal(final.y, 0);
@@ -64,6 +73,16 @@ test('the formation has a lead and staggered wings, with bounded positions for l
       assert.ok(at.x > 0 && at.x < 1 && at.y > 0 && at.y < 1 && at.scale > 0);
       assert.equal(heroPose(i, count, 0, true).impact, 0);
     }
+});
+
+test('the lineup is evenly spaced, with no extra gap between the lead and the first wing', () => {
+  for (const count of [3, 8, 9, 15]) {
+    const left = [0, ...Array.from({ length: count }, (_, i) => i).filter((i) => i % 2)].map(
+      (i) => heroFormation(i, count).x,
+    );
+    const steps = left.slice(1).map((x, i) => left[i]! - x);
+    for (const step of steps) assert.ok(Math.abs(step - steps[0]!) < 1e-9, `uneven step for ${count} heroes`);
+  }
 });
 
 test('a doorway opens before emergence, stays open through crossing, then closes', () => {
@@ -108,5 +127,12 @@ test('doorways remain staggered and every portal closes before the finale', () =
       assert.equal(still.y, 0);
     }
   }
-  assert.equal(ASSEMBLY_MS, 10_500);
+});
+
+test('the celebration runs long enough for every hero to get a close-up', () => {
+  for (const count of [1, 8, 9, 40]) {
+    assert.equal(assemblyMs(count), ARRIVAL_MS + count * FLYBY_CLOSEUP_MS + FLYBY_RETURN_MS);
+  }
+  assert.ok(assemblyMs(9) > assemblyMs(8), 'one more hero, one more close-up');
+  assert.ok(assemblyMs(0) > ARRIVAL_MS, 'there must be time left for the finale after the doorways close');
 });

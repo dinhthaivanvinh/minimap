@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { TeamUser } from '../../shared/types.ts';
-import { heroPose, heroFormation } from '../lib/assembly.ts';
+import { ARRIVAL_MS, FLYBY_CLOSEUP_MS, FLYBY_RETURN_MS, heroPose, heroFormation } from '../lib/assembly.ts';
 import { assemblyProp } from '../lib/assemblyProps.ts';
 import { createCharacterBuilder, type CharacterTools } from '../map/character3d.ts';
 
@@ -26,6 +26,7 @@ export default function TeamAssemble3D(props: {
     }
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.localClippingEnabled = true;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     root.appendChild(renderer.domElement);
@@ -79,6 +80,63 @@ export default function TeamAssemble3D(props: {
       return m;
     };
     const build = createCharacterBuilder({ ramp, mat, mesh });
+    // Shared by every hero with the same glow hue, so large teams don't multiply materials.
+    const glowMats = new Map<number, THREE.MeshBasicMaterial>();
+    const glowMaterial = (color: number) => {
+      let m = glowMats.get(color);
+      if (!m) {
+        m = new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.95,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        glowMats.set(color, m);
+        materials.add(m);
+      }
+      return m;
+    };
+    // Unlit canvas faces (backlit keys, a glowing screen), painted once per hue.
+    const screenMats = new Map<string, THREE.MeshBasicMaterial>();
+    const screenMaterial = (key: string, width: number, height: number, paint: (ctx: CanvasRenderingContext2D) => void) => {
+      let m = screenMats.get(key);
+      if (!m) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        paint(canvas.getContext('2d')!);
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        textures.add(texture);
+        m = new THREE.MeshBasicMaterial({ map: texture });
+        screenMats.set(key, m);
+        materials.add(m);
+      }
+      return m;
+    };
+    const cssColor = (color: number) => `#${color.toString(16).padStart(6, '0')}`;
+    // A soft radial falloff for the landing flash; an untextured sprite is a hard-edged square.
+    const softGlow = (() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 64;
+      const ctx = canvas.getContext('2d')!;
+      const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gradient.addColorStop(0, '#ffffffff');
+      gradient.addColorStop(0.35, '#ffffff99');
+      gradient.addColorStop(1, '#ffffff00');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 64, 64);
+      const texture = new THREE.CanvasTexture(canvas);
+      textures.add(texture);
+      return texture;
+    })();
+    // The doorway stands this far (× hero size) behind the hero's final spot. Heroes start
+    // ENTRY_DEPTH back, fully behind it (body radius 1.35 plus gear), and walk through.
+    const PORTAL_BEHIND = 1.8,
+      ENTRY_DEPTH = 3.8,
+      // Wide enough for the body and most of the gear to pass inside the ring.
+      PORTAL_SCALE = 1.3;
     const span = Math.max(14, Math.min(32, props.members.length * 2.8)),
       depth = 14;
     const floor = mesh(
@@ -131,78 +189,264 @@ export default function TeamAssemble3D(props: {
         inner = new THREE.Group();
       group.add(inner);
       materials.add(build(inner, user));
+      // Weapons sit at the hero's sides and rise past the silhouette, so a head-on close-up
+      // shows both the face and the gear.
       const prop = new THREE.Group();
-      prop.position.set(0.95, 0.65, 1.05);
-      prop.rotation.z = -0.12;
       inner.add(prop);
-      const box = (w: number, h: number, d: number, color: number, x = 0, y = 0, z = 0) => {
-        const part = mesh(new THREE.BoxGeometry(w, h, d), color, { x, y, z });
-        prop.add(part);
+      const glowColor = index % 2 ? 0xff8a3d : 0x4cd8ff;
+      const glowMat = glowMaterial(glowColor);
+      const STEEL = 0x2b3440,
+        GUNMETAL = 0x3a4552,
+        GOLD = 0xe0a94a,
+        INK = 0x1a2230;
+      const solid = (
+        geometry: THREE.BufferGeometry,
+        color: number | THREE.Material,
+        x = 0,
+        y = 0,
+        z = 0,
+        parent: THREE.Object3D = prop,
+      ) => {
+        const part = mesh(geometry, color, { x, y, z });
+        parent.add(part);
         return part;
       };
-      const cylinder = (radius: number, height: number, color: number, x = 0, y = 0, z = 0) => {
-        const part = mesh(new THREE.CylinderGeometry(radius, radius, height, 16), color, { x, y, z });
-        prop.add(part);
+      const box = (w: number, h: number, d: number, color: number, x = 0, y = 0, z = 0, parent?: THREE.Object3D) =>
+        solid(new THREE.BoxGeometry(w, h, d), color, x, y, z, parent);
+      const rod = (radius: number, length: number, color: number, x = 0, y = 0, z = 0) =>
+        solid(new THREE.CylinderGeometry(radius, radius, length, 12), color, x, y, z);
+      const glow = (geometry: THREE.BufferGeometry, x = 0, y = 0, z = 0, parent: THREE.Object3D = prop) => {
+        const part = mesh(geometry, glowMat, { x, y, z, shadow: false });
+        part.receiveShadow = false;
+        parent.add(part);
         return part;
       };
+      let spinner: THREE.Object3D | null = null;
       switch (assemblyProp(index)) {
-        case 'badge': {
-          const badge = cylinder(0.57, 0.12, 0xe6b25b);
-          badge.rotation.x = Math.PI / 2;
-          const canvas = document.createElement('canvas');
-          canvas.width = canvas.height = 128;
-          const ctx = canvas.getContext('2d')!;
-          ctx.fillStyle = '#fff0c5';
-          ctx.fillRect(0, 0, 128, 128);
-          ctx.fillStyle = '#243746';
-          ctx.textAlign = 'center';
-          ctx.font = '900 44px sans-serif';
-          ctx.fillText('#1', 64, 61);
-          ctx.font = '900 15px sans-serif';
-          ctx.fillText('EMPLOYEE', 64, 86);
-          const texture = new THREE.CanvasTexture(canvas);
-          texture.colorSpace = THREE.SRGBColorSpace;
-          textures.add(texture);
-          const labelMat = new THREE.MeshToonMaterial({ map: texture, gradientMap: ramp });
-          materials.add(labelMat);
-          prop.add(mesh(new THREE.CircleGeometry(0.48, 24), labelMat, { z: 0.07 }));
+        case 'rubber-duck': {
+          // A giant debug duck in sunglasses, hoisted on a glowing aura. It faces the camera
+          // (+z) so the shades sit across its eyes in the head-on close-up.
+          prop.position.set(1.55, 1.35, 0.4);
+          prop.rotation.set(0, -0.35, 0.08);
+          const DUCK = 0xffd23f;
+          solid(new THREE.SphereGeometry(0.45, 16, 12), DUCK).scale.set(1, 0.85, 1.25);
+          solid(new THREE.SphereGeometry(0.3, 16, 12), DUCK, 0, 0.5, 0.28);
+          solid(new THREE.ConeGeometry(0.06, 0.3, 6), DUCK, 0, 0.22, -0.62).rotation.x = -0.9;
+          for (const side of [-1, 1])
+            solid(new THREE.SphereGeometry(0.28, 12, 8), 0xf2bf1d, side * 0.38, 0.02, -0.05).scale.set(0.4, 0.6, 1.2);
+          solid(new THREE.SphereGeometry(0.16, 12, 8), 0xff8a1f, 0, 0.42, 0.6).scale.set(0.9, 0.42, 1.2);
+          // Shades: two lenses on the face, a bridge, and arms running back over the head.
+          for (const side of [-1, 1]) {
+            box(0.17, 0.11, 0.05, INK, side * 0.11, 0.58, 0.55);
+            box(0.03, 0.03, 0.28, INK, side * 0.27, 0.6, 0.42);
+          }
+          box(0.08, 0.025, 0.03, INK, 0, 0.6, 0.57);
+          glow(new THREE.BoxGeometry(0.07, 0.02, 0.01), -0.14, 0.61, 0.58);
+          glow(new THREE.TorusGeometry(0.62, 0.03, 8, 32), 0, -0.45).rotation.x = Math.PI / 2;
           break;
         }
-        case 'stapler':
-          box(0.19, 0.9, 0.2, 0xd5b47e, 0, -0.2);
-          box(1.2, 0.22, 0.4, 0x42a8b5, 0, 0.5);
-          box(1.2, 0.12, 0.4, 0xe7cfa1, 0, 0.08);
-          box(0.17, 0.4, 0.4, 0xe7cfa1, -0.5, 0.28);
-          prop.rotation.z = 0.4;
+        case 'toilet-plunger': {
+          // A plunger carried like a lance, cup up, its rim humming with power.
+          prop.position.set(-1.5, 0.25, 0.4);
+          prop.rotation.set(0, 0, 0.15);
+          rod(0.065, 2.4, 0xa86b3c, 0, 1.3);
+          rod(0.08, 0.22, GOLD, 0, 0.35);
+          const cup = solid(new THREE.SphereGeometry(0.42, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0xc8322b, 0, 2.75);
+          cup.rotation.x = Math.PI;
+          solid(new THREE.CircleGeometry(0.41, 24), 0x7d1a16, 0, 2.74).rotation.x = -Math.PI / 2;
+          glow(new THREE.TorusGeometry(0.42, 0.035, 8, 32), 0, 2.75).rotation.x = Math.PI / 2;
           break;
-        case 'box-frame':
-          prop.position.set(0, 0.55, 1.1);
-          box(2.1, 0.25, 0.32, 0xbf915d, 0, 0.35);
-          box(2.1, 0.3, 0.32, 0xbf915d, 0, -0.4);
-          box(0.3, 0.8, 0.32, 0xbf915d, -0.9);
-          box(0.3, 0.8, 0.32, 0xbf915d, 0.9);
-          box(0.4, 0.14, 0.05, 0x7ccbd3, 0, -0.4, 0.19);
-          box(0.14, 0.25, 0.04, 0xf5d7a0, 0, 0.35, 0.19);
+        }
+        case 'coffee-bazooka': {
+          // A shoulder-mounted launcher made from a giant travel mug, steam venting at the lid.
+          prop.position.set(1.15, 1.75, 0.15);
+          prop.rotation.set(0, -0.3, 0.12);
+          rod(0.26, 1.6, 0x57bac4, 0.6).rotation.z = Math.PI / 2;
+          rod(0.27, 0.22, 0xeef0f2, 0.25).rotation.z = Math.PI / 2;
+          rod(0.29, 0.18, 0x243746, 1.45).rotation.z = Math.PI / 2;
+          box(0.3, 0.14, 0.14, STEEL, 0.6, 0.32);
+          box(0.14, 0.42, 0.18, 0x1b2027, 0.35, -0.36);
+          glow(new THREE.TorusGeometry(0.2, 0.035, 8, 24), 1.56).rotation.y = Math.PI / 2;
+          for (const [dy, s] of [
+            [0.25, 0.09],
+            [0.45, 0.07],
+            [0.62, 0.05],
+          ] as const)
+            glow(new THREE.TorusGeometry(s, 0.02, 6, 16), 1.6 + dy * 0.3, dy);
           break;
-        case 'travel-mug':
-          cylinder(0.32, 0.85, 0x57bac4);
-          cylinder(0.36, 0.12, 0x243746, 0, 0.47);
-          box(0.22, 0.4, 0.08, 0xffe5ac, 0, 0, 0.31);
-          box(0.3, 0.09, 0.17, 0xe3b160, 0.43, 0.23);
-          box(0.09, 0.48, 0.17, 0xe3b160, 0.55);
-          box(0.3, 0.09, 0.17, 0xe3b160, 0.43, -0.23);
+        }
+        case 'sticky-shuriken': {
+          // Four sticky notes folded into a throwing star, spinning in the hero's hand.
+          prop.position.set(1.5, 1.05, 0.65);
+          const star = new THREE.Group();
+          prop.add(star);
+          for (let k = 0; k < 4; k++) {
+            const a = (k * Math.PI) / 2;
+            const note = box(0.42, 0.42, 0.02, k % 2 ? 0xff8fb1 : 0xffe066, Math.cos(a) * 0.24, Math.sin(a) * 0.24, 0, star);
+            note.rotation.z = a + Math.PI / 4;
+          }
+          solid(new THREE.CylinderGeometry(0.1, 0.1, 0.06, 12), GOLD, 0, 0, 0.03, star).rotation.x = Math.PI / 2;
+          glow(new THREE.TorusGeometry(0.14, 0.025, 8, 24), 0, 0, 0.04, star);
+          spinner = star;
           break;
-        case 'review-axe': {
-          cylinder(0.08, 1.5, 0xd6aa70, 0, -0.1);
-          const paper = cylinder(0.13, 0.8, 0xfff1d1, 0.3, 0.48);
-          paper.rotation.z = Math.PI / 2;
-          box(0.55, 0.5, 0.08, 0xfff1d1, 0.35, 0.2);
-          for (let line = 0; line < 3; line++)
-            box(0.35 - line * 0.07, 0.025, 0.02, 0x61aeb9, 0.35, 0.32 - line * 0.1, 0.055);
-          prop.rotation.z = -0.35;
+        }
+        case 'keyboard-blade': {
+          // A greatsword whose blade is a backlit keyboard, raised past the hero's head.
+          prop.position.set(-1.5, 0.75, 0.35);
+          prop.rotation.set(0, 0.2, 0.2);
+          rod(0.09, 0.62, 0x3a2a22, 0, -0.2);
+          solid(new THREE.SphereGeometry(0.13, 12, 8), GOLD, 0, -0.55);
+          box(1.0, 0.16, 0.24, STEEL, 0, 0.18);
+          glow(new THREE.BoxGeometry(0.8, 0.035, 0.02), 0, 0.18, 0.13);
+          box(0.44, 2.5, 0.14, 0x1e2630, 0, 1.51);
+          const keys = screenMaterial(`keys-${glowColor}`, 64, 384, (ctx) => {
+            ctx.fillStyle = '#141b24';
+            ctx.fillRect(0, 0, 64, 384);
+            for (let row = 0; row < 16; row++)
+              for (let col = 0; col < 2; col++) {
+                ctx.fillStyle = (row + col * 2) % 5 === 0 ? cssColor(glowColor) : '#d9e1ea';
+                ctx.fillRect(6 + col * 28, 6 + row * 23.5, 24, 19);
+              }
+          });
+          solid(new THREE.PlaneGeometry(0.38, 2.4), keys, 0, 1.51, 0.075);
+          const tip = solid(new THREE.ConeGeometry(0.31, 0.5, 4), 0x1e2630, 0, 3.0);
+          tip.rotation.y = Math.PI / 4;
+          tip.scale.z = 0.32;
+          // Edge glow continues up both slanted faces of the tip (base half-width 0.22, rising
+          // 0.5 to the point), so the dark point still reads against the night sky.
+          const slant = Math.atan2(0.22, 0.5),
+            slantLength = Math.hypot(0.22, 0.5);
+          for (const side of [-1, 1]) {
+            glow(new THREE.BoxGeometry(0.03, 2.5, 0.03), side * 0.225, 1.51);
+            glow(new THREE.BoxGeometry(0.035, slantLength, 0.16), side * 0.11, 3.0).rotation.z = side * slant;
+          }
+          break;
+        }
+        case 'staple-cannon': {
+          // An arm-mounted cannon: the stapler is the receiver, feeding a coil-wrapped barrel.
+          prop.position.set(1.3, 1.05, 0.55);
+          prop.rotation.set(0, -0.35, 0.3);
+          box(1.2, 0.42, 0.5, STEEL, 0.5);
+          box(1.35, 0.18, 0.46, 0x2c9aa8, 0.55, 0.3);
+          box(0.55, 0.12, 0.52, 0xc9d3dc, 0.45, 0.16);
+          box(0.22, 0.55, 0.3, 0x1b2027, 0.15, -0.42);
+          rod(0.17, 0.95, GUNMETAL, 1.5).rotation.z = Math.PI / 2;
+          for (const at of [1.2, 1.45, 1.7]) glow(new THREE.TorusGeometry(0.23, 0.035, 8, 24), at).rotation.y = Math.PI / 2;
+          glow(new THREE.SphereGeometry(0.15, 12, 8), 2.0);
+          glow(new THREE.BoxGeometry(0.95, 0.04, 0.02), 0.5, 0.02, 0.26);
+          break;
+        }
+        case 'monitor-shield': {
+          // A tower shield cut from a monitor, its screen flashing a reassuring error.
+          prop.position.set(-1.5, 0.95, 1.05);
+          prop.rotation.set(0, 0.6, 0.06);
+          box(1.5, 1.15, 0.16, 0x20262e);
+          const screen = screenMaterial(`screen-${glowColor}`, 256, 192, (ctx) => {
+            ctx.fillStyle = '#0d1a2a';
+            ctx.fillRect(0, 0, 256, 192);
+            ctx.fillStyle = '#ffffff10';
+            for (let y = 0; y < 192; y += 6) ctx.fillRect(0, y, 256, 2);
+            ctx.fillStyle = cssColor(glowColor);
+            ctx.textAlign = 'center';
+            ctx.font = '900 76px Impact, sans-serif';
+            ctx.fillText('404', 128, 104);
+            ctx.font = '900 22px sans-serif';
+            ctx.fillText('FEAR NOT FOUND', 128, 146);
+          });
+          solid(new THREE.PlaneGeometry(1.32, 0.97), screen, 0, 0, 0.085);
+          for (const y of [-0.6, 0.6]) glow(new THREE.BoxGeometry(1.4, 0.035, 0.02), 0, y, 0.09);
+          for (const side of [-1, 1]) {
+            solid(new THREE.ConeGeometry(0.1, 0.38, 6), STEEL, side * 0.45, -0.75).rotation.z = Math.PI;
+            for (const y of [-0.5, 0.5]) solid(new THREE.SphereGeometry(0.05, 8, 6), GOLD, side * 0.69, y, 0.09);
+          }
+          break;
+        }
+        case 'deadline-scythe': {
+          // A scythe crowned with a ticking clock: the deadline, weaponized.
+          prop.position.set(1.45, 0.1, -0.25);
+          prop.rotation.set(0, 0, -0.12);
+          rod(0.07, 3.3, 0x2a2f38, 0, 1.65);
+          for (const at of [0.4, 1.15]) rod(0.095, 0.14, GOLD, 0, at);
+          // Crescent: outer arc sweeps from the staff top outward and down to the tip.
+          const crescent = new THREE.Shape();
+          crescent.absarc(0, 1.95, 1.3, Math.PI * 0.5, Math.PI * 0.05, true);
+          crescent.absarc(0.15, 1.85, 1.22, Math.PI * 0.08, Math.PI * 0.5, false);
+          solid(new THREE.ExtrudeGeometry(crescent, { depth: 0.06, bevelEnabled: false }), 0xa9bccb, 0, 0, -0.03);
+          glow(new THREE.TorusGeometry(1.3, 0.03, 6, 32, Math.PI * 0.45), 0, 1.95).rotation.z = Math.PI * 0.05;
+          rod(0.34, 0.12, GOLD, 0, 3.3).rotation.x = Math.PI / 2;
+          solid(new THREE.CircleGeometry(0.28, 24), 0xf3ead7, 0, 3.3, 0.065);
+          box(0.035, 0.2, 0.02, INK, 0, 3.4, 0.075);
+          box(0.14, 0.035, 0.02, INK, 0.07, 3.3, 0.075);
+          glow(new THREE.TorusGeometry(0.4, 0.03, 8, 32), 0, 3.3);
+          break;
+        }
+        case 'mouse-flail': {
+          // A flail on its own glowing cable, the mouse studded with spikes.
+          prop.position.set(1.35, 0.55, 0.75);
+          prop.rotation.set(0, 0, -0.1);
+          rod(0.08, 0.75, STEEL);
+          rod(0.11, 0.12, GOLD, 0, 0.4);
+          const cable = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(0, 0.45, 0),
+            new THREE.Vector3(0.05, 1.0, 0.03),
+            new THREE.Vector3(0.3, 1.5, 0.08),
+            new THREE.Vector3(0.65, 1.55, 0.1),
+          ]);
+          glow(new THREE.TubeGeometry(cable, 24, 0.03, 6, false));
+          // The mouse's nose points back along the cable toward the handle.
+          const head = new THREE.Group();
+          head.position.set(1.05, 1.55, 0.1);
+          head.rotation.z = Math.PI / 2;
+          prop.add(head);
+          solid(new THREE.SphereGeometry(0.4, 16, 12), 0xd7dde4, 0, 0, 0, head).scale.set(0.75, 1, 0.55);
+          box(0.02, 0.32, 0.02, INK, 0, 0.2, 0.2, head);
+          glow(new THREE.BoxGeometry(0.07, 0.14, 0.05), 0, 0.22, 0.2, head);
+          const up = new THREE.Vector3(0, 1, 0);
+          for (const [dx, dy, dz] of [
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, -1, 0],
+            [0.7, -0.7, 0],
+            [-0.7, -0.7, 0],
+            [0.7, 0.3, 0.5],
+            [-0.7, 0.3, 0.5],
+            [0, -0.4, 0.9],
+            [0.6, 0, -0.8],
+            [-0.6, 0, -0.8],
+          ] as const) {
+            const dir = new THREE.Vector3(dx, dy, dz).normalize();
+            const spike = solid(
+              new THREE.ConeGeometry(0.06, 0.26, 6),
+              STEEL,
+              dir.x * 0.3 + dir.x * 0.13,
+              dir.y * 0.4 + dir.y * 0.13,
+              dir.z * 0.22 + dir.z * 0.13,
+              head,
+            );
+            spike.quaternion.setFromUnitVectors(up, dir);
+          }
           break;
         }
       }
+      // The portal is a real doorway: whatever is still behind its plane is cut away, so the
+      // hero steps out of it rather than popping in whole. Every hero needs its own plane, so
+      // its materials are cloned (the shared ones would cut every hero at the same depth).
+      const portalZ = z - PORTAL_BEHIND * size;
+      const doorway = new THREE.Plane(new THREE.Vector3(0, 0, 1), -portalZ);
+      const clipped = new Map<THREE.Material, THREE.Material>();
+      inner.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) return;
+        const original = node.material as THREE.Material;
+        let clone = clipped.get(original);
+        if (!clone) {
+          clone = original.clone();
+          clone.clippingPlanes = [doorway];
+          clone.clipShadows = true;
+          clipped.set(original, clone);
+          materials.add(clone);
+        }
+        node.material = clone;
+      });
       scene.add(group);
       const tag = document.createElement('div');
       tag.textContent = user.nickname || user.username;
@@ -231,8 +475,8 @@ export default function TeamAssemble3D(props: {
       materials.add(portalMat);
       const portal = mesh(new THREE.TorusGeometry(1.75, 0.06, 10, 80), portalMat, {
         x,
-        y: 1.6 * size,
-        z: z - 1.8 * size,
+        y: 1.75 * size,
+        z: portalZ,
       });
       portal.castShadow = false;
       portal.receiveShadow = false;
@@ -315,6 +559,19 @@ export default function TeamAssemble3D(props: {
       impact.castShadow = false;
       impact.receiveShadow = false;
       scene.add(impact);
+      const flashMat = new THREE.SpriteMaterial({
+        map: softGlow,
+        color: 0xfff3d6,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      materials.add(flashMat);
+      const flash = new THREE.Sprite(flashMat);
+      flash.scale.setScalar(2.6);
+      flash.position.set(0, 1.3, 0);
+      group.add(flash);
       return {
         group,
         inner,
@@ -327,6 +584,9 @@ export default function TeamAssemble3D(props: {
         rings,
         impact,
         impactMat,
+        flashMat,
+        label,
+        spinner,
         size,
         x,
         z,
@@ -355,23 +615,118 @@ export default function TeamAssemble3D(props: {
       latest.current.onFail();
     };
     renderer.domElement.addEventListener('webglcontextlost', lost);
+    const smoothstep = (v: number) => v * v * (3 - 2 * v);
+    // Every hero gets a close-up; assemblyMs() stretches the timeline to fit them all.
+    const flybyVisits = heroes.length;
+    const flybySegments = flybyVisits + 1; // wide -> hero -> hero -> ... -> wide
+    const flybySpan = flybyVisits * FLYBY_CLOSEUP_MS + FLYBY_RETURN_MS;
+    const wideShot = () => {
+      const angle = 0.04,
+        distance = cameraDistance;
+      return {
+        pos: new THREE.Vector3(Math.sin(angle) * distance, distance * 0.14 + 1.8, Math.cos(angle) * distance),
+        look: new THREE.Vector3(0, 1.5, 1.5),
+      };
+    };
+    // Close-ups sweep the lineup left to right rather than zig-zagging in roster order.
+    const leftToRight = heroes.map((_, index) => index).sort((a, b) => heroes[a]!.x - heroes[b]!.x);
+    const visitHero = (visitSlot: number) => leftToRight[Math.min(visitSlot, heroes.length - 1)]!;
+    // Head-on, from slightly below eye level for a heroic angle. Distance scales with the body
+    // sphere (BODY_RADIUS 1.35, see src/lib/drawing.ts) so the face and gear both fit; `push`
+    // is the slow dolly-in while the shot lingers.
+    const CLOSE_DISTANCE = 6.4;
+    const heroShot = (visitSlot: number, push: number) => {
+      const hero = heroes[visitHero(visitSlot)]!;
+      const distance = CLOSE_DISTANCE * hero.size * (1 - push * 0.14);
+      return {
+        pos: new THREE.Vector3(hero.x, 1.0 * hero.size + 0.35, hero.z + distance),
+        look: new THREE.Vector3(hero.x, 1.35 * hero.size, hero.z),
+      };
+    };
+    // Heroes standing between the head-on camera and the focused hero, inside the frame. They
+    // step out of the shot (a standard close-up cheat) rather than blocking the face.
+    const occludersOf = (focus: number) => {
+      const target = heroes[focus]!;
+      const cameraZ = target.z + CLOSE_DISTANCE * target.size;
+      const halfWidthPerDepth = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect;
+      const hidden = new Set<number>();
+      heroes.forEach((other, index) => {
+        if (index === focus || other.z <= target.z + 0.1 || other.z >= cameraZ) return;
+        const halfWidth = (cameraZ - other.z) * halfWidthPerDepth;
+        if (Math.abs(other.x - target.x) < halfWidth + 1.6 * other.size) hidden.add(index);
+      });
+      return hidden;
+    };
     let frame = 0;
     const draw = () => {
       const { elapsed, reduced } = latest.current;
-      const dolly = reduced ? 1 : Math.min(1, elapsed / 6500),
-        angle = reduced ? 0 : -0.16 + dolly * 0.2;
-      const distance = cameraDistance * (1.12 - dolly * 0.12);
-      camera.position.set(Math.sin(angle) * distance, distance * 0.14 + 1.8, Math.cos(angle) * distance);
-      camera.lookAt(0, 1.5, 1.5);
+      let focus = -1;
+      let hidden: Set<number> | null = null;
+      for (const m of glowMats.values()) m.opacity = reduced ? 0.95 : 0.78 + 0.2 * Math.sin(elapsed / 170);
+      if (!reduced && elapsed >= ARRIVAL_MS && flybySegments > 0) {
+        // The finale's slow-motion close-up pass: fly in on each hero for FLYBY_CLOSEUP_MS,
+        // linger with a gentle drift, then ease back out to the wide shot for a clean landing
+        // frame over FLYBY_RETURN_MS.
+        const t = Math.min(flybySpan, elapsed - ARRIVAL_MS);
+        const closeupsEnd = flybyVisits * FLYBY_CLOSEUP_MS;
+        const isReturn = t >= closeupsEnd;
+        const segIndex = isReturn
+          ? flybySegments - 1
+          : Math.min(flybyVisits - 1, Math.floor(t / FLYBY_CLOSEUP_MS));
+        const segDuration = isReturn ? FLYBY_RETURN_MS : FLYBY_CLOSEUP_MS;
+        const segElapsed = isReturn ? t - closeupsEnd : t - segIndex * FLYBY_CLOSEUP_MS;
+        const segT = segDuration > 0 ? Math.min(1, segElapsed / segDuration) : 1;
+        const ease = segT < 0.6 ? smoothstep(segT / 0.6) : 1;
+        // Fly in over the first 60%, then a slow push-in while the shot lingers.
+        const push = !isReturn && segT > 0.6 ? smoothstep((segT - 0.6) / 0.4) : 0;
+        // The previous shot ended fully pushed in, so start from there to avoid a jump.
+        const from = segIndex === 0 ? wideShot() : heroShot(segIndex - 1, 1);
+        const to = isReturn ? wideShot() : heroShot(segIndex, push);
+        camera.position.copy(from.pos.lerp(to.pos, ease));
+        camera.lookAt(from.look.lerp(to.look, ease));
+        // Swap occluders at the midpoint of the flight, where camera motion hides the pop.
+        const fromFocus = segIndex === 0 ? -1 : visitHero(segIndex - 1);
+        const toFocus = isReturn ? -1 : visitHero(segIndex);
+        focus = ease >= 0.5 ? toFocus : fromFocus;
+        if (focus >= 0) hidden = occludersOf(focus);
+      } else {
+        const dolly = reduced ? 1 : Math.min(1, elapsed / ARRIVAL_MS),
+          baseAngle = reduced ? 0 : -0.16 + dolly * 0.2;
+        // In the last beat before the finale cut, swing the camera around faster, fading back
+        // to the settled framing exactly at the cut so there's no jump once it lands.
+        const sweepStart = ARRIVAL_MS - 1500,
+          sweepEnd = ARRIVAL_MS;
+        let sweep = 0;
+        if (!reduced && elapsed > sweepStart && elapsed < sweepEnd) {
+          const sweepT = (elapsed - sweepStart) / (sweepEnd - sweepStart);
+          sweep = Math.sin(sweepT * Math.PI * 2.5) * (1 - sweepT) * 0.55;
+        }
+        const angle = baseAngle + sweep;
+        const distance = cameraDistance * (1.12 - dolly * 0.12);
+        camera.position.set(Math.sin(angle) * distance, distance * 0.14 + 1.8, Math.cos(angle) * distance);
+        camera.lookAt(0, 1.5, 1.5);
+      }
       heroes.forEach((hero, index) => {
         const pose = heroPose(index, heroes.length, elapsed, reduced);
-        hero.group.visible = pose.visible;
-        hero.group.position.set(hero.x, 0, hero.z - (1 - pose.forward) * 1.8 * hero.size);
+        hero.group.visible = pose.visible && !hidden?.has(index);
+        // CSS2D labels draw over everything and can't be cut by the doorway, so they wait until
+        // the hero is mostly through it; during a close-up only the focused name shows.
+        hero.label.visible = pose.emerge > 0.6 && (focus < 0 || index === focus);
+        if (hero.spinner) hero.spinner.rotation.z = reduced ? 0 : -elapsed / 110;
+        // Impact^2 sharpens the shake/flash to a snappy burst right at the landing peak.
+        const punch = reduced ? 0 : pose.impact * pose.impact;
+        const shakeX = punch ? Math.sin(pose.progress * 180 + index * 11) * punch * 0.18 * hero.size : 0;
+        const shakeZ = punch ? Math.cos(pose.progress * 150 + index * 5) * punch * 0.12 * hero.size : 0;
+        hero.group.position.set(
+          hero.x + shakeX,
+          0,
+          hero.z - (1 - pose.forward) * ENTRY_DEPTH * hero.size + shakeZ,
+        );
+        hero.flashMat.opacity = pose.impact ** 3;
         hero.group.scale.setScalar(pose.scale * hero.size);
-        hero.inner.scale.z = pose.depthScale;
         hero.inner.rotation.z = (pose.lean * Math.PI) / 180;
         hero.portal.visible = pose.portal > 0.01;
-        hero.portal.scale.setScalar(pose.portalScale * hero.size);
+        hero.portal.scale.setScalar(pose.portalScale * hero.size * PORTAL_SCALE);
         hero.portalMat.opacity = pose.portal * 0.95;
         hero.shimmerMat.opacity = pose.portal * (0.18 + Math.sin(pose.progress * Math.PI * 12) * 0.06);
         hero.sparkMat.opacity = pose.portal;

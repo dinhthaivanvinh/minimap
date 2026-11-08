@@ -1,6 +1,14 @@
 import type { TeamState } from '../../shared/types.ts';
 
-export const ASSEMBLY_MS = 10_500;
+// Heroes finish crossing their doorways and the pre-finale camera sweep settles by this point.
+export const ARRIVAL_MS = 6500;
+// The 3D finale's camera lingers on each hero this long before moving to the next.
+export const FLYBY_CLOSEUP_MS = 2500;
+// Then eases back out to the wide shot in this long, for a clean landing frame.
+export const FLYBY_RETURN_MS = 1200;
+// Every hero gets a close-up, so the celebration's length grows with the team.
+export const assemblyMs = (heroCount: number) =>
+  ARRIVAL_MS + Math.max(0, heroCount) * FLYBY_CLOSEUP_MS + FLYBY_RETURN_MS;
 export function officeAssembly(state: Pick<TeamState, 'places' | 'users'>) {
   const offices = new Set(state.places.map((p) => p.id));
   const members = state.users.filter((user) => user.place !== null && offices.has(user.place));
@@ -57,6 +65,8 @@ export function heroFormation(index: number, count: number) {
   if (index === 0) return { x: 0.5, y: 0.9, scale: 1 };
   const tier = Math.ceil(index / 2),
     tiers = Math.ceil((count - 1) / 2);
-  const spread = 0.17 + ((tier - 1) / Math.max(1, tiers - 1)) * 0.25;
+  // Every neighbour is the same step apart, lead to first wing included; small teams keep a
+  // comfortable step and big ones tighten so the outermost pair still fits.
+  const spread = tier * Math.min(0.17, 0.42 / tiers);
   return { x: 0.5 + (index % 2 ? -1 : 1) * spread, y: 0.9 - tier * 0.055, scale: 1 - tier * 0.07 };
 }

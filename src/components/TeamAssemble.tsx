@@ -1,7 +1,7 @@
 import type { TeamUser } from '../../shared/types.ts';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import styled, { keyframes } from 'styled-components';
-import { ASSEMBLY_MS, heroGrid, heroPose, heroFormation } from '../lib/assembly.ts';
+import styled, { css, keyframes } from 'styled-components';
+import { ARRIVAL_MS, assemblyMs, heroGrid, heroPose, heroFormation } from '../lib/assembly.ts';
 import { useReducedMotion } from '../lib/hooks.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
 import { Mochi } from './Mochi.tsx';
@@ -164,6 +164,17 @@ const emberDrift = keyframes`
   20% { opacity: 1; }
   to { transform: translate(var(--drift-x), var(--drift-y)) scale(0); opacity: 0; }
 `;
+const titlePop = keyframes`
+  0% { opacity: 0; transform: scale(0.4); }
+  55% { opacity: 1; transform: scale(1.12); }
+  75% { transform: scale(0.96); }
+  100% { transform: scale(1); }
+`;
+const finaleFlash = keyframes`
+  0% { opacity: 0; }
+  14% { opacity: 1; }
+  100% { opacity: 0; }
+`;
 const Hero = styled.div`
   position: absolute;
   width: var(--hero-size);
@@ -183,18 +194,68 @@ const Hero = styled.div`
   }
   .signature-prop {
     position: absolute;
-    width: 42%;
-    height: 42%;
-    right: -3%;
-    bottom: 2%;
     filter: drop-shadow(0 4px 3px #0008);
     overflow: visible;
   }
-  .prop-box-frame {
-    width: 80%;
-    height: 49%;
-    right: 10%;
-    bottom: -2%;
+  .prop-keyboard-blade {
+    width: 32%;
+    height: 104%;
+    left: -16%;
+    bottom: 10%;
+    transform: rotate(-12deg);
+  }
+  .prop-staple-cannon {
+    width: 64%;
+    height: 34%;
+    right: -38%;
+    bottom: 26%;
+  }
+  .prop-monitor-shield {
+    width: 54%;
+    height: 50%;
+    left: -22%;
+    bottom: 0;
+  }
+  .prop-deadline-scythe {
+    width: 62%;
+    height: 112%;
+    right: -30%;
+    bottom: 0;
+  }
+  .prop-mouse-flail {
+    width: 52%;
+    height: 72%;
+    right: -30%;
+    bottom: 12%;
+  }
+  .prop-rubber-duck {
+    width: 58%;
+    height: 52%;
+    right: -36%;
+    bottom: 44%;
+  }
+  .prop-toilet-plunger {
+    width: 30%;
+    height: 100%;
+    left: -14%;
+    bottom: 6%;
+    transform: rotate(-8deg);
+  }
+  .prop-coffee-bazooka {
+    width: 72%;
+    height: 34%;
+    right: -42%;
+    bottom: 54%;
+  }
+  .prop-sticky-shuriken {
+    width: 40%;
+    height: 40%;
+    right: -24%;
+    bottom: 30%;
+    animation: ${rimSpin} 0.9s linear infinite;
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
   }
   .impact {
     position: absolute;
@@ -205,6 +266,14 @@ const Hero = styled.div`
     border: 2px solid #ffd09a;
     border-radius: 50%;
     box-shadow: 0 0 18px #e98a38;
+  }
+  .flash {
+    position: absolute;
+    inset: -25%;
+    border-radius: 50%;
+    background: radial-gradient(circle, #fffdf3ee, #ffdb9bb3 38%, transparent 70%);
+    mix-blend-mode: screen;
+    pointer-events: none;
   }
   .portal {
     position: absolute;
@@ -287,19 +356,32 @@ const Title = styled.div`
     font: 800 10px sans-serif;
     letter-spacing: 5px;
   }
-  strong {
-    display: block;
-    font:
-      900 clamp(44px, 8vw, 106px)/0.95 Impact,
-      'Arial Narrow',
-      sans-serif;
-    text-transform: uppercase;
-    letter-spacing: -2px;
-    color: #f5eee2;
-    text-shadow:
-      2px 3px 0 #71462f,
-      0 0 40px #ffd89133;
-  }
+`;
+const Headline = styled.strong<{ $pop: boolean }>`
+  display: block;
+  font:
+    900 clamp(44px, 8vw, 106px)/0.95 Impact,
+    'Arial Narrow',
+    sans-serif;
+  text-transform: uppercase;
+  letter-spacing: -2px;
+  color: #f5eee2;
+  text-shadow:
+    2px 3px 0 #71462f,
+    0 0 40px #ffd89133;
+  ${({ $pop }) =>
+    $pop &&
+    css`
+      animation: ${titlePop} 0.5s cubic-bezier(0.17, 0.89, 0.32, 1.49) both;
+    `}
+`;
+const FinaleFlash = styled.div`
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, #fff8e6ee, #ffcf8f66 42%, transparent 72%);
+  animation: ${finaleFlash} 0.65s ease-out both;
 `;
 const Footer = styled.footer`
   display: flex;
@@ -342,7 +424,8 @@ export function TeamAssemble({
   const skipped = useRef(false);
   const [view, setView] = useState(initialView);
   const [failed, setFailed] = useState(false);
-  const [elapsed, setElapsed] = useState(reduced ? ASSEMBLY_MS : 0);
+  const totalMs = assemblyMs(cast.members.length);
+  const [elapsed, setElapsed] = useState(reduced ? totalMs : 0);
   const [take, setTake] = useState(0);
   useEffect(() => {
     dialog.current?.showModal();
@@ -356,7 +439,7 @@ export function TeamAssemble({
   }, [cast]);
   useEffect(() => {
     if (reduced) {
-      setElapsed(ASSEMBLY_MS);
+      setElapsed(totalMs);
       return;
     }
     skipped.current = false;
@@ -364,15 +447,16 @@ export function TeamAssemble({
     let frame = 0;
     const tick = () => {
       if (skipped.current) return;
-      const now = Math.min(ASSEMBLY_MS, performance.now() - origin);
+      const now = Math.min(totalMs, performance.now() - origin);
       setElapsed(now);
-      if (now < ASSEMBLY_MS) frame = requestAnimationFrame(tick);
+      if (now < totalMs) frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [take, reduced]);
+  }, [take, reduced, totalMs]);
   const grid = heroGrid(cast.members.length);
-  const finale = elapsed >= 6500;
+  // Heroes are already settled by ARRIVAL_MS; hold a beat of stillness before the title slams in.
+  const finale = elapsed >= ARRIVAL_MS + 260;
   const fail = () => {
     setFailed(true);
     setView('2d');
@@ -428,11 +512,16 @@ export function TeamAssemble({
         <Signal aria-hidden="true" style={{ opacity: finale ? 0.2 : 1 }}>
           ✦
         </Signal>
+        {finale && !reduced && <FinaleFlash aria-hidden="true" />}
         {view === '2d' && (
           <Lineup $columns={grid.columns} $rows={grid.rows} aria-label="Office heroes">
             {cast.members.map((user, index) => {
               const pose = heroPose(index, cast.members.length, elapsed, reduced);
               const formation = heroFormation(index, cast.members.length);
+              // Impact^2 sharpens the shake/flash to a snappy burst right at the landing peak.
+              const punch = reduced ? 0 : pose.impact * pose.impact;
+              const shakeX = punch ? Math.sin(pose.progress * 180 + index * 11) * punch * 4 : 0;
+              const shakeY = punch ? Math.cos(pose.progress * 150 + index * 5) * punch * 3 : 0;
               return (
                 <Hero
                   key={user.username}
@@ -441,9 +530,14 @@ export function TeamAssemble({
                     left: `${formation.x * 100}%`,
                     top: `${formation.y * 100}%`,
                     zIndex: Math.round(formation.y * 100),
-                    transform: `translate(-50%,-100%) scale(${formation.scale})`,
+                    transform: `translate(calc(-50% + ${shakeX}px),calc(-100% + ${shakeY}px)) scale(${formation.scale})`,
                   }}
                 >
+                  <div
+                    className="flash"
+                    aria-hidden="true"
+                    style={{ opacity: pose.impact ** 3 }}
+                  />
                   <div
                     className="portal"
                     aria-hidden="true"
@@ -491,7 +585,7 @@ export function TeamAssemble({
                     <div className="figure">
                       <Mochi user={user} />
                     </div>
-                    <AssemblyProp item={assemblyProp(index)} />
+                    <AssemblyProp item={assemblyProp(index)} index={index} />
                   </div>
                   <span style={{ fontSize: 11 / formation.scale, opacity: pose.opacity }}>
                     {user.nickname || user.username}
@@ -516,13 +610,13 @@ export function TeamAssemble({
                 ? '01 / THE SIGNAL'
                 : '02 / REINFORCEMENTS'}
           </p>
-          <strong>
+          <Headline key={finale ? 'finale' : 'progress'} $pop={finale && !reduced}>
             {finale
               ? 'TEAM, ASSEMBLE.'
               : elapsed < 1200
                 ? `${Math.round((cast.members.length / cast.total) * 100)}% TOGETHER.`
                 : 'ON YOUR LEFT.'}
-          </strong>
+          </Headline>
         </Title>
       </Stage>
       <Footer>
@@ -532,11 +626,11 @@ export function TeamAssemble({
             : `Assembling ${cast.members.length} office heroes…`}
           {failed ? ' · Showing 2D' : ''}
         </p>
-        {elapsed < ASSEMBLY_MS && (
+        {elapsed < totalMs && (
           <button
             onClick={() => {
               skipped.current = true;
-              setElapsed(ASSEMBLY_MS);
+              setElapsed(totalMs);
             }}
           >
             Skip
@@ -545,7 +639,7 @@ export function TeamAssemble({
         <button
           data-primary
           onClick={() => {
-            setElapsed(reduced ? ASSEMBLY_MS : 0);
+            setElapsed(reduced ? totalMs : 0);
             setTake((t) => t + 1);
           }}
         >
