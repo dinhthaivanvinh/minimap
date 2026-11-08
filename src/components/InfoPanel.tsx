@@ -1,9 +1,11 @@
-// The home page's side panel: two clocks, office weather and the QR code.
+// The home page's side panel: two clocks, office weather, the QR code, and a countdown in a vote's last hour.
 import { useMemo, useRef } from 'react';
 import qrcode from 'qrcode-generator';
 import styled from 'styled-components';
 import type { Clock, TeamState, Weather } from '../../shared/types.ts';
+import type { VoteView } from '../../shared/vote.ts';
 import { useNow } from '../lib/hooks.ts';
+import { countdown, voteLink } from '../lib/noticeBoard.ts';
 import { theme } from '../styles/theme.ts';
 import { Button } from '../styles/ui.ts';
 
@@ -267,7 +269,27 @@ function teamAddress(publicUrl: string): string {
 
 // ---- Panel --------------------------------------------------------------
 
-export function InfoPanel({ state }: { state: TeamState }) {
+const Countdown = styled.a`
+  display: block;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: ${theme.thinLine};
+  border-radius: 12px;
+  background: #ffd3d3;
+  font-weight: 800;
+  line-height: 1.3;
+  text-decoration: none;
+
+  &::before { content: '🗳️ '; }
+  &:hover { background: #ffc0c0; }
+`;
+
+function VoteCountdown({ votes }: { votes: VoteView[] }) {
+  const card = countdown(votes, useNow(15_000));
+  return card && <Countdown href={voteLink(card.id)}>{card.text}</Countdown>;
+}
+
+export function InfoPanel({ state, votes }: { state: TeamState; votes: VoteView[] }) {
   const { settings, weather } = state;
   const dialogRef = useRef<HTMLDialogElement>(null);
   const url = teamAddress(settings.publicUrl);
@@ -308,6 +330,8 @@ export function InfoPanel({ state }: { state: TeamState }) {
           To show a QR code, set the team address on the <a href="/admin">Admin page</a>.
         </QrNote>
       )}
+
+      <VoteCountdown votes={votes} />
 
       <QrDialog
         ref={dialogRef}

@@ -86,13 +86,16 @@ async function openEvents(signal: AbortSignal, url: URL) {
   const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
 
-  async function nextState(): Promise<TeamState> {
+  // The next message with this event name; the team's state has none.
+  async function nextEvent(name = ''): Promise<any> {
     for (;;) {
       const end = buffer.indexOf('\n\n');
       if (end >= 0) {
         const message = buffer.slice(0, end);
         buffer = buffer.slice(end + 2);
-        if (message.startsWith('data: ')) return JSON.parse(message.slice(6));
+        const event = message.match(/^event: (.*)\n/)?.[1] ?? '';
+        const data = message.match(/^data: (.*)$/m)?.[1];
+        if (data !== undefined && event === name) return JSON.parse(data);
         continue;
       }
       const { value, done } = await reader.read();
@@ -100,12 +103,13 @@ async function openEvents(signal: AbortSignal, url: URL) {
       buffer += value;
     }
   }
-  return { res, nextState };
+  const nextState = (): Promise<TeamState> => nextEvent();
+  return { res, nextState, nextEvent };
 }
 
 test('every page serves the React app, built files come from the assets, and the rest is 404', async (t) => {
   const { api } = await setup(t);
-  for (const page of ['/', '/me', '/admin']) {
+  for (const page of ['/', '/me', '/admin', '/vote']) {
     const res = await api('GET', page);
     assert.equal(res.status, 200, page);
     assert.equal(res.text, PAGE, page);
@@ -239,7 +243,8 @@ test('basketball round tickets and rankings survive Durable Object eviction and 
   assert.equal(round.status, 201);
   await evict();
   const backup = (await api('GET', '/api/admin/data', undefined, ADMIN)).json;
-  assert.equal(backup.users[0].basketballRound.ticket, round.json.ticket);
+  // The arcade keeps its tickets under its own storage key, not in the team's data.
+  assert.equal(backup.users[0].basketballRound, undefined);
   const week = new Date();
   week.setUTCDate(week.getUTCDate() - (week.getUTCDay() + 6) % 7);
   const entry = { username: 'hooper', score: 42, at: new Date().toISOString() };
@@ -250,4 +255,31 @@ test('basketball round tickets and rankings survive Durable Object eviction and 
   assert.deepEqual(rankings.allTime, [entry]);
   assert.deepEqual(rankings.weekly, [entry]);
   assert.equal((await api('POST', '/api/basketball/score', { ...round.json, shots: [] }, { Authorization: `Bearer ${token}` })).status, 400);
+});
+
+test('votes survive Durable Object eviction, and reach open maps as their own event', async (t) => {
+  const { api, join, evict, events } = await setup(t);
+  const token = await join('ann');
+  const auth = { Authorization: `Bearer ${token}` };
+  const endsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const made = await api('POST', '/api/vote', { title: 'Lunch', endsAt, options: ['Pho', 'Pizza'], voters: [] }, auth);
+  assert.equal(made.status, 201);
+
+  assert.equal((await api('POST', `/api/vote/${made.json.id}/ballot`, { choices: ['o2'] }, auth)).status, 200);
+  await evict();
+  const [vote] = (await api('GET', '/api/vote', undefined, auth)).json.votes;
+  assert.deepEqual(vote.mine, ['o2']);
+  assert.deepEqual(vote.voted, ['ann']);
+  // Votes are kept under their own key, and still go into the admin's backup.
+  const backup = (await api('GET', '/api/admin/data', undefined, ADMIN)).json;
+  assert.deepEqual(backup.vote.votes[0].ballots, [['ann', ['o2']]]);
+
+  // Open maps get the votes when they connect, and again after each change.
+  const live = await events();
+  const firstVotes = await live.nextEvent('vote');
+  assert.equal(firstVotes[0].title, 'Lunch');
+  assert.equal(firstVotes[0].mine, undefined, 'live updates never carry anyone’s picks');
+  const update = live.nextEvent('vote');
+  assert.equal((await api('DELETE', `/api/vote/${made.json.id}`, undefined, ADMIN)).status, 200);
+  assert.deepEqual(await update, []);
 });

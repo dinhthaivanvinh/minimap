@@ -5,8 +5,9 @@ data
 dist
 node_modules
 scripts
-server/*.test.ts
+server/**/*.test.ts
 src/**/*.test.ts
+shared/**/*.test.ts
 worker/*.test.ts
 README.md
 .dev.vars

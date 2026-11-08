@@ -6,13 +6,19 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
+import { resultText, type VoteView } from '../../shared/vote.ts';
 import { CLEAR, mixColor, type Ambience, type Conditions } from '../lib/ambience.ts';
 import { watchContextLoss } from '../lib/contextLoss.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
-import { computeLayout, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
-import { box, clampTo, contains, grow, pickSpot, steer, type Box } from '../lib/wander.ts';
+import { boardNotes, voteLink } from '../lib/noticeBoard.ts';
+import { computeLayout, noticeBoardSpot, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
+import { box, clampTo, contains, grow, hopHeight, pickSpot, steer, type Box } from '../lib/wander.ts';
+import type { Reaction, ReactionKind } from '../lib/voteReactions.ts';
 import { createArcadeCabinet } from './arcade3d.ts';
+import { createBlimp } from './blimp3d.ts';
 import { createCharacterBuilder } from './character3d.ts';
+import { createNoticeBoard, type NoticeBoard3D } from './noticeBoard3d.ts';
+import type { VoteMarks } from './types.ts';
 
 export interface CameraPreset {
   id: string;
@@ -35,6 +41,8 @@ export interface SceneLabels {
   people: ReadonlyMap<string, HTMLElement>;
   zones: ZoneLabelSlot[];
   arcade: HTMLElement | null;
+  /** Where the notice board's link goes. */
+  board: HTMLElement | null;
 }
 
 export interface Scene3D {
@@ -46,11 +54,19 @@ export interface Scene3D {
   setWandering(on: boolean): void;
   /** Lights the town for the time of day: sun and sky, moonlight, lamps and windows. */
   setAmbience(look: Ambience): void;
+  /** The team's votes, for the notice board. */
+  setVotes(votes: VoteView[]): void;
+  /** Ballots over people who haven't voted, and the blimp with the latest result. Null hides them. */
+  setVoteMarks(marks: VoteMarks | null): void;
+  /** Plays characters' reactions to votes once (lib/voteReactions.ts). */
+  react(list: Reaction[]): void;
   destroy(): void;
 }
 
 interface SceneOptions {
   onArcade: (trigger: HTMLElement) => void;
+  /** A click on the notice board: the /vote page, or one vote on it. */
+  onNoticeBoard: (link: string) => void;
   onPick: (username: string, label: HTMLElement) => void;
   onCamera: (camera: CameraState) => void;
   /** The browser took away the 3D context and didn't give it back. */
@@ -84,6 +100,15 @@ interface Character {
   zoneKind: ZoneKind;
   /** Held outdoors in the rain or snow. */
   umbrella: THREE.Group;
+  /** Floats over their head while they haven't voted on a vote shown on the map. */
+  ballot: THREE.Sprite;
+  ballotOn: boolean;
+  /** When the ballot started to pop away, or -1. */
+  ballotPopAt: number;
+  /** A reaction to a vote that is playing now. */
+  reaction: { kind: ReactionKind; start: number; end: number } | null;
+  /** 🙌 or 👏 beside their head while they cheer or clap. Made when first needed. */
+  emoji: THREE.Sprite | null;
   /** Where they may wander, or null when the room is too crowded to. */
   area: Box | null;
   /** travel: hurrying to a new room. walk: wandering. idle: standing still. */
@@ -161,6 +186,49 @@ function flakeTexture() {
   return new THREE.CanvasTexture(canvas);
 }
 
+// A little paper ballot with a tick box, for people who haven't voted.
+function ballotTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#2a2657';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(8, 4, 48, 56, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineWidth = 4;
+  ctx.strokeRect(16, 14, 12, 12);
+  ctx.strokeRect(16, 36, 12, 12);
+  ctx.beginPath();
+  for (const y of [20, 42]) {
+    ctx.moveTo(34, y);
+    ctx.lineTo(48, y);
+  }
+  ctx.stroke();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+const BALLOT_POP_S = 0.4;
+
+function emojiTexture(emoji: string) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.font = '48px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, 32, 36);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+const CONFETTI_COLOURS = [0xff9cc2, 0xffe27a, 0x8fddf5, 0xbdf0d2, 0xb7a6ff];
+const CONFETTI_PIECES = 24;
+
 function glowTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 64;
@@ -207,7 +275,7 @@ function checkerTexture(a: string, b: string) {
   return texture;
 }
 
-export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade }: SceneOptions): Scene3D {
+export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade, onNoticeBoard }: SceneOptions): Scene3D {
   const ramp = toonRamp();
   const materials = new Map<number, THREE.MeshToonMaterial>();
   const mat = (color: number): THREE.MeshToonMaterial => {
@@ -268,6 +336,20 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   let arcade: THREE.Group | null = null;
   let arcadeSlot: HTMLElement | null = null;
+  let noticeBoard: NoticeBoard3D | null = null;
+  let votes: VoteView[] = [];
+  let boardDrawnAt = 0;
+  let boardPulsing = false;
+  let voteMarks: VoteMarks | null = null;
+  const ballotMap = ballotTexture();
+  // The blimp belongs to the sky, not the town, so it stays when the town is rebuilt.
+  const blimp = createBlimp();
+  blimp.group.visible = false;
+  blimp.group.scale.setScalar(1.5);
+  scene.add(blimp.group);
+  let blimpText = '';
+  const emojiMaps: Partial<Record<'cheer' | 'clap', THREE.Texture>> = {};
+  let bursts: { points: THREE.Points; speeds: number[]; start: number; end: number }[] = [];
   const world = new THREE.Group();
   scene.add(world);
   const desks = new THREE.Group();
@@ -550,7 +632,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   function addLobby(group: THREE.Group, z: Zone, c: Point) {
     group.add(mesh(new THREE.BoxGeometry(z.w, 1, z.h), 0xffe0ec, { ...c, y: 0.5, shadow: false }));
-    group.add(mesh(new THREE.BoxGeometry(9, 0.2, 3.6), 0xffe27a, { x: c.x + z.w / 2 - 7, y: 1.1, z: c.z + z.h / 2 - 3, shadow: false }));
+    group.add(mesh(new THREE.BoxGeometry(9, 0.2, 3.6), 0xffe27a, { x: c.x - z.w / 2 + 7, y: 1.1, z: c.z + z.h / 2 - 3, shadow: false }));
     addNightLight(group, c.x, 7, c.z, { strength: 1.8, distance: Math.max(z.w, z.h) * 0.75 });
   }
 
@@ -687,8 +769,133 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       block(at.x, at.z, 3.2, 2.4);
     }
 
+    // The notice board stands at the back of its spot, facing the camera, lit after dark.
+    noticeBoard = null;
+    const spot = noticeBoardSpot(layout);
+    if (spot) {
+      const at = toWorld(spot.x + spot.w / 2, spot.y + spot.h * 0.35);
+      noticeBoard = createNoticeBoard();
+      noticeBoard.group.position.set(at.x, 1, at.z);
+      noticeBoard.group.scale.setScalar(spot.w / 10.5);
+      world.add(noticeBoard.group);
+      block(at.x, at.z, spot.w / 2, 1);
+      addNightLight(world, at.x, 9, at.z + 5, { strength: 1.6, distance: 14 });
+      drawBoard(0);
+    }
+
     buildPresets();
     applyNightLights();
+  }
+
+  // Shows or hides someone's ballot. One that goes away while the map is open pops.
+  function markBallot(c: Character, animate: boolean) {
+    const on = voteMarks?.waiting.has(c.username) ?? false;
+    if (on === c.ballotOn) return;
+    c.ballotOn = on;
+    if (on) {
+      c.ballotPopAt = -1;
+      c.ballot.material.opacity = 1;
+      c.ballot.visible = true;
+    } else if (animate && !reducedMotion && c.ballot.visible) {
+      c.ballotPopAt = performance.now() / 1000;
+    } else {
+      c.ballot.visible = false;
+    }
+  }
+
+  // Plays a reaction on top of whatever someone is doing: hops, a wiggle, and 🙌 or 👏.
+  function animateReaction(c: Character, time: number) {
+    const r = c.reaction;
+    if (!r) return;
+    const t = time - r.start;
+    if (time >= r.end) {
+      c.reaction = null;
+      c.inner.rotation.z = 0;
+      if (c.emoji) c.emoji.visible = false;
+      return;
+    }
+    if (r.kind === 'cheer') c.inner.position.y += hopHeight(t % 0.5, 0.5, 1.1);
+    else if (r.kind === 'clap') c.inner.rotation.z = Math.sin(t * 22) * 0.1;
+    else c.inner.position.y += hopHeight(t, 0.6);
+    if (c.emoji) c.emoji.position.y = 2.9 + Math.min(t * 2, 0.5);
+  }
+
+  function confettiAt(position: THREE.Vector3, time: number) {
+    const positions = new Float32Array(CONFETTI_PIECES * 3);
+    const colours = new Float32Array(CONFETTI_PIECES * 3);
+    const speeds: number[] = [];
+    const colour = new THREE.Color();
+    for (let i = 0; i < CONFETTI_PIECES; i++) {
+      const angle = (i / CONFETTI_PIECES) * Math.PI * 2;
+      const out = 3 + (i % 4);
+      speeds.push(Math.cos(angle) * out, 7 + (i % 3) * 2, Math.sin(angle) * out);
+      positions.set([position.x, position.y + 2.5, position.z], i * 3);
+      colour.set(CONFETTI_COLOURS[i % CONFETTI_COLOURS.length]!);
+      colours.set([colour.r, colour.g, colour.b], i * 3);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 0.7, vertexColors: true, transparent: true }));
+    scene.add(points);
+    bursts.push({ points, speeds, start: time, end: time + 1.5 });
+  }
+
+  function animateBursts(dt: number, time: number) {
+    bursts = bursts.filter((burst) => {
+      const done = time >= burst.end;
+      if (done) {
+        scene.remove(burst.points);
+        burst.points.geometry.dispose();
+        (burst.points.material as THREE.Material).dispose();
+        return false;
+      }
+      const position = burst.points.geometry.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i < CONFETTI_PIECES; i++) {
+        burst.speeds[i * 3 + 1]! -= 14 * dt;
+        position.setXYZ(i, position.getX(i) + burst.speeds[i * 3]! * dt, position.getY(i) + burst.speeds[i * 3 + 1]! * dt, position.getZ(i) + burst.speeds[i * 3 + 2]! * dt);
+      }
+      position.needsUpdate = true;
+      (burst.points.material as THREE.PointsMaterial).opacity = 1 - (time - burst.start) / (burst.end - burst.start);
+      return true;
+    });
+  }
+
+  function animateVoteMarks(time: number) {
+    for (const c of characters.values()) {
+      if (!c.ballot.visible) continue;
+      if (c.ballotPopAt >= 0) {
+        const t = (time - c.ballotPopAt) / BALLOT_POP_S;
+        c.ballot.scale.setScalar(1.1 * (1 + t));
+        c.ballot.material.opacity = Math.max(0, 1 - t);
+        if (t >= 1) {
+          c.ballot.visible = false;
+          c.ballotPopAt = -1;
+        }
+        continue;
+      }
+      c.ballot.scale.setScalar(1.1);
+      c.ballot.position.y = 2.9 + (reducedMotion ? 0 : Math.sin(time * 2.4 + c.phase) * 0.15);
+    }
+
+    if (!blimp.group.visible) return;
+    // A slow, flat loop behind the town, so the banner mostly faces the camera. It flies
+    // lower in fog so the banner stays readable. Without motion it waits at the back, facing us.
+    const angle = reducedMotion ? -Math.PI / 2 : time * 0.05;
+    const rx = layout.width * 0.36;
+    const rz = layout.height * 0.12;
+    const height = weather.fog > 0 ? 11 : 16;
+    blimp.group.position.set(Math.cos(angle) * rx, height + (reducedMotion ? 0 : Math.sin(time * 0.7) * 0.4), Math.sin(angle) * rz - layout.height * 0.05);
+    blimp.group.rotation.y = Math.atan2(-Math.cos(angle) * rz, -Math.sin(angle) * rx);
+  }
+
+  function drawBoard(time: number) {
+    if (!noticeBoard) return;
+    const pulse = reducedMotion ? 0 : (Math.sin(time * 3.5) + 1) / 2;
+    const board = boardNotes(votes, new Date());
+    noticeBoard.draw(board, pulse);
+    boardDrawnAt = time;
+    boardPulsing = !reducedMotion && board.notes.some((n) => n.urgent);
   }
 
   function buildDesks() {
@@ -751,10 +958,19 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     group.add(label);
     const umbrella = makeUmbrella(umbrellaColour(user.username));
     group.add(umbrella);
+    const ballot = new THREE.Sprite(new THREE.SpriteMaterial({ map: ballotMap, transparent: true, depthWrite: false }));
+    ballot.position.set(1.7, 2.9, 0);
+    ballot.visible = false;
+    group.add(ballot);
     scene.add(group);
 
     return {
       umbrella,
+      ballot,
+      ballotOn: false,
+      ballotPopAt: -1,
+      reaction: null,
+      emoji: null,
       username: user.username,
       designKey: JSON.stringify(user.look),
       bodyMaterial,
@@ -795,6 +1011,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   function destroyCharacter(character: Character) {
     scene.remove(character.group);
+    character.ballot.material.dispose();
+    character.emoji?.material.dispose();
     character.label.element.remove();
     clearBody(character);
     character.umbrella.traverse((node) => {
@@ -911,7 +1129,19 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     raycaster.setFromCamera(pointer, camera);
     const meshes = [...characters.values()].map((c) => c.group);
     if (arcade) meshes.push(arcade);
-    const hit = raycaster.intersectObjects(meshes, true).find((h) => h.object.userData.username || h.object.userData.arcade);
+    if (noticeBoard) meshes.push(noticeBoard.group);
+    if (blimp.group.visible) meshes.push(blimp.group);
+    const hit = raycaster.intersectObjects(meshes, true).find(
+      (h) => h.object.userData.username || h.object.userData.arcade || h.object.userData.noticeBoard || h.object.userData.resultBanner,
+    );
+    if (hit?.object.userData.resultBanner && voteMarks?.result) {
+      onNoticeBoard(voteLink(voteMarks.result.vote.id));
+      return;
+    }
+    if (hit?.object.userData.noticeBoard && noticeBoard) {
+      onNoticeBoard(hit.object.userData.noticeFace && hit.uv ? noticeBoard.linkAt(hit.uv) : '/vote');
+      return;
+    }
     if (hit?.object.userData.arcade && arcadeSlot) {
       onArcade(arcadeSlot.querySelector<HTMLElement>('[data-arcade-play]') ?? arcadeSlot);
       return;
@@ -957,6 +1187,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       if (!character) {
         character = createCharacter(user, i * 0.7);
         characters.set(user.username, character);
+        markBallot(character, false);
         changed = true;
       }
       const designKey = JSON.stringify(user.look);
@@ -1002,7 +1233,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       const element = zoneLabels.get(id);
       return element ? [{ id, name, count, element }] : [];
     });
-    return { people: labelElements, zones, arcade: arcadeSlot };
+    return { people: labelElements, zones, arcade: arcadeSlot, board: noticeBoard?.slot ?? null };
   }
 
   // ---- Animation --------------------------------------------------------
@@ -1017,6 +1248,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       if (t >= 1) tween = null;
     }
     controls.update();
+
+    // Notes count down every half minute; ones in their last hour pulse.
+    if (time - boardDrawnAt > (boardPulsing ? 0.1 : 30)) drawBoard(time);
+    animateVoteMarks(time);
+    animateBursts(dt, time);
 
     for (const c of characters.values()) {
       const { group, inner } = c;
@@ -1044,6 +1280,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       } else {
         walk(c, dt, time);
       }
+      animateReaction(c, time);
 
       if (Math.abs(c.opacity - c.targetOpacity) > 0.005) {
         setOpacity(c, c.opacity + (c.targetOpacity - c.opacity) * Math.min(1, dt * 8));
@@ -1244,6 +1481,46 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       lampGlow.opacity = lamps * 0.85;
       lampLevel = lamps;
       applyNightLights();
+      blimp.setLit(lamps);
+    },
+
+    react(list) {
+      if (reducedMotion) return;
+      const time = performance.now() / 1000;
+      for (const { username, kind, ms } of list) {
+        const c = characters.get(username);
+        if (!c) continue;
+        c.reaction = { kind, start: time, end: time + ms / 1000 };
+        c.inner.rotation.z = 0;
+        if (kind === 'confetti') confettiAt(c.group.position, time);
+        if (kind === 'cheer' || kind === 'clap') {
+          const map = (emojiMaps[kind] ??= emojiTexture(kind === 'cheer' ? '🙌' : '👏'));
+          if (!c.emoji) {
+            c.emoji = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false }));
+            c.emoji.position.set(-1.7, 2.9, 0);
+            c.emoji.scale.setScalar(1.6);
+            c.group.add(c.emoji);
+          }
+          c.emoji.material.map = map;
+          c.emoji.visible = true;
+        } else if (c.emoji) {
+          c.emoji.visible = false;
+        }
+      }
+    },
+
+    setVoteMarks(marks) {
+      voteMarks = marks;
+      for (const c of characters.values()) markBallot(c, true);
+      const text = marks?.result ? resultText(marks.result) : '';
+      blimp.group.visible = Boolean(text);
+      if (text && text !== blimpText) blimp.setText(text);
+      blimpText = text;
+    },
+
+    setVotes(next) {
+      votes = next;
+      drawBoard(performance.now() / 1000);
     },
 
     setWandering(on) {
@@ -1280,6 +1557,12 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       for (const material of materials.values()) material.dispose();
       lampGlow.map?.dispose();
       lampGlow.dispose();
+      ballotMap.dispose();
+      for (const map of Object.values(emojiMaps)) map.dispose();
+      for (const burst of bursts) {
+        burst.points.geometry.dispose();
+        (burst.points.material as THREE.Material).dispose();
+      }
       for (const fall of [rain, snow]) {
         fall.geometry.dispose();
         const material = fall.material as THREE.PointsMaterial;

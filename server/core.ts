@@ -4,15 +4,6 @@
 
 import * as crypto from 'node:crypto';
 import {
-  MAX_ROUND_SCORE,
-  ROUND_MS,
-  replay,
-  rank,
-  weekKey,
-  type BasketballRecords,
-  type RecordScore,
-} from '../shared/basketball.ts';
-import {
   isHexColor,
   isOnFace,
   MAX_DRAWING_POINTS,
@@ -28,7 +19,6 @@ import type { AuthResult, Clock, OfficeLocation, Place, ScheduledChange, SunTime
 export type JsonBody = Record<string, unknown>;
 
 interface StoredUser {
-  basketballRound?: { ticket: string; digest?: string };
   username: string;
   nickname: string;
   place: string | null;
@@ -48,7 +38,6 @@ interface Settings {
 }
 
 export interface Data {
-  basketball?: BasketballRecords;
   secret: string;
   lastResetDate: string;
   places: Place[];
@@ -70,9 +59,32 @@ export interface ApiResponse {
   headers: Record<string, string>;
 }
 
+/** What a feature with its own data may ask the team's core (see AGENTS.md). */
+export interface Team {
+  /** Who sent the request, from their login token. Throws a 401 when nobody is logged in. */
+  player(req: ApiRequest): { username: string; pinVersion: number };
+  members(): string[];
+  /** Signs text with the team's secret. The purpose keeps signatures for different uses apart. */
+  sign(purpose: string, text: string): string;
+  /** Checks the x-admin-password header, with the same lockout as the admin page. Throws a 401 or 429. */
+  requireAdmin(req: ApiRequest): void;
+}
+
+/** A feature that keeps its own data but still belongs in the admin's one backup file. */
+export interface TeamFeature {
+  /** Its key in the backup file. */
+  key: string;
+  /** Its part of a backup, or undefined to leave the key out. */
+  backup(): unknown;
+  /** Checks its part of a backup (throw backupError) before anything changes, and returns how to restore it. */
+  checkBackup(value: unknown, usernames: ReadonlySet<string>): () => Promise<void>;
+  /** Drops what it keeps about people who were deleted. */
+  forget(usernames: string[]): Promise<void>;
+}
+
 export interface CoreOptions {
   saved: Partial<Data> | null; // What was stored last time, or null on a first run.
-  save: (data: Data) => void | Promise<void>;
+  save: (data: Data) => void;
   onChange: (state: TeamState) => void; // Tell connected maps about the new state.
   adminPassword: string;
   resetAt?: string;
@@ -144,6 +156,17 @@ export class ApiError extends Error {
   }
 }
 
+export function backupError(why: string): ApiError {
+  return new ApiError(400, `That backup can't be imported: ${why}`);
+}
+
+// Compares secrets in constant time, so the time taken gives nothing away.
+export function safeEqual(a: unknown, b: unknown): boolean {
+  const ab = crypto.createHash('sha256').update(String(a)).digest();
+  const bb = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(ab, bb);
+}
+
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -154,6 +177,15 @@ export function jsonResponse(status: number, body: unknown, headers: Record<stri
     body,
     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
   };
+}
+
+// Turns an error into a JSON reply. Only an ApiError's message is shown to people.
+export function errorResponse(err: unknown): ApiResponse {
+  if (err instanceof ApiError) {
+    return jsonResponse(err.status, { error: err.message }, err.retryAfter ? { 'Retry-After': String(err.retryAfter) } : {});
+  }
+  console.error(err);
+  return jsonResponse(500, { error: 'Something went wrong on the server.' });
 }
 
 // ---- Date helpers -------------------------------------------------------
@@ -295,8 +327,8 @@ function savedSchedule(value: unknown, placeIds: Set<string>): ScheduledChange |
 
 // Checks a data.json backup before it replaces everything, and returns a clean copy.
 // Leaves out the secret when the backup has none, so the current one is kept.
-function checkBackup(value: unknown): Partial<Data> {
-  const invalid = (why: string) => new ApiError(400, `That backup can't be imported: ${why}`);
+function checkBackup(value: unknown): Partial<Data> & { users: StoredUser[] } {
+  const invalid = backupError;
   if (!isObject(value) || !Array.isArray(value.users)) throw invalid('it has no list of users.');
 
   const places = value.places ?? DEFAULT_PLACES;
@@ -322,8 +354,6 @@ function checkBackup(value: unknown): Partial<Data> {
       throw invalid(`${name}'s character is not valid.`);
     }
     return {
-      ...(isObject(u.basketballRound) && typeof u.basketballRound.ticket === 'string' && u.basketballRound.ticket.length <= 1024 &&
-        (u.basketballRound.digest === undefined || typeof u.basketballRound.digest === 'string') ? { basketballRound: { ticket: u.basketballRound.ticket, digest: u.basketballRound.digest as string | undefined } } : {}),
       username: name,
       nickname: typeof u.nickname === 'string' && u.nickname.trim() ? u.nickname.trim() : name,
       // Places that no longer exist count as not checked in.
@@ -348,17 +378,8 @@ function checkBackup(value: unknown): Partial<Data> {
   if (lastResetDate !== undefined && (typeof lastResetDate !== 'string' || !/^(\d{4}-\d{2}-\d{2})?$/.test(lastResetDate))) {
     throw invalid('its last reset date is not valid.');
   }
-  const backup: Partial<Data> = { places: places as Place[], users, settings, lastResetDate: lastResetDate ?? '' };
+  const backup: Partial<Data> & { users: StoredUser[] } = { places: places as Place[], users, settings, lastResetDate: lastResetDate ?? '' };
   if (typeof value.secret === 'string' && value.secret) backup.secret = value.secret;
-  if (value.basketball !== undefined) {
-    const b = value.basketball;
-    const valid = (rows: unknown): rows is RecordScore[] => Array.isArray(rows) && rows.length <= users.length &&
-      new Set(rows.map(r => isObject(r) ? r.username : null)).size === rows.length && rows.every(r =>
-        isObject(r) && users.some(u => u.username === r.username) && Number.isInteger(r.score) &&
-        (r.score as number) >= 0 && (r.score as number) <= MAX_ROUND_SCORE && typeof r.at === 'string' && Number.isFinite(Date.parse(r.at)));
-    if (!isObject(b) || typeof b.week !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.week) || !valid(b.allTime) || !valid(b.weekly)) throw invalid('its basketball records are not valid.');
-    backup.basketball = { week: b.week, allTime: b.allTime, weekly: b.weekly };
-  } else backup.basketball = undefined;
   return backup;
 }
 
@@ -379,7 +400,6 @@ export function createCore({
   if (timeZone !== undefined && !isTimeZone(timeZone)) throw new Error(`Unknown time zone: ${timeZone}`);
 
   const data: Data = {
-    basketball: saved?.basketball,
     secret: saved?.secret || crypto.randomBytes(32).toString('hex'),
     places: saved?.places || DEFAULT_PLACES,
     users: saved?.users || [],
@@ -568,12 +588,6 @@ export function createCore({
     return safeEqual(crypto.scryptSync(pin, salt, 32).toString('hex'), hash);
   }
 
-  function safeEqual(a: unknown, b: unknown): boolean {
-    const ab = crypto.createHash('sha256').update(String(a)).digest();
-    const bb = crypto.createHash('sha256').update(String(b)).digest();
-    return crypto.timingSafeEqual(ab, bb);
-  }
-
   function signature(user: StoredUser): string {
     return crypto
       .createHmac('sha256', data.secret)
@@ -646,14 +660,23 @@ export function createCore({
     return [...data.places.map((p) => p.id), ...FIXED_PLACES];
   }
 
-  let gameWrite: Promise<unknown> = Promise.resolve();
-  function boards(): BasketballRecords {
-    const week = weekKey(now());
-    const members = (rows: RecordScore[]) => rank(rows.filter(r => data.users.some(u => u.username === r.username)));
-    return { week, allTime: members(data.basketball?.allTime ?? []), weekly: members(data.basketball?.week === week ? data.basketball.weekly : []) };
-  }
-  function signRound(payload: string): string {
-    return crypto.createHmac('sha256', data.secret).update(`basketball:${payload}`).digest('hex');
+  // ---- Features with their own data -------------------------------------
+
+  const features: TeamFeature[] = [];
+
+  const team: Team = {
+    player: (req) => {
+      const { username, pinVersion } = userFromToken(req);
+      return { username, pinVersion };
+    },
+    members: () => data.users.map((u) => u.username),
+    sign: (purpose, text) => crypto.createHmac('sha256', data.secret).update(`${purpose}:${text}`).digest('hex'),
+    requireAdmin,
+  };
+
+  // Adds a feature's data to backups and restores, and tells it when people are deleted.
+  function attach(feature: TeamFeature): void {
+    features.push(feature);
   }
 
   // ---- Routes -----------------------------------------------------------
@@ -661,92 +684,6 @@ export function createCore({
   async function route(req: ApiRequest): Promise<ApiResponse> {
     const { url } = req;
     const route = `${req.method} ${url.pathname}`;
-
-    if (route === 'GET /api/basketball') return jsonResponse(200, boards());
-    if (route === 'POST /api/basketball/round') {
-      const user = userFromToken(req);
-      const seed = crypto.randomInt(0x100000000);
-      const payload = Buffer.from(JSON.stringify({
-        rules: 2,
-        username: user.username,
-        version: user.pinVersion,
-        start: now().getTime(),
-        seed,
-        nonce: crypto.randomBytes(12).toString('hex'),
-      })).toString('base64url');
-      const ticket = `${payload}.${signRound(payload)}`;
-      const write = gameWrite.then(async () => {
-        const basketballRound = { ticket };
-        const previousRound = user.basketballRound;
-        user.basketballRound = basketballRound;
-        try {
-          // Any interleaved team save must include the pending round too.
-          await store(data);
-        } catch (error) {
-          if (user.basketballRound === basketballRound) user.basketballRound = previousRound;
-          throw error;
-        }
-        return jsonResponse(201, { seed, ticket });
-      });
-      gameWrite = write.catch(() => {});
-      return await write;
-    }
-    if (route === 'POST /api/basketball/score') {
-      const user = userFromToken(req);
-      const { ticket, shots } = await req.readJson();
-      if (typeof ticket !== 'string' || ticket.length > 1024) throw new ApiError(400, 'Invalid round ticket.');
-      const [payload = '', sig = ''] = ticket.split('.');
-      if (!safeEqual(sig, signRound(payload))) throw new ApiError(400, 'Invalid round ticket.');
-      let round;
-      try {
-        round = JSON.parse(Buffer.from(payload, 'base64url').toString());
-      } catch {
-        throw new ApiError(400, 'Invalid round ticket.');
-      }
-      if (round.rules !== 2) throw new ApiError(400, 'Round rules changed. Start a new round.');
-      const age = now().getTime() - round.start;
-      if (round.username !== user.username || round.version !== user.pinVersion || age < ROUND_MS || age > 86400000) {
-        throw new ApiError(400, 'Round is unfinished or expired.');
-      }
-      let result;
-      try {
-        result = replay(shots, round.seed);
-      } catch {
-        throw new ApiError(400, 'Invalid shot timing.');
-      }
-      const score = result.score;
-      const digest = crypto.createHash('sha256').update(JSON.stringify(shots)).digest('hex');
-      const write = gameWrite.then(async () => {
-        if (user.basketballRound?.ticket !== ticket || (user.basketballRound.digest && user.basketballRound.digest !== digest)) {
-          throw new ApiError(409, 'This round has already ended or been replaced.');
-        }
-        const current = boards();
-        const entry = { username: user.username, score, at: new Date(round.start).toISOString() };
-        const best = (rows: RecordScore[]) => rank([...rows.filter(r => r.username !== user.username), rows.find(r => r.username === user.username && r.score >= score) ?? entry]);
-        const next = {
-          week: current.week,
-          allTime: best(current.allTime),
-          weekly: weekKey(new Date(round.start)) === current.week ? best(current.weekly) : current.weekly,
-        };
-        // Wait for durable storage before acknowledging; failed writes leave retry possible.
-        const previousRound = user.basketballRound;
-        const previousRecords = data.basketball;
-        const basketballRound = { ticket, digest };
-        user.basketballRound = basketballRound;
-        data.basketball = next;
-        try {
-          await store(data);
-        } catch (error) {
-          // Restore only these fields, preserving interleaved team/admin changes.
-          if (user.basketballRound === basketballRound) user.basketballRound = previousRound;
-          if (data.basketball === next) data.basketball = previousRecords;
-          throw error;
-        }
-        return jsonResponse(200, { score, ...next });
-      });
-      gameWrite = write.catch(() => {});
-      return await write;
-    }
 
     if (route === 'GET /api/state') return jsonResponse(200, publicState());
 
@@ -771,14 +708,20 @@ export function createCore({
     }
 
     // The whole data file, PINs and secret included, for backups and moving servers.
+    // Each attached feature adds its own data under its key.
     if (route === 'GET /api/admin/data') {
       requireAdmin(req);
-      return jsonResponse(200, data, { 'Content-Disposition': 'attachment; filename="data.json"' });
+      const parts = Object.fromEntries(features.map((f) => [f.key, f.backup()]));
+      return jsonResponse(200, { ...data, ...parts }, { 'Content-Disposition': 'attachment; filename="data.json"' });
     }
 
     if (route === 'PUT /api/admin/data') {
       requireAdmin(req);
-      const backup = checkBackup(await req.readJson(MAX_BACKUP));
+      const body = await req.readJson(MAX_BACKUP);
+      const backup = checkBackup(body);
+      // Every part is checked before anything changes, so a bad backup changes nothing.
+      const usernames = new Set(backup.users.map((u) => u.username));
+      const restores = features.map((f) => f.checkBackup(body[f.key], usernames));
       Object.assign(data, backup);
       failures.clear();
       weather = null;
@@ -786,6 +729,7 @@ export function createCore({
       // an earlier day gets the morning reset it missed.
       const wasReset = runResetIfDue();
       if (!runScheduledIfDue() && !wasReset) commit();
+      for (const restore of restores) await restore();
       void refreshWeather();
       return jsonResponse(200, { ok: true, users: data.users.length });
     }
@@ -825,8 +769,8 @@ export function createCore({
         requireAdmin(req);
         const user = mustFindUser(username);
         data.users.splice(data.users.indexOf(user), 1);
-        if (data.basketball) data.basketball = boards();
         commit();
+        for (const feature of features) await feature.forget([user.username]);
         return jsonResponse(200, { ok: true });
       }
       if (req.method === 'POST' && adminMatch[2]) {
@@ -903,11 +847,7 @@ export function createCore({
     try {
       return await route(req);
     } catch (err) {
-      if (err instanceof ApiError) {
-        return jsonResponse(err.status, { error: err.message }, err.retryAfter ? { 'Retry-After': String(err.retryAfter) } : {});
-      }
-      console.error(err);
-      return jsonResponse(500, { error: 'Something went wrong on the server.' });
+      return errorResponse(err);
     }
   }
 
@@ -915,6 +855,8 @@ export function createCore({
     handle,
     publicState,
     save,
+    team,
+    attach,
     runResetIfDue,
     runScheduledIfDue,
     nextScheduledAt,

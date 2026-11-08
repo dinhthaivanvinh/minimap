@@ -4,6 +4,8 @@ import { AssemblePlay } from '../components/AssemblyDecor.tsx';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import styled, { css } from 'styled-components';
+import { mapSummary, resultText, type VoteView } from '../../shared/vote.ts';
+import { voteLink } from '../lib/noticeBoard.ts';
 import { Badge, BadgeName } from '../components/Badge.tsx';
 import { useReducedMotion } from '../lib/hooks.ts';
 import { media, theme } from '../styles/theme.ts';
@@ -11,6 +13,7 @@ import { Button } from '../styles/ui.ts';
 import { createScene3D, type CameraState, type Scene3D, type ZoneLabelSlot } from './scene3d.ts';
 import type { MapProps } from './types.ts';
 import { ArcadePlay } from './ArcadeCabinet.tsx';
+import { NoticeBoardLink } from './NoticeBoard2D.tsx';
 import { Clouds } from './Weather2D.tsx';
 
 const View = styled.div<{ $namesOff: boolean }>`
@@ -128,6 +131,32 @@ const CameraHint = styled.p`
   }
 `;
 
+const ResultLink = styled.a`
+  position: absolute;
+  left: 12px;
+  bottom: 36px;
+  z-index: 6;
+  padding: 2px 10px;
+  border: ${theme.thinLine};
+  border-radius: 10px;
+  background: ${theme.butter};
+  font-weight: 800;
+  text-decoration: none;
+
+  &:not(:focus) {
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+`;
+
+function boardLabel(votes: VoteView[]): string {
+  const open = mapSummary(votes, new Date()).length;
+  return `Notice board: ${open || 'no'} open ${open === 1 ? 'vote' : 'votes'}. Open team votes`;
+}
+
 interface Map3DProps extends MapProps {
   /** The 3D map can't keep drawing, so show something else. */
   onFail: () => void;
@@ -142,6 +171,9 @@ export default function Map3D({
   onArcade,
   onAssemble,
   look,
+  votes,
+  voteMarks,
+  reactions,
   onFail,
 }: Map3DProps) {
   const attendance = officeAssembly(state);
@@ -149,6 +181,7 @@ export default function Map3D({
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene3D | null>(null);
   const [arcadeSlot, setArcadeSlot] = useState<HTMLElement | null>(null);
+  const [boardSlot, setBoardSlot] = useState<HTMLElement | null>(null);
   const onArcadeRef = useRef(onArcade);
   onArcadeRef.current = onArcade;
   const [personLabels, setPersonLabels] = useState<ReadonlyMap<string, HTMLElement>>(new Map());
@@ -169,6 +202,7 @@ export default function Map3D({
     const scene = createScene3D(stage, {
       onCamera: setCamera,
       onArcade: (trigger) => onArcadeRef.current(trigger),
+      onNoticeBoard: (link) => location.assign(link),
       onContextGone: () => onFailRef.current(),
       // Clicking a character opens the same card as clicking its badge.
       onPick: (username, label) =>
@@ -181,17 +215,31 @@ export default function Map3D({
       setPersonLabels(new Map());
       setZoneLabels([]);
       setArcadeSlot(null);
+      setBoardSlot(null);
     };
   }, []);
 
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    const { people, zones, arcade } = scene.update(state, isDimmed);
+    const { people, zones, arcade, board } = scene.update(state, isDimmed);
     setPersonLabels(people);
     setZoneLabels(zones);
     setArcadeSlot(arcade);
+    setBoardSlot(board);
   }, [state, isDimmed]);
+
+  useEffect(() => {
+    sceneRef.current?.setVotes(votes);
+  }, [votes]);
+
+  useEffect(() => {
+    sceneRef.current?.setVoteMarks(voteMarks);
+  }, [voteMarks]);
+
+  useEffect(() => {
+    if (reactions) sceneRef.current?.react(reactions.list);
+  }, [reactions]);
 
   useEffect(() => {
     if (focus) sceneRef.current?.focus(focus.username);
@@ -253,6 +301,19 @@ export default function Map3D({
           </ArcadePlay>,
           arcadeSlot,
         )}
+
+      {boardSlot &&
+        createPortal(
+          <NoticeBoardLink href="/vote" data-notice-board="3d" aria-label={boardLabel(votes)}>
+            Votes
+          </NoticeBoardLink>,
+          boardSlot,
+        )}
+
+      {/* The blimp's banner for keyboards and screen readers: it shows when focused. */}
+      {voteMarks?.result && (
+        <ResultLink href={voteLink(voteMarks.result.vote.id)}>{resultText(voteMarks.result)}</ResultLink>
+      )}
 
       {zoneLabels.map((zone) =>
         createPortal(

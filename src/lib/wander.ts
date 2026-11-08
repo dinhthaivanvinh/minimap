@@ -139,3 +139,10 @@ export function crosses(from: Point, to: Point, b: Box): boolean {
   }
   return true;
 }
+
+/** How high a happy hop is, `t` seconds into one that lasts `length` seconds: up once and back down. */
+export function hopHeight(t: number, length: number, height = 1.4): number {
+  if (t <= 0 || t >= length) return 0;
+  const k = t / length;
+  return 4 * height * k * (1 - k);
+}

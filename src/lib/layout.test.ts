@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Place, TeamUser } from '../../shared/types.ts';
-import { computeLayout, isNotWorking, placeGroup, placeName, shareLength, type Zone } from './layout.ts';
+import { computeLayout, isNotWorking, noticeBoardSpot, placeGroup, placeName, shareLength, standingArea, type Zone } from './layout.ts';
 
 const office = (id: string): Place => ({ id, name: id, kind: 'office' });
 const TWO_OFFICES = [office('main'), office('other')];
@@ -50,6 +50,23 @@ for (const portrait of [false, true]) {
         const { x, y, w, h } = seat.zone;
         assert.ok(seat.x >= x && seat.x <= x + w && seat.y >= y && seat.y <= y + h, `${person.username} of ${count}`);
       }
+    }
+  });
+}
+
+for (const portrait of [false, true]) {
+  test(`${portrait ? 'portrait' : 'landscape'} town: the notice board stands in the lobby, clear of the people waiting there`, () => {
+    for (const count of [0, 3, 12, 40]) {
+      const people = Array.from({ length: count }, (_, i) => user(`u${i}`, null));
+      const layout = computeLayout(TWO_OFFICES, people, { portrait });
+      const lobby = layout.zones.find((z) => z.id === 'lobby')!;
+      const board = noticeBoardSpot(layout)!;
+      assert.ok(board.x >= lobby.x && board.x + board.w <= lobby.x + lobby.w && board.y >= lobby.y && board.y + board.h <= lobby.y + lobby.h, `${count} waiting`);
+      assert.ok(board.w >= 10 && board.h >= 8, 'big enough to read');
+      const area = standingArea(lobby);
+      assert.ok(area.x + area.w <= board.x, 'nobody stands in front of it');
+      assert.ok(area.w > 5, 'and there is still room to stand');
+      for (const seat of layout.seats.values()) assert.ok(seat.x < board.x, `${count} waiting: a seat is clear of the board`);
     }
   });
 }
@@ -112,7 +129,7 @@ test('people in the small rooms stay inside them', () => {
 
 test('Not checked in stays small unless people are in it', () => {
   const { w: emptyWidth } = zoneOf({ main: 15 }, 'lobby');
-  assert.equal(emptyWidth, 20, 'an empty lobby is only as wide as its name');
+  assert.equal(emptyWidth, 33, 'an empty lobby is only as wide as its name, plus the notice board');
   assert.ok(zoneOf({ lobby: 6 }, 'lobby').w > emptyWidth, 'it still grows for people');
 });
 
