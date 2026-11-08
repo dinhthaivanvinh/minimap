@@ -5,6 +5,8 @@ import { ASSEMBLY_MS, heroGrid, heroPose, heroFormation } from '../lib/assembly.
 import { useReducedMotion } from '../lib/hooks.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
 import { Mochi } from './Mochi.tsx';
+import { AssemblyProp } from './AssemblyProp.tsx';
+import { assemblyProp } from '../lib/assemblyProps.ts';
 export interface AssemblyCast {
   members: TeamUser[];
   total: number;
@@ -157,6 +159,11 @@ const Lineup = styled.div<{ $columns: number; $rows: number }>`
 const rimSpin = keyframes`
   to { transform: rotate(360deg); }
 `;
+const emberDrift = keyframes`
+  from { transform: scale(0.5); opacity: 0; }
+  20% { opacity: 1; }
+  to { transform: translate(var(--drift-x), var(--drift-y)) scale(0); opacity: 0; }
+`;
 const Hero = styled.div`
   position: absolute;
   width: var(--hero-size);
@@ -174,12 +181,20 @@ const Hero = styled.div`
     filter: contrast(1.2) saturate(0.85) drop-shadow(-4px 0 5px #38d4ef55) drop-shadow(5px 1px 5px #ff6c2744)
       drop-shadow(0 18px 8px #000b);
   }
-  .cape {
+  .signature-prop {
     position: absolute;
-    z-index: -1;
-    inset: 20% -13% 14%;
-    clip-path: polygon(36% 0, 64% 0, 100% 100%, 68% 90%, 51% 100%, 28% 88%, 0 100%);
-    background: linear-gradient(100deg, #143749, #1e222e 50%, #8c452d);
+    width: 42%;
+    height: 42%;
+    right: -3%;
+    bottom: 2%;
+    filter: drop-shadow(0 4px 3px #0008);
+    overflow: visible;
+  }
+  .prop-box-frame {
+    width: 80%;
+    height: 49%;
+    right: 10%;
+    bottom: -2%;
   }
   .impact {
     position: absolute;
@@ -204,22 +219,46 @@ const Hero = styled.div`
       0 0 25px #ffb85c,
       inset 0 0 18px #72ecd0;
     pointer-events: none;
-    &::after {
-      content: '';
+    .sigil-ring {
       position: absolute;
       inset: -5px;
       border: 3px dashed #ffe1aa;
       border-radius: 50%;
       box-shadow: 0 0 9px #ffad68;
-      animation: ${rimSpin} 1.1s linear infinite;
+      animation: ${rimSpin} 2.4s linear infinite;
+      animation-play-state: inherit;
+    }
+    .ring-inner {
+      inset: 9%;
+      border: 2px dotted #80e4f1;
+      animation-duration: 3.3s;
+      animation-direction: reverse;
+    }
+    .ring-marks {
+      inset: 2%;
+      border: 9px solid transparent;
+      background: repeating-conic-gradient(#ffd48b 0deg 3deg, transparent 3deg 20deg) border-box;
+      mask: radial-gradient(circle, transparent 63%, #000 64% 69%, transparent 70%);
+      animation-duration: 4.7s;
+    }
+    .ember {
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: #ffce85;
+      box-shadow: 0 0 6px #ff9b3d;
+      animation: ${emberDrift} 0.8s linear infinite;
       animation-play-state: inherit;
     }
     @media (prefers-reduced-motion: reduce) {
-      &::after {
+      .sigil-ring,
+      .ember {
         animation: none;
       }
     }
   }
+
   span {
     display: block;
     position: relative;
@@ -413,7 +452,29 @@ export function TeamAssemble({
                       transform: `scale(${pose.portalScale})`,
                       animationPlayState: pose.portal > 0 && !reduced ? 'running' : 'paused',
                     }}
-                  />
+                  >
+                    <i className="sigil-ring" />
+                    <i className="sigil-ring ring-inner" />
+                    <i className="sigil-ring ring-marks" />
+                    {Array.from({ length: 12 }, (_, spark) => {
+                      const angle = (spark / 12) * Math.PI * 2;
+                      return (
+                        <i
+                          key={spark}
+                          className="ember"
+                          style={
+                            {
+                              left: `${50 + Math.cos(angle) * 50}%`,
+                              top: `${50 + Math.sin(angle) * 50}%`,
+                              animationDelay: `${-spark * 0.067}s`,
+                              '--drift-x': `${Math.cos(angle) * 28}px`,
+                              '--drift-y': `${Math.sin(angle) * 28 - 8}px`,
+                            } as import('react').CSSProperties
+                          }
+                        />
+                      );
+                    })}
+                  </div>
                   <div
                     className="impact"
                     aria-hidden="true"
@@ -427,10 +488,10 @@ export function TeamAssemble({
                       transform: `translateY(${pose.y}px) scale(${pose.scale}) rotate(${pose.lean}deg)`,
                     }}
                   >
-                    <div className="cape" aria-hidden="true" />
                     <div className="figure">
                       <Mochi user={user} />
                     </div>
+                    <AssemblyProp item={assemblyProp(index)} />
                   </div>
                   <span style={{ fontSize: 11 / formation.scale, opacity: pose.opacity }}>
                     {user.nickname || user.username}

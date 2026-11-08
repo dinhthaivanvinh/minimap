@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { TeamUser } from '../../shared/types.ts';
 import { heroPose, heroFormation } from '../lib/assembly.ts';
+import { assemblyProp } from '../lib/assemblyProps.ts';
 import { createCharacterBuilder, type CharacterTools } from '../map/character3d.ts';
 
 export default function TeamAssemble3D(props: {
@@ -130,24 +131,78 @@ export default function TeamAssemble3D(props: {
         inner = new THREE.Group();
       group.add(inner);
       materials.add(build(inner, user));
-      const capeGeo = new THREE.BufferGeometry();
-      capeGeo.setAttribute(
-        'position',
-        new THREE.Float32BufferAttribute(
-          [-1, 2.25, -0.75, 1, 2.25, -0.75, 1.8, 0.1, -1.4, -1.8, 0.1, -1.4],
-          3,
-        ),
-      );
-      capeGeo.setIndex([0, 1, 2, 0, 2, 3]);
-      capeGeo.computeVertexNormals();
-      const capeMat = new THREE.MeshStandardMaterial({
-        color: index % 2 ? 0x163c4c : 0x722f28,
-        side: THREE.DoubleSide,
-        roughness: 0.7,
-      });
-      materials.add(capeMat);
-      const cape = mesh(capeGeo, capeMat);
-      inner.add(cape);
+      const prop = new THREE.Group();
+      prop.position.set(0.95, 0.65, 1.05);
+      prop.rotation.z = -0.12;
+      inner.add(prop);
+      const box = (w: number, h: number, d: number, color: number, x = 0, y = 0, z = 0) => {
+        const part = mesh(new THREE.BoxGeometry(w, h, d), color, { x, y, z });
+        prop.add(part);
+        return part;
+      };
+      const cylinder = (radius: number, height: number, color: number, x = 0, y = 0, z = 0) => {
+        const part = mesh(new THREE.CylinderGeometry(radius, radius, height, 16), color, { x, y, z });
+        prop.add(part);
+        return part;
+      };
+      switch (assemblyProp(index)) {
+        case 'badge': {
+          const badge = cylinder(0.57, 0.12, 0xe6b25b);
+          badge.rotation.x = Math.PI / 2;
+          const canvas = document.createElement('canvas');
+          canvas.width = canvas.height = 128;
+          const ctx = canvas.getContext('2d')!;
+          ctx.fillStyle = '#fff0c5';
+          ctx.fillRect(0, 0, 128, 128);
+          ctx.fillStyle = '#243746';
+          ctx.textAlign = 'center';
+          ctx.font = '900 44px sans-serif';
+          ctx.fillText('#1', 64, 61);
+          ctx.font = '900 15px sans-serif';
+          ctx.fillText('EMPLOYEE', 64, 86);
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          textures.add(texture);
+          const labelMat = new THREE.MeshToonMaterial({ map: texture, gradientMap: ramp });
+          materials.add(labelMat);
+          prop.add(mesh(new THREE.CircleGeometry(0.48, 24), labelMat, { z: 0.07 }));
+          break;
+        }
+        case 'stapler':
+          box(0.19, 0.9, 0.2, 0xd5b47e, 0, -0.2);
+          box(1.2, 0.22, 0.4, 0x42a8b5, 0, 0.5);
+          box(1.2, 0.12, 0.4, 0xe7cfa1, 0, 0.08);
+          box(0.17, 0.4, 0.4, 0xe7cfa1, -0.5, 0.28);
+          prop.rotation.z = 0.4;
+          break;
+        case 'box-frame':
+          prop.position.set(0, 0.55, 1.1);
+          box(2.1, 0.25, 0.32, 0xbf915d, 0, 0.35);
+          box(2.1, 0.3, 0.32, 0xbf915d, 0, -0.4);
+          box(0.3, 0.8, 0.32, 0xbf915d, -0.9);
+          box(0.3, 0.8, 0.32, 0xbf915d, 0.9);
+          box(0.4, 0.14, 0.05, 0x7ccbd3, 0, -0.4, 0.19);
+          box(0.14, 0.25, 0.04, 0xf5d7a0, 0, 0.35, 0.19);
+          break;
+        case 'travel-mug':
+          cylinder(0.32, 0.85, 0x57bac4);
+          cylinder(0.36, 0.12, 0x243746, 0, 0.47);
+          box(0.22, 0.4, 0.08, 0xffe5ac, 0, 0, 0.31);
+          box(0.3, 0.09, 0.17, 0xe3b160, 0.43, 0.23);
+          box(0.09, 0.48, 0.17, 0xe3b160, 0.55);
+          box(0.3, 0.09, 0.17, 0xe3b160, 0.43, -0.23);
+          break;
+        case 'review-axe': {
+          cylinder(0.08, 1.5, 0xd6aa70, 0, -0.1);
+          const paper = cylinder(0.13, 0.8, 0xfff1d1, 0.3, 0.48);
+          paper.rotation.z = Math.PI / 2;
+          box(0.55, 0.5, 0.08, 0xfff1d1, 0.35, 0.2);
+          for (let line = 0; line < 3; line++)
+            box(0.35 - line * 0.07, 0.025, 0.02, 0x61aeb9, 0.35, 0.32 - line * 0.1, 0.055);
+          prop.rotation.z = -0.35;
+          break;
+        }
+      }
       scene.add(group);
       const tag = document.createElement('div');
       tag.textContent = user.nickname || user.username;
@@ -167,7 +222,7 @@ export default function TeamAssemble3D(props: {
       label.center.set(0.5, 0);
       group.add(label);
       const portalMat = new THREE.MeshBasicMaterial({
-        color: index % 2 ? 0xff8735 : 0x4cdcff,
+        color: 0xffa34f,
         blending: THREE.AdditiveBlending,
         transparent: true,
         opacity: 0,
@@ -194,6 +249,34 @@ export default function TeamAssemble3D(props: {
       const shimmer = mesh(new THREE.CircleGeometry(1.68, 64), shimmerMat, { shadow: false });
       shimmer.receiveShadow = false;
       portal.add(shimmer);
+      const accentMat = new THREE.MeshBasicMaterial({
+        color: 0x79deee,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      materials.add(accentMat);
+      const rings = [new THREE.Group(), new THREE.Group()];
+      rings.forEach((ring, layer) => {
+        const radius = layer === 0 ? 1.47 : 1.94;
+        const ringMat = layer === 0 ? accentMat : portalMat;
+        const hoop = mesh(new THREE.TorusGeometry(radius, 0.018, 6, 64), ringMat, { shadow: false });
+        hoop.receiveShadow = false;
+        ring.add(hoop);
+        for (let tick = 0; tick < 24; tick++) {
+          const a = (tick / 24) * Math.PI * 2;
+          const mark = mesh(new THREE.BoxGeometry(0.035, tick % 3 === 0 ? 0.16 : 0.08, 0.02), ringMat, {
+            x: Math.cos(a) * radius,
+            y: Math.sin(a) * radius,
+            shadow: false,
+          });
+          mark.rotation.z = a - Math.PI / 2;
+          mark.receiveShadow = false;
+          ring.add(mark);
+        }
+        portal.add(ring);
+      });
       const sparks = new Float32Array(80 * 3);
       for (let j = 0; j < 80; j++) {
         const a = (j / 80) * Math.PI * 2,
@@ -201,9 +284,17 @@ export default function TeamAssemble3D(props: {
         sparks.set([Math.cos(a) * r, Math.sin(a) * r, 0], j * 3);
       }
       const sparkGeo = new THREE.BufferGeometry();
-      sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparks, 3));
+      sparkGeo.setAttribute(
+        'position',
+        new THREE.BufferAttribute(sparks, 3).setUsage(THREE.DynamicDrawUsage),
+      );
+      sparkGeo.setAttribute(
+        'color',
+        new THREE.BufferAttribute(new Float32Array(80 * 3), 3).setUsage(THREE.DynamicDrawUsage),
+      );
       const sparkMat = new THREE.PointsMaterial({
-        color: index % 2 ? 0xffb46b : 0x83eeff,
+        color: 0xffffff,
+        vertexColors: true,
         size: 0.075,
         transparent: true,
         blending: THREE.AdditiveBlending,
@@ -224,7 +315,22 @@ export default function TeamAssemble3D(props: {
       impact.castShadow = false;
       impact.receiveShadow = false;
       scene.add(impact);
-      return { group, inner, portal, portalMat, shimmerMat, sparkMat, impact, impactMat, size, x, z };
+      return {
+        group,
+        inner,
+        portal,
+        portalMat,
+        shimmerMat,
+        sparkMat,
+        sparkGeo,
+        accentMat,
+        rings,
+        impact,
+        impactMat,
+        size,
+        x,
+        z,
+      };
     });
     let cameraDistance = 24;
     const resize = () => {
@@ -269,6 +375,22 @@ export default function TeamAssemble3D(props: {
         hero.portalMat.opacity = pose.portal * 0.95;
         hero.shimmerMat.opacity = pose.portal * (0.18 + Math.sin(pose.progress * Math.PI * 12) * 0.06);
         hero.sparkMat.opacity = pose.portal;
+        hero.accentMat.opacity = pose.portal * 0.8;
+        hero.rings[0]!.rotation.z = -pose.portalRotation * 1.8;
+        hero.rings[1]!.rotation.z = pose.portalRotation * 0.5;
+        if (pose.portal && !reduced) {
+          const positions = hero.sparkGeo.getAttribute('position');
+          const colors = hero.sparkGeo.getAttribute('color');
+          for (let spark = 0; spark < positions.count; spark++) {
+            const life = (pose.progress * 4 + spark * 0.618) % 1;
+            const angle = (spark / positions.count) * Math.PI * 2;
+            const radius = 1.75 + life * 0.7;
+            positions.setXYZ(spark, Math.cos(angle) * radius, Math.sin(angle) * radius + life * 0.18, 0.03);
+            const fade = Math.sin(life * Math.PI) * (1 - life);
+            colors.setXYZ(spark, fade, fade * 0.6, fade * 0.22);
+          }
+          positions.needsUpdate = colors.needsUpdate = true;
+        }
         hero.impactMat.opacity = pose.impact * 0.7;
         hero.impact.scale.setScalar(1 + (1 - pose.impact) * 3);
         hero.portal.rotation.z = pose.portalRotation + index;
