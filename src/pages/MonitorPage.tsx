@@ -1,5 +1,5 @@
 // Monitor page: filters, the people list, and switching between 2D and 3D.
-import { TeamAssemble, type AssemblyCast } from '../components/TeamAssemble.tsx';
+import type { AssemblyCast } from '../components/TeamAssemble.tsx';
 import { officeAssembly } from '../lib/assembly.ts';
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
@@ -21,7 +21,8 @@ import { Button, Count, Segmented, Wordmark } from '../styles/ui.ts';
 
 // three.js is large, so it only loads when someone opens the 3D map.
 const Map3D = lazy(() => import('../map/Map3D.tsx'));
-// The arcade is a whole game, so it only loads when someone presses Play.
+// The celebration and arcade load only when their map buttons are pressed.
+const TeamAssemble = lazy(() => import('../components/TeamAssemble.tsx').then((m) => ({ default: m.TeamAssemble })));
 const Basketball = lazy(() => import('../components/Basketball.tsx').then((m) => ({ default: m.Basketball })));
 
 const MODE_KEY = 'minimap.mode';
@@ -565,7 +566,13 @@ export function MonitorPage() {
         </Side>
       </Stage>
 
-      {assemblyCast && <TeamAssemble cast={assemblyCast} initialView={mode} onClose={closeAssembly}/>}
+      {assemblyCast && (
+        <Guard what="the team assembly" onFail={closeAssembly}>
+          <Suspense fallback={null}>
+            <TeamAssemble cast={assemblyCast} initialView={mode} onClose={closeAssembly}/>
+          </Suspense>
+        </Guard>
+      )}
 
       {state && pickerOpen && <RandomPicker users={users} initialView={mode} onClose={closePicker} />}
 

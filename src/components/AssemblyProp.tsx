@@ -1,3 +1,4 @@
+// Flat office-themed equipment for the assembly mascots.
 import { useId } from 'react';
 import { ASSEMBLY_PROP_NAMES, type AssemblyProp as Prop } from '../lib/assemblyProps.ts';
 

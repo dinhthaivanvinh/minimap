@@ -1,3 +1,4 @@
+// 3D assembly doorways, mascot equipment, and the finale camera flyby.
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';

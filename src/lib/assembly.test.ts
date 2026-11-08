@@ -1,8 +1,10 @@
+// Tests for office attendance, assembly timelines, and formation bounds.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ARRIVAL_MS,
   assemblyMs,
+  assemblyEndMs,
   FLYBY_CLOSEUP_MS,
   FLYBY_RETURN_MS,
   heroGrid,
@@ -135,4 +137,18 @@ test('the celebration runs long enough for every hero to get a close-up', () => 
   }
   assert.ok(assemblyMs(9) > assemblyMs(8), 'one more hero, one more close-up');
   assert.ok(assemblyMs(0) > ARRIVAL_MS, 'there must be time left for the finale after the doorways close');
+});
+
+
+test('2D ends at the finale beat while 3D retains time for every close-up', () => {
+  for (const count of [0, 1, 9, 100]) {
+    const end = assemblyEndMs(count, '2d');
+    assert.equal(end, ARRIVAL_MS + 260);
+    assert.equal(assemblyEndMs(count, '3d'), assemblyMs(count));
+    for (let i = 0; i < count; i++) {
+      const pose = heroPose(i, count, end);
+      assert.equal(pose.emerge, 1);
+      assert.equal(pose.portal, 0);
+    }
+  }
 });

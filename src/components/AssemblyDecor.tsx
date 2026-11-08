@@ -1,3 +1,4 @@
+// Map decorations and the accessible office assembly entry button.
 import styled from 'styled-components';
 
 export const AssemblePlay = styled.button`

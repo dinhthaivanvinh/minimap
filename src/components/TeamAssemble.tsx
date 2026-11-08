@@ -1,7 +1,8 @@
+// Accessible assembly dialog, 2D entrances, and shared playback controls.
 import type { TeamUser } from '../../shared/types.ts';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import styled, { css, keyframes } from 'styled-components';
-import { ARRIVAL_MS, assemblyMs, heroGrid, heroPose, heroFormation } from '../lib/assembly.ts';
+import { ARRIVAL_MS, assemblyMs, assemblyEndMs, heroGrid, heroPose, heroFormation } from '../lib/assembly.ts';
 import { useReducedMotion } from '../lib/hooks.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
 import { Mochi } from './Mochi.tsx';
@@ -425,6 +426,8 @@ export function TeamAssemble({
   const [view, setView] = useState(initialView);
   const [failed, setFailed] = useState(false);
   const totalMs = assemblyMs(cast.members.length);
+  const endMs = assemblyEndMs(cast.members.length, view);
+  const elapsedRef = useRef(reduced ? totalMs : 0);
   const [elapsed, setElapsed] = useState(reduced ? totalMs : 0);
   const [take, setTake] = useState(0);
   useEffect(() => {
@@ -439,21 +442,23 @@ export function TeamAssemble({
   }, [cast]);
   useEffect(() => {
     if (reduced) {
+      elapsedRef.current = totalMs;
       setElapsed(totalMs);
       return;
     }
-    skipped.current = false;
-    const origin = performance.now();
+    if (skipped.current) return;
+    const origin = performance.now() - elapsedRef.current;
     let frame = 0;
     const tick = () => {
       if (skipped.current) return;
-      const now = Math.min(totalMs, performance.now() - origin);
+      const now = Math.min(endMs, performance.now() - origin);
+      elapsedRef.current = now;
       setElapsed(now);
-      if (now < totalMs) frame = requestAnimationFrame(tick);
+      if (now < endMs) frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [take, reduced, totalMs]);
+  }, [take, reduced, totalMs, endMs]);
   const grid = heroGrid(cast.members.length);
   // Heroes are already settled by ARRIVAL_MS; hold a beat of stillness before the title slams in.
   const finale = elapsed >= ARRIVAL_MS + 260;
@@ -626,10 +631,11 @@ export function TeamAssemble({
             : `Assembling ${cast.members.length} office heroes…`}
           {failed ? ' · Showing 2D' : ''}
         </p>
-        {elapsed < totalMs && (
+        {elapsed < endMs && (
           <button
             onClick={() => {
               skipped.current = true;
+              elapsedRef.current = totalMs;
               setElapsed(totalMs);
             }}
           >
@@ -639,6 +645,8 @@ export function TeamAssemble({
         <button
           data-primary
           onClick={() => {
+            skipped.current = false;
+            elapsedRef.current = reduced ? totalMs : 0;
             setElapsed(reduced ? totalMs : 0);
             setTake((t) => t + 1);
           }}

@@ -1,3 +1,4 @@
+// Shared office attendance, entrance timing, and formation rules.
 import type { TeamState } from '../../shared/types.ts';
 
 // Heroes finish crossing their doorways and the pre-finale camera sweep settles by this point.
@@ -9,6 +10,9 @@ export const FLYBY_RETURN_MS = 1200;
 // Every hero gets a close-up, so the celebration's length grows with the team.
 export const assemblyMs = (heroCount: number) =>
   ARRIVAL_MS + Math.max(0, heroCount) * FLYBY_CLOSEUP_MS + FLYBY_RETURN_MS;
+// 2D ends after the title beat; only 3D needs time for individual close-ups.
+export const assemblyEndMs = (heroCount: number, view: '2d' | '3d') =>
+  view === '2d' ? ARRIVAL_MS + 260 : assemblyMs(heroCount);
 export function officeAssembly(state: Pick<TeamState, 'places' | 'users'>) {
   const offices = new Set(state.places.map((p) => p.id));
   const members = state.users.filter((user) => user.place !== null && offices.has(user.place));
