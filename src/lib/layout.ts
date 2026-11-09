@@ -85,7 +85,7 @@ const MAX_BOARD_H = 15;
 export const FIXED_ZONES = {
   wfh: { name: 'Work from home', kind: 'wfh' },
   out: { name: 'Out of Office', kind: 'street' },
-  off: { name: 'Off today', kind: 'off' },
+  off: { name: 'Off', kind: 'off' },
   lobby: { name: 'Not checked in', kind: 'lobby' },
 } as const satisfies Record<string, ZoneDef>;
 
