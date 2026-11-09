@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import styled from 'styled-components';
 import type { AuthResult, ScheduledChangeRequest, TeamState, TeamUser } from '../../shared/types.ts';
 import { CharacterEditor } from '../components/CharacterEditor.tsx';
+import { FundPanel } from '../components/FundPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { SheetNav, StatusLine } from '../components/SheetNav.tsx';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
@@ -380,6 +381,8 @@ function Editor({ user, state, token, onLogOut }: EditorProps) {
       </StackPanel>
 
       <CharacterEditor user={user} onSave={(look) => void patchMe({ look }, 'Character saved')} />
+
+      <FundPanel user={user} token={token} />
 
       <StatusLine message={message} />
     </div>

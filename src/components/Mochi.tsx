@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import type { Accessory } from '../../shared/look.ts';
 import type { TeamUser } from '../../shared/types.ts';
 import { strokePath } from '../lib/drawing.ts';
+import { CLOUD, fundArt, GOLD, GOLD_DARK, RAIN, userFundTier } from '../lib/fundLook.ts';
 import { lookFor, type Look } from '../lib/look.ts';
 import { MUSTACHE_SMILE_DROP, wornStrokes } from '../lib/wornItems.ts';
 import { theme } from '../styles/theme.ts';
@@ -66,13 +67,56 @@ const HAT = (
   </>
 );
 
+// The fund's top hat: taller than the everyday hat, with a gold band.
+const TOP_HAT = (
+  <>
+    <rect x="20" y="-5" width="24" height="18" rx="1.5" fill={INK} />
+    <rect x="20" y="7" width="24" height="3.5" fill={GOLD} />
+    <ellipse cx="32" cy="13.5" rx="19" ry="3" fill={INK} />
+  </>
+);
+
+const CROWN = (
+  <>
+    <path d="M19 14 17 0l8 7 7-10 7 10 8-7-2 14Z" fill={GOLD} stroke={GOLD_DARK} strokeWidth="1.8" strokeLinejoin="round" />
+    <circle cx="32" cy="9" r="2" fill="#e24b4a" />
+    <circle cx="24" cy="10" r="1.4" fill="#5dcaa5" />
+    <circle cx="40" cy="10" r="1.4" fill="#5dcaa5" />
+  </>
+);
+
+// A rain cloud that follows people who are well behind on the fund.
+const RAIN_CLOUD = (
+  <>
+    <path d="M20 -2a5.5 5.5 0 0 1 9-4.5 7 7 0 0 1 13 1.5 4.5 4.5 0 0 1 0 9H22a4.5 4.5 0 0 1-2-6Z" fill={CLOUD} stroke={INK} strokeWidth="2" strokeLinejoin="round" />
+    <path d="M25 7l-1.2 3.5M32 7l-1.2 3.5M39 7l-1.2 3.5" stroke={RAIN} strokeWidth="2" strokeLinecap="round" />
+  </>
+);
+
+const FLY = (
+  <>
+    <ellipse cx="55" cy="16" rx="1.8" ry="2.4" fill="#dfe7f2" stroke={INK} strokeWidth="0.8" transform="rotate(-30 55 16)" />
+    <ellipse cx="58" cy="16" rx="1.8" ry="2.4" fill="#dfe7f2" stroke={INK} strokeWidth="0.8" transform="rotate(30 58 16)" />
+    <circle cx="56.5" cy="18" r="1.7" fill={INK} />
+  </>
+);
+
+const SPARKLES = (
+  <path d="M55 14l1.4 3 3 1.4-3 1.4-1.4 3-1.4-3-3-1.4 3-1.4ZM8 20l1 2 2 1-2 1-1 2-1-2-2-1 2-1Z" fill={GOLD} stroke={GOLD_DARK} strokeWidth="0.6" />
+);
+
+const MOUTHS = { smile: 'q4 4 8 0', frown: 'm0 4q4-4 8 0', flat: 'm1 2h6' } as const;
+
 const BODY_PATH = 'M32 13c15 0 24 13 24 27 0 12-10 18-24 18S8 52 8 40c0-14 9-27 24-27Z';
 
 /** The character's shapes, for placing inside an SVG. */
-export function MochiArt({ look }: { look: Pick<Look, 'color' | 'accessory' | 'wearing' | 'strokes'> }) {
+export function MochiArt({ look }: { look: Pick<Look, 'color' | 'accessory' | 'wearing' | 'strokes'> & Partial<Pick<Look, 'fund'>> }) {
   const { color, accessory, wearing, strokes } = look;
-  const hasHat = wearing.includes('hat');
-  const art = hasHat ? null : ACCESSORY_ART[accessory]; // A hat takes the place of the automatic accessory.
+  const fund = fundArt(look.fund ?? null);
+  // The fund's headwear wins over the person's hat, and either takes the place of the automatic accessory.
+  const hasHat = !fund.headwear && wearing.includes('hat');
+  const art = hasHat || fund.headwear ? null : ACCESSORY_ART[accessory];
+  const onBody = [...strokes, ...fund.strokes];
   const behind = BEHIND_HEAD.has(accessory);
   const clipId = useId();
   return (
@@ -82,7 +126,7 @@ export function MochiArt({ look }: { look: Pick<Look, 'color' | 'accessory' | 'w
       <circle cx="23" cy="36" r="3.3" fill={INK} />
       <circle cx="41" cy="36" r="3.3" fill={INK} />
       <path
-        d={`M28 ${wearing.includes('mustache') ? 41 + MUSTACHE_SMILE_DROP : 41}q4 4 8 0`}
+        d={`M28 ${wearing.includes('mustache') ? 41 + MUSTACHE_SMILE_DROP : 41}${MOUTHS[fund.mouth]}`}
         fill="none"
         stroke={INK}
         strokeWidth="2.5"
@@ -90,13 +134,13 @@ export function MochiArt({ look }: { look: Pick<Look, 'color' | 'accessory' | 'w
       />
       <ellipse cx="16.5" cy="43" rx="4" ry="2.6" fill="#ff7b9c" opacity=".55" />
       <ellipse cx="47.5" cy="43" rx="4" ry="2.6" fill="#ff7b9c" opacity=".55" />
-      {strokes.length > 0 && (
+      {onBody.length > 0 && (
         <>
           <clipPath id={clipId}>
             <path d={BODY_PATH} />
           </clipPath>
           <g clipPath={`url(#${clipId})`}>
-            {strokes.map((stroke, i) => (
+            {onBody.map((stroke, i) => (
               <path
                 key={i}
                 d={strokePath(stroke)}
@@ -123,14 +167,19 @@ export function MochiArt({ look }: { look: Pick<Look, 'color' | 'accessory' | 'w
       ))}
       {!behind && art}
       {hasHat && HAT}
+      {fund.headwear === 'tophat' && TOP_HAT}
+      {fund.headwear === 'crown' && CROWN}
+      {fund.cloud && RAIN_CLOUD}
+      {fund.fly && FLY}
+      {fund.sparkles && SPARKLES}
     </g>
   );
 }
 
-export function Mochi({ user }: { user: Pick<TeamUser, 'username' | 'look'> }) {
+export function Mochi({ user }: { user: Pick<TeamUser, 'username' | 'look' | 'fund'> }) {
   return (
     <MochiSvg viewBox="0 0 64 62" aria-hidden="true">
-      <MochiArt look={lookFor(user.username, user.look)} />
+      <MochiArt look={lookFor(user.username, user.look, userFundTier(user))} />
     </MochiSvg>
   );
 }

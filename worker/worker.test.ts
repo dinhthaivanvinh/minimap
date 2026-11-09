@@ -289,3 +289,19 @@ test('votes survive Durable Object eviction, and reach open maps as their own ev
   assert.equal((await api('DELETE', `/api/vote/${made.json.id}`, undefined, ADMIN)).status, 200);
   assert.deepEqual(await update, []);
 });
+
+test('fund links survive Durable Object eviction, and open maps get the fund as its own event', async (t) => {
+  const { api, join, evict, events } = await setup(t);
+  await join('ann');
+  // No sheet link, so the test never reads Google Sheets.
+  assert.equal((await api('PATCH', '/api/fund/admin', { links: [['ann', 'Ann Nguyen']] }, ADMIN)).status, 200);
+  await evict();
+  const view = (await api('GET', '/api/fund/admin', undefined, ADMIN)).json;
+  assert.deepEqual(view.links, [['ann', 'Ann Nguyen']]);
+  assert.equal(view.sheet, '');
+  // Kept under its own key, and still in the admin's backup.
+  const backup = (await api('GET', '/api/admin/data', undefined, ADMIN)).json;
+  assert.deepEqual(backup.fund.links, [['ann', 'Ann Nguyen']]);
+  const live = await events();
+  assert.deepEqual(await live.nextEvent('fund'), []);
+});

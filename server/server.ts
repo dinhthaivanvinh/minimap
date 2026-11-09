@@ -6,6 +6,8 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createBasketball, takeOldBasketball } from './basketball/core.ts';
+import { createFund } from './fund/core.ts';
+import { FUND_EVERY_MS } from '../shared/fund.ts';
 import { createVote } from './vote/core.ts';
 import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type JsonBody } from './core.ts';
 
@@ -54,6 +56,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   // Each feature keeps its own file next to the team's.
   const basketballFile = path.join(path.dirname(dataFile), 'basketball.json');
   const voteFile = path.join(path.dirname(dataFile), 'vote.json');
+  const fundFile = path.join(path.dirname(dataFile), 'fund.json');
 
   const teamSaved = readFile(dataFile);
   const oldBasketball = takeOldBasketball(teamSaved);
@@ -85,6 +88,24 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   });
   core.attach(votes.feature);
 
+  const fund = createFund({
+    saved: readFile(fundFile),
+    save: (data) => writeFile(fundFile, data),
+    team: core.team,
+    onChange: (people) => sendAll(fundEvent(people)),
+    now: options.now,
+    fetchImpl: options.fetchImpl,
+  });
+  core.attach(fund.feature);
+
+  // The fund's looks and titles have their own event name too.
+  function fundEvent(people: unknown): string {
+    return `event: fund
+data: ${JSON.stringify(people)}
+
+`;
+  }
+
   function voteEvent(views: unknown): string {
     return `event: vote\ndata: ${JSON.stringify(views)}\n\n`;
   }
@@ -94,7 +115,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   }
 
   async function answer(req: ApiRequest) {
-    return (await basketball.handle(req)) ?? (await votes.handle(req)) ?? (await core.handle(req));
+    return (await basketball.handle(req)) ?? (await votes.handle(req)) ?? (await fund.handle(req)) ?? (await core.handle(req));
   }
 
   function readJson(req: Req, maxBytes = MAX_BODY): Promise<JsonBody> {
@@ -132,6 +153,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
     });
     res.write(`data: ${JSON.stringify(core.publicState())}\n\n`);
     res.write(voteEvent(votes.views()));
+    res.write(fundEvent(fund.people()));
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
   }
@@ -207,6 +229,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   let timedChangesTimer: NodeJS.Timeout | undefined;
   let pingTimer: NodeJS.Timeout | undefined;
   let weatherTimer: NodeJS.Timeout | undefined;
+  let fundTimer: NodeJS.Timeout | undefined;
 
   // The reset goes first, so it wins over schedules that went overdue while the server was off.
   function runTimedChanges(): void {
@@ -220,6 +243,8 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
     void core.refreshWeather();
     timedChangesTimer = setInterval(runTimedChanges, 30 * 1000);
     weatherTimer = setInterval(() => void core.refreshWeather(), WEATHER_EVERY_MS);
+    void fund.refresh();
+    fundTimer = setInterval(() => void fund.refresh(), FUND_EVERY_MS);
     // Comment lines keep SSE connections alive through idle proxies.
     pingTimer = setInterval(() => {
       for (const res of sseClients) res.write(': ping\n\n');
@@ -233,6 +258,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
     clearInterval(timedChangesTimer);
     clearInterval(pingTimer);
     clearInterval(weatherTimer);
+    clearInterval(fundTimer);
     for (const res of sseClients) res.end();
     sseClients.clear();
     return new Promise((resolve) => server.close(() => resolve()));
@@ -244,6 +270,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
     runResetIfDue: core.runResetIfDue,
     runScheduledIfDue: core.runScheduledIfDue,
     refreshWeather: core.refreshWeather,
+    refreshFund: fund.refresh,
   };
 }
 

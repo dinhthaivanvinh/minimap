@@ -1,4 +1,5 @@
 // What the server sends to browsers. Used by both the server and the frontend.
+import type { FundPerson } from './fund.ts';
 import type { CharacterDesign } from './look.ts';
 
 export interface Place {
@@ -29,6 +30,11 @@ export interface TeamUser {
   /** Null means the default character chosen from the username. */
   look: CharacterDesign | null;
   scheduled?: ScheduledChange | null;
+  /**
+   * Their standing on the team fund. The server never sends it here: the browser adds it
+   * from the fund's own `fund` event (see withFund in src/lib/fundLook.ts).
+   */
+  fund?: Omit<FundPerson, 'username'>;
 }
 
 export interface Clock {

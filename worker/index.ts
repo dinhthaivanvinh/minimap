@@ -9,6 +9,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { createBasketball, takeOldBasketball, type Basketball } from '../server/basketball/core.ts';
 import { createVote, type Votes } from '../server/vote/core.ts';
+import { createFund, type Fund } from '../server/fund/core.ts';
 import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type Core, type JsonBody } from '../server/core.ts';
 
 interface Env {
@@ -27,6 +28,14 @@ const encoder = new TextEncoder();
 // Votes have their own event name, so maps tell them apart from the team's state.
 function voteEvent(views: unknown): string {
   return `event: vote\ndata: ${JSON.stringify(views)}\n\n`;
+}
+
+// The fund's looks and titles have their own event name too.
+function fundEvent(people: unknown): string {
+  return `event: fund
+data: ${JSON.stringify(people)}
+
+`;
 }
 
 function json(status: number, body: unknown): Response {
@@ -65,6 +74,7 @@ export class Minimap extends DurableObject<Env> {
   private core!: Core;
   private basketball!: Basketball;
   private votes!: Votes;
+  private fund!: Fund;
   private clients = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private ticker: ReturnType<typeof setInterval> | undefined;
   private weatherAt = 0;
@@ -109,6 +119,17 @@ export class Minimap extends DurableObject<Env> {
       });
       this.core.attach(this.votes.feature);
 
+      const fundSaved = await ctx.storage.get<string>('fund');
+      this.fund = createFund({
+        saved: fundSaved ? JSON.parse(fundSaved) : null,
+        // Awaited, so a reply only says a change is stored once it is.
+        save: (data) => ctx.storage.put('fund', JSON.stringify(data)),
+        team: this.core.team,
+        onChange: (people) => this.sendAll(fundEvent(people)),
+        timeZone: env.TZ || 'UTC',
+      });
+      this.core.attach(this.fund.feature);
+
       this.runTimedChanges();
       this.core.save();
       this.syncAlarm();
@@ -133,9 +154,10 @@ export class Minimap extends DurableObject<Env> {
   }
 
   override async fetch(request: Request): Promise<Response> {
-    // Only alarms run while nobody is looking, so catch up on the reset and weather first.
+    // Only alarms run while nobody is looking, so catch up on the reset, weather and fund first.
     this.runTimedChanges();
     this.refreshWeatherIfDue();
+    this.refreshFundIfDue();
 
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/api/events') return this.openEvents();
@@ -147,7 +169,7 @@ export class Minimap extends DurableObject<Env> {
       readJson: (maxBytes) => readJson(request, maxBytes),
     };
     const { status, body, headers } =
-      (await this.basketball.handle(req)) ?? (await this.votes.handle(req)) ?? (await this.core.handle(req));
+      (await this.basketball.handle(req)) ?? (await this.votes.handle(req)) ?? (await this.fund.handle(req)) ?? (await this.core.handle(req));
     return new Response(JSON.stringify(body), { status, headers });
   }
 
@@ -157,17 +179,24 @@ export class Minimap extends DurableObject<Env> {
     this.ctx.waitUntil(this.core.refreshWeather());
   }
 
+  // The sheet is read again when someone looks and the last read is an hour old, so it needs no alarm.
+  private refreshFundIfDue(): void {
+    this.ctx.waitUntil(this.fund.refreshIfDue());
+  }
+
   private openEvents(): Response {
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     this.clients.add(writer);
     this.send(writer, `data: ${JSON.stringify(this.core.publicState())}\n\n`);
     this.send(writer, voteEvent(this.votes.views()));
+    this.send(writer, fundEvent(this.fund.people()));
     // While a map is open, keep the connection alive and the reset and weather on time.
     this.ticker ??= setInterval(() => {
       this.sendAll(': ping\n\n');
       this.runTimedChanges();
       this.refreshWeatherIfDue();
+      this.refreshFundIfDue();
     }, PING_MS);
     return new Response(readable, {
       headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' },

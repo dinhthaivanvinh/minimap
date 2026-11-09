@@ -12,6 +12,7 @@ import {
   pointPairs,
   surfacePoint,
 } from '../lib/drawing.ts';
+import { CLOUD, fundArt, GOLD, GOLD_DARK, RAIN, userFundTier, type FundArt } from '../lib/fundLook.ts';
 import { lookFor } from '../lib/look.ts';
 import { MUSTACHE_SMILE_DROP, wornStrokes } from '../lib/wornItems.ts';
 
@@ -107,8 +108,46 @@ export function createCharacterBuilder({ ramp, mat, mesh }: CharacterTools): (in
     inner.add(mesh(new THREE.CylinderGeometry(0.74, 0.74, 0.2, 24), 0xff6f9f, { y: 2.67 }));
   }
 
+  // The fund's top hat: taller than the everyday hat, with a gold band.
+  function addTopHat(inner: THREE.Group) {
+    inner.add(mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.12, 24), INK, { y: 2.48 }));
+    inner.add(mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.95, 24), INK, { y: 3.0 }));
+    inner.add(mesh(new THREE.CylinderGeometry(0.64, 0.64, 0.18, 24), parseInt(GOLD.slice(1), 16), { y: 2.7 }));
+  }
+
+  function addCrown(inner: THREE.Group) {
+    const gold = mat(parseInt(GOLD.slice(1), 16));
+    inner.add(mesh(new THREE.CylinderGeometry(0.62, 0.66, 0.36, 20, 1, true), gold, { y: 2.58 }));
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2;
+      inner.add(mesh(new THREE.ConeGeometry(0.13, 0.36, 6), gold, { x: Math.sin(angle) * 0.62, y: 2.94, z: Math.cos(angle) * 0.62 }));
+    }
+    inner.add(mesh(new THREE.SphereGeometry(0.11, 8, 6), 0xe24b4a, { y: 2.6, z: 0.66, shadow: false }));
+  }
+
+  // Things that float around people's heads: a rain cloud with a fly for those far behind,
+  // sparkles for the rich.
+  function addFundProps(inner: THREE.Group, fund: FundArt) {
+    if (fund.cloud) {
+      const cloud = mat(parseInt(CLOUD.slice(1), 16));
+      for (const [x, y, r] of [[-0.45, 3.55, 0.38], [0.05, 3.7, 0.48], [0.55, 3.55, 0.36]] as const) {
+        inner.add(mesh(new THREE.SphereGeometry(r, 12, 8), cloud, { x, y, shadow: false }));
+      }
+      const drop = new THREE.CylinderGeometry(0.03, 0.03, 0.28, 5);
+      for (const x of [-0.4, 0.05, 0.5]) inner.add(mesh(drop, parseInt(RAIN.slice(1), 16), { x, y: 3.0, shadow: false }));
+    }
+    if (fund.fly) inner.add(mesh(new THREE.SphereGeometry(0.08, 6, 4), INK, { x: 1.25, y: 2.25, z: 0.6, shadow: false }));
+    if (fund.sparkles) {
+      const sparkle = new THREE.OctahedronGeometry(0.13);
+      for (const [x, y, z] of [[1.35, 2.3, 0.4], [-1.4, 1.9, 0.5], [1.1, 0.9, 1.0]] as const) {
+        inner.add(mesh(sparkle, parseInt(GOLD_DARK.slice(1), 16), { x, y, z, shadow: false }));
+      }
+    }
+  }
+
   function buildBody(inner: THREE.Group, user: TeamUser): THREE.Material {
-    const look = lookFor(user.username, user.look);
+    const look = lookFor(user.username, user.look, userFundTier(user));
+    const fund = fundArt(look.fund);
     const bodyMaterial = new THREE.MeshToonMaterial({ color: look.color, gradientMap: ramp });
     const body = mesh(new THREE.SphereGeometry(BODY_RADIUS, 24, 18), bodyMaterial, { y: BODY_CENTER_Y });
     body.scale.set(1, BODY_SCALE_Y, BODY_SCALE_Z);
@@ -125,18 +164,25 @@ export function createCharacterBuilder({ ramp, mat, mesh }: CharacterTools): (in
     left.scale.y = right.scale.y = 0.65;
     inner.add(left, right);
 
-    const smile = mesh(new THREE.TorusGeometry(0.17, 0.045, 6, 12, Math.PI), INK, { y: 1.16, z: 1.27, shadow: false });
-    smile.rotation.z = Math.PI;
+    // A smile, a frown for people far behind on the fund, or a flat line for those one month behind.
+    const smile =
+      fund.mouth === 'flat'
+        ? mesh(new THREE.CapsuleGeometry(0.04, 0.26, 3, 6), INK, { y: 1.12, z: 1.28, shadow: false })
+        : mesh(new THREE.TorusGeometry(0.17, 0.045, 6, 12, Math.PI), INK, { y: fund.mouth === 'frown' ? 1.02 : 1.16, z: 1.27, shadow: false });
+    smile.rotation.z = fund.mouth === 'smile' ? Math.PI : fund.mouth === 'flat' ? Math.PI / 2 : 0;
     if (look.wearing.includes('mustache')) {
       const [, y, z] = surfacePoint(32, 42 + MUSTACHE_SMILE_DROP, 0.02);
       smile.position.set(0, y, z);
     }
     inner.add(smile);
 
-    // A hat takes the place of the automatic accessory.
-    if (look.wearing.includes('hat')) addHat(inner);
+    // The fund's headwear wins over the person's hat, and either takes the place of the automatic accessory.
+    if (fund.headwear === 'tophat') addTopHat(inner);
+    else if (fund.headwear === 'crown') addCrown(inner);
+    else if (look.wearing.includes('hat')) addHat(inner);
     else addAccessory(inner, look.accessory, bodyMaterial);
-    addDrawing(inner, [...wornStrokes(look.wearing), ...look.strokes]);
+    addDrawing(inner, [...wornStrokes(look.wearing), ...look.strokes, ...fund.strokes]);
+    addFundProps(inner, fund);
 
     inner.traverse((node) => {
       if (node instanceof THREE.Mesh) node.userData.username = user.username;

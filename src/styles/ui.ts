@@ -134,6 +134,17 @@ export const Row = styled.div`
   ${Input} { flex: 1; min-width: 0; }
 `;
 
+/** A label around a checkbox, for on and off settings. */
+export const Switch = styled.label`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  cursor: pointer;
+
+  input { width: 18px; height: 18px; margin: 0; accent-color: ${theme.ink}; }
+`;
+
 export const Chips = styled.div`
   display: flex;
   flex-wrap: wrap;
