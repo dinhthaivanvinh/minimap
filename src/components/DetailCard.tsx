@@ -57,6 +57,16 @@ const CardStatus = styled(CardRow)`
   overflow-wrap: anywhere;
 `;
 
+// The title from the team fund's sheet, in gold for people ahead and grey for people behind.
+const CardFund = styled(CardRow)<{ $ahead: boolean }>`
+  display: inline-block;
+  padding: 2px 10px;
+  border: ${theme.thinLine};
+  border-radius: 10px;
+  background: ${({ $ahead }) => ($ahead ? '#ffe9a8' : '#e4e2dc')};
+  font-weight: 800;
+`;
+
 const CardTime = styled(CardRow)`
   color: ${theme.inkSoft};
   font-size: 13px;
@@ -146,6 +156,7 @@ export function DetailCard({ user, places, votes, anchor, onClose }: DetailCardP
         </div>
       </CardHead>
       <CardRow>{placeName(places, user.place)}</CardRow>
+      {user.fund && <CardFund $ahead={user.fund.months > 0} title="Title on the team fund">💰 {user.fund.title}</CardFund>}
       {user.status && <CardStatus>{user.status}</CardStatus>}
       {user.scheduled && <CardStatus>{scheduledText(user)}</CardStatus>}
       {pending.length > 0 && (

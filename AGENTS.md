@@ -9,7 +9,7 @@ A small React + TypeScript app that shows where the team works today, on a 2D an
 - **Node.js** (`server/server.ts`): data is kept in a JSON file, `data/data.json`. Used locally and in Docker.
 - **Cloudflare Workers** (`worker/index.ts`): the same data is kept as one value (key `data`) in the `Minimap` Durable Object named `team`. Only `main` is deployed.
 
-Features with their own data live in their own folder (`server/basketball/`, `server/vote/`) and keep their own file (`data/basketball.json`, `data/vote.json`) or storage key (`basketball`, `vote`).
+Features with their own data live in their own folder (`server/basketball/`, `server/vote/`, `server/fund/`) and keep their own file (`data/basketball.json`, `data/vote.json`, `data/fund.json`) or storage key (`basketball`, `vote`, `fund`).
 
 `core.ts` never knows where data comes from or goes to. The host hands it `saved`, `save()` and `onChange()`, and does the same for each feature. A feature's `save()` may return a promise: on Cloudflare it resolves once the write is stored.
 
@@ -95,14 +95,14 @@ Paths are from the project root. Function names are given instead of line number
 |---|---|
 | Team API routes, data shape (`Data`), validation, `ApiError` | `server/core.ts`: `createCore` → `route()`; the routes are `if (route === 'METHOD /api/...')` blocks; `handle()` and `errorResponse` turn errors into JSON |
 | What features may use from the team | `core.ts`: `Team` (`core.team`: `player`, `members`, `sign`, `requireAdmin`), `TeamFeature` (`core.attach`), `backupError`, `safeEqual` |
-| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `sendAll`, `voteEvent`, `serveStatic`, `runTimedChanges`, `start`) |
-| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data`, `basketball` and `vote`, `alarm`, `syncAlarm`, `runTimedChanges`, SSE, ping), `voteEvent` |
+| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `sendAll`, `voteEvent`, `fundEvent`, `serveStatic`, `runTimedChanges`, `start`) |
+| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data`, `basketball`, `vote` and `fund`, `alarm`, `syncAlarm`, `runTimedChanges`, `refreshFundIfDue`, SSE, ping), `voteEvent`, `fundEvent` |
 | Cloudflare settings (vars, bindings, build) | `wrangler.jsonc` |
-| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json`, `basketball.json` and `vote.json`), `.dockerignore` |
-| Types sent to the browser | `shared/types.ts` (`TeamState`, `TeamUser`, `ScheduledChange`, `Weather`, ...) |
+| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json`, `basketball.json`, `vote.json` and `fund.json`), `.dockerignore` |
+| Types sent to the browser | `shared/types.ts` (`TeamState`, `TeamUser` (its `fund` is added by the browser, never sent), `ScheduledChange`, `Weather`, ...) |
 | Character design limits (server and editor) | `shared/look.ts` |
 | Frontend entry and page switch | `src/main.tsx` |
-| Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, which also takes features' named events such as `vote`, `errorText`), `src/lib/hooks.ts` (`useTeamState` gives the state and the votes, `useNow`, `useAmbience`, ...) |
+| Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, which also takes features' named events such as `vote` and `fund`, `errorText`), `src/lib/hooks.ts` (`useTeamState` gives the state, with each user's fund standing added, the votes and the fund, `useNow`, `useAmbience`, ...) |
 | Styles and shared controls | `src/styles/theme.ts`, `src/styles/ui.ts`, `src/styles/GlobalStyle.ts` |
 | 3D support and lost-context fallback | `src/lib/webgl.ts` (`supportsWebGL`), `src/lib/contextLoss.ts` (`watchContextLoss`, 10 s wait) |
 | CI | `.github/workflows/check.yml` |
@@ -196,6 +196,19 @@ Paths are from the project root. Function names are given instead of line number
 | Character reactions | `src/lib/voteReactions.ts` (`reactions`), planned in `MonitorPage.tsx`; 2D: `Map2D.tsx` `usePlaying`; 3D: `scene3d.ts` `react`, `animateReaction`, `confettiAt`, with `hopHeight` from `wander.ts` |
 | Ballot drop | `src/components/BallotDrop.tsx` (CSS and SVG, no three.js) |
 | Tests | `shared/vote.test.ts`, `server/vote/vote.test.ts`, `src/lib/voteTime.test.ts`, `src/lib/noticeBoard.test.ts`, `src/lib/voteReactions.test.ts`, `src/lib/savedLogin.test.ts`, the vote test in `worker/worker.test.ts` |
+
+### Team fund looks
+| Feature | Code |
+|---|---|
+| Rules shared by browser and server (tiers by months ahead, who may hide, reading the sheet's CSV, sheet links, name suggestions) | `shared/fund.ts` (`tierFor`, `canHide`, `shownTier`, `sheetId`, `csvUrl`, `parseSheet`, `suggestLinks`, `FUND_EVERY_MS`) |
+| API: read the sheet, admin settings and links, hide my look | `server/fund/core.ts`: `createFund` → `route()` with `GET /api/fund`, `GET/PATCH /api/fund/admin`, `POST /api/fund/admin/refresh`, `PATCH /api/fund/me`; `refresh` (never throws, keeps the last rows on failure), `refreshIfDue`, `change` (queue, save, undo) |
+| Stored data | `FundData` (`sheet`, `links`, `hidden`, last `rows`, `fetchedAt`): `data/fund.json` on Node, key `fund` on Cloudflare. Read hourly by a timer on Node; on Cloudflare when someone looks (`refreshFundIfDue`), so no alarm |
+| Backup part, deleted people | `server/fund/core.ts`: `feature` (`checkBackup`, `forget`) |
+| Live updates | `onChange` → `event: fund` on `/api/events`, also sent when a stream opens; `useTeamState` adds it to users with `withFund` |
+| What each tier wears (lines on the body, mouth, headwear, cloud, fly, sparkles) | `src/lib/fundLook.ts` (`fundArt`, `userFundTier`, `withFund`); `Look.fund` in `src/lib/look.ts` |
+| Drawing it | 2D: `src/components/Mochi.tsx` (`TOP_HAT`, `CROWN`, `RAIN_CLOUD`, `FLY`, `SPARKLES`, `MOUTHS`); 3D: `src/map/character3d.ts` (`addTopHat`, `addCrown`, `addFundProps`); `scene3d.ts` `designKeyOf` (redraw on change), `labelHeight` (name above the cloud); arcade `BasketballCourt.tsx` |
+| Admin panel, Me panel, title on the card | `src/components/FundAdminPanel.tsx` (on `AdminPage.tsx`), `src/components/FundPanel.tsx` (on `MePage.tsx`), `CardFund` in `DetailCard.tsx` |
+| Tests | `shared/fund.test.ts`, `server/fund/fund.test.ts` (a pretend sheet through `fetchImpl`), `src/lib/fundLook.test.ts`, the fund test in `worker/worker.test.ts` |
 
 ### Random member picker (claw machine)
 | Feature | Code |

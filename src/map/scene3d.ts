@@ -9,6 +9,7 @@ import type { TeamState, TeamUser } from '../../shared/types.ts';
 import { resultText, type VoteView } from '../../shared/vote.ts';
 import { CLEAR, mixColor, type Ambience, type Conditions } from '../lib/ambience.ts';
 import { watchContextLoss } from '../lib/contextLoss.ts';
+import { fundArt, userFundTier } from '../lib/fundLook.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
 import { boardNotes, voteLink } from '../lib/noticeBoard.ts';
 import { computeLayout, noticeBoardSpot, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
@@ -941,6 +942,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   const buildBody = createCharacterBuilder({ ramp, mat, mesh });
 
+  // A new fund standing redraws the body too.
+  const designKeyOf = (user: TeamUser) => JSON.stringify([user.look, userFundTier(user)]);
+  // The name tag sits above a fund rain cloud, so the cloud stays in sight.
+  const labelHeight = (user: TeamUser) => (fundArt(userFundTier(user)).cloud ? 4.3 : 3.3);
+
   function createCharacter(user: TeamUser, phase: number): Character {
     const group = new THREE.Group();
     const inner = new THREE.Group();
@@ -953,7 +959,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     const anchor = document.createElement('div');
     anchor.append(labelElement);
     const label = new CSS2DObject(anchor);
-    label.position.set(0, 3.3, 0);
+    label.position.set(0, labelHeight(user), 0);
     label.center.set(0.5, 1);
     group.add(label);
     const umbrella = makeUmbrella(umbrellaColour(user.username));
@@ -972,7 +978,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       reaction: null,
       emoji: null,
       username: user.username,
-      designKey: JSON.stringify(user.look),
+      designKey: designKeyOf(user),
       bodyMaterial,
       group,
       inner,
@@ -1027,6 +1033,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     clearBody(character);
     character.bodyMaterial = buildBody(character.inner, user);
     character.designKey = designKey;
+    character.label.position.y = labelHeight(user);
     if (character.opacity < 1) setOpacity(character, character.opacity);
   }
 
@@ -1190,7 +1197,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
         markBallot(character, false);
         changed = true;
       }
-      const designKey = JSON.stringify(user.look);
+      const designKey = designKeyOf(user);
       if (designKey !== character.designKey) redecorate(character, user, designKey);
       const { x, z } = toWorld(seat.x, seat.y);
       const seatMoved = character.seat.distanceTo(new THREE.Vector3(x, 1, z)) > 0.05;

@@ -6,7 +6,7 @@ A cute 2D and 3D map showing where your team is working today. It's a React and 
 |---|---|---|
 | Map | `/` | Everyone. Add `?mode=3d` for a wall TV. If the browser takes away 3D graphics and doesn't give them back within 10 seconds, the screen switches to the 2D map until it's reloaded |
 | My status | `/me` | Team members claim a username, then set their nickname, place and status |
-| Admin | `/admin` | The admin creates usernames, and sets the team address, clocks and office location |
+| Admin | `/admin` | The admin creates usernames, sets the team address, clocks and office location, and links people to the team fund's sheet |
 | Team votes | `/vote` | Everyone sees open votes and results. Logged-in members start votes and vote. `/vote?id=<id>` opens one vote |
 
 ## Run on your own computer (no Docker)
@@ -28,7 +28,7 @@ You need [Node.js](https://nodejs.org) 24 or newer.
 
 4. Open http://localhost:8080/admin, add some usernames, then claim one at http://localhost:8080/me.
 
-Data is saved in `data/data.json`, the basketball arcade's records in `data/basketball.json`, and team votes in `data/vote.json`. Delete those files while the server is stopped to start over.
+Data is saved in `data/data.json`, the basketball arcade's records in `data/basketball.json`, team votes in `data/vote.json`, and the team fund's settings in `data/fund.json`. Delete those files while the server is stopped to start over.
 
 ## Develop
 
@@ -69,6 +69,7 @@ npm test
 | `server/` | The API, daily reset and weather (`core.ts`), the Node.js server and data files (`server.ts`), plus their tests |
 | `server/basketball/` | The basketball arcade's API and records, kept apart from the team's data |
 | `server/vote/` | Team voting's API and votes, kept apart from the team's data |
+| `server/fund/` | The team fund: reads the fund's Google Sheet and keeps who is who on it |
 | `worker/` | The Cloudflare Worker and Durable Object that run the same API |
 | `shared/` | Types used by both the server and the frontend |
 | `src/pages/` | The Monitor, User, Admin and Team votes pages |
@@ -101,7 +102,7 @@ The container restarts by itself after a crash or reboot. Data is kept in the Do
 
 **Back up the data**
 
-This copies the whole data folder: the team's `data.json`, the arcade's `basketball.json` and the votes' `vote.json`. **Download backup** on the Admin page also saves all three, in one file.
+This copies the whole data folder: the team's `data.json`, the arcade's `basketball.json`, the votes' `vote.json` and the fund's `fund.json`. **Download backup** on the Admin page also saves all four, in one file.
 
 ```bash
 docker compose cp minimap:/app/data ./backup
@@ -161,7 +162,7 @@ On the Admin page, under **Backup**:
 - **Download backup** saves everything, PINs included, to a file. Keep backups private: with one, anyone could work out every PIN.
 - **Restore from a file** replaces all usernames, PINs and settings with a backup's. It also accepts the `data.json` from the office server, which is how you move to Cloudflare.
 
-A restore brings over usernames, nicknames, PINs, characters, scheduled changes, offices, clocks, the weather location, arcade records and team votes, and people stay logged in. If the backup is from before the last morning reset, places, statuses and scheduled changes are cleared, as on any morning. Otherwise, scheduled changes that are overdue apply straight away. Backups can be up to 2 MB.
+A restore brings over usernames, nicknames, PINs, characters, scheduled changes, offices, clocks, the weather location, arcade records, team votes and the team fund's settings, and people stay logged in. If the backup is from before the last morning reset, places, statuses and scheduled changes are cleared, as on any morning. Otherwise, scheduled changes that are overdue apply straight away. Backups can be up to 2 MB.
 
 ## Random member picker
 
@@ -234,6 +235,34 @@ On the map, the **notice board** at the edge of the lobby shows up to four open 
 Votes are kept apart from the team's data: in `data/vote.json` on Node.js, and under their own `vote` key in the Durable Object on Cloudflare. The admin's backup file holds them under `vote`, **with every ballot, anonymous ones included**, because a restore needs them; keep backups private. A restore checks that every creator, voter and ballot belongs to someone in the backup. Deleting a member removes their ballots and invitations, so old results may drop by one; votes they made stay, shown as made by *a former member*, and only the admin can close or delete them.
 
 The API: `GET /api/vote` (anyone; adds the caller's own picks as `mine` when a login is sent), and with a login: `POST /api/vote`, `PATCH /api/vote/:id` (`endsAt`, creator only), `POST /api/vote/:id/ballot` (`choices`), `POST /api/vote/:id/options` (`text`), and `POST /api/vote/:id/close` (sets the end time to now) and `DELETE /api/vote/:id` (each by the creator, or the admin with `x-admin-password`). Live updates come on `/api/events` as `event: vote`.
+
+## Team fund looks
+
+The team keeps its fund (50k a month) in a Google Sheet. The map reads the tab named after the current year and dresses each person's character by how far ahead or behind they are:
+
+| Months ahead (column B) | Title on the sheet | Look on the map | Can hide it? |
+|---|---|---|---|
+| 2 or more behind | Ốt dột | Patches, a band-aid, a frown, a rain cloud and a fly | No |
+| 1 behind | Con nợ | A "50k" debt note, a sweat drop and a flat mouth | No |
+| 0 | Hm... | Nothing | – |
+| 1 to 2 ahead | Tốn tiền | Bow tie and gold medal | Yes |
+| 3 to 5 ahead | Hào sảng | Suit, bow tie and gold medal | Yes |
+| 6 to 11 ahead | Đại gia | Suit, gold chain, top hat and sparkles | Yes |
+| 12 ahead | Forbes Billionaires | All of that, a monocle and a crown | Yes |
+
+The look shows on both maps, the arcade, the picker and every avatar. The detail card shows the person's title as the sheet writes it. People who paid ahead can turn their look off on **My status**; people behind can't, until they pay.
+
+To set it up, open **Team fund** on the Admin page:
+
+1. In Google Sheets, share the sheet with **Anyone with the link** can view. The server reads it without a login.
+2. Paste the sheet's link and select **Save link**.
+3. Pick each username's name on the sheet, or select **Suggest matches** to fill in the obvious ones, then **Save links**.
+
+How the sheet works, so the map stays right: the hidden column B counts the months marked `x` (paid) or `o` (excused), minus this month's number, and the Title column looks that number up in a hidden table. The map takes the look from the number and shows the title as written. A blank number counts as 0 (Hm...), as it does on the sheet, so give every row the formula. Hidden rows (people who left) are skipped. In January, add a tab for the new year with the same columns; until then the Admin page says the tab is missing and the map keeps the last looks it read.
+
+The server reads the sheet when it starts and every hour (on Cloudflare: when someone opens the map and the last read is an hour old), and right away with **Read now**. If a read fails, the map keeps the last looks and the Admin page says why. The settings, links and last rows are kept in `data/fund.json` on Node.js and under the `fund` key on Cloudflare, and go into the admin's backup under `fund`. Deleting a member removes their link.
+
+The API: `GET /api/fund` (anyone: each linked member's title, months, tier and whether they hid it), `PATCH /api/fund/me` (`hidden`, with a login), and with `x-admin-password`: `GET /api/fund/admin`, `PATCH /api/fund/admin` (`sheet`, `links` as `[username, name]` pairs) and `POST /api/fund/admin/refresh`. Live updates come on `/api/events` as `event: fund`.
 
 ## Basketball arcade
 

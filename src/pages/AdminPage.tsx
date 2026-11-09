@@ -1,4 +1,4 @@
-// Admin page: create usernames, release claims, set up the home page, and back up the data.
+// Admin page: create usernames, release claims, set up the home page and the team fund, and back up the data.
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import styled from 'styled-components';
 import type { Clock, OfficeLocation, PublicSettings, TeamUser } from '../../shared/types.ts';
@@ -7,7 +7,8 @@ import { SheetNav, StatusLine } from '../components/SheetNav.tsx';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
 import { useMessage, useTeamState } from '../lib/hooks.ts';
 import { theme } from '../styles/theme.ts';
-import { Button, Chip, Chips, Field, FieldLabel, Input, Panel, PanelHint, Row, Sheet, StackPanel } from '../styles/ui.ts';
+import { FundAdminPanel } from '../components/FundAdminPanel.tsx';
+import { Button, Chip, Chips, Field, FieldLabel, Input, Panel, PanelHint, Row, Sheet, StackPanel, Switch } from '../styles/ui.ts';
 
 const PASSWORD_KEY = 'minimap.admin';
 
@@ -284,16 +285,6 @@ function ClocksForm({ value, call, run }: { value: Clock[]; call: AdminCall; run
   );
 }
 
-const Switch = styled.label`
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 700;
-  cursor: pointer;
-
-  input { width: 18px; height: 18px; margin: 0; accent-color: ${theme.ink}; }
-`;
-
 function OfficeForm({ officeName, mapWeather, call, run }: { officeName: string; mapWeather: boolean; call: AdminCall; run: Runner }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<OfficeLocation[]>([]);
@@ -448,6 +439,7 @@ function AdminPanels({ call, run }: { call: AdminCall; run: Runner }) {
       <AddressForm value={settings.publicUrl} call={call} run={run} />
       <ClocksForm value={settings.clocks} call={call} run={run} />
       <OfficeForm officeName={settings.officeName} mapWeather={settings.mapWeather} call={call} run={run} />
+      <FundAdminPanel users={state.users} call={call} run={run} />
       <BackupPanel call={call} run={run} />
     </div>
   );

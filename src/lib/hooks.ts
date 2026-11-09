@@ -1,16 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { TeamState, Weather } from '../../shared/types.ts';
+import type { FundPerson } from '../../shared/fund.ts';
 import type { VoteView } from '../../shared/vote.ts';
 import { ambience, DAY, defaultSun, PREVIEW_WEATHER, previewTime, type Ambience, type WeatherInput } from './ambience.ts';
 import { subscribe } from './api.ts';
+import { withFund } from './fundLook.ts';
 
-/** The team's live state, and the team's votes (public views, without anyone's picks). */
-export function useTeamState(): { state: TeamState | null; online: boolean; votes: VoteView[] | null } {
-  const [state, setState] = useState<TeamState | null>(null);
+/**
+ * The team's live state, and the team's votes (public views, without anyone's picks). Each
+ * user carries their fund standing (`fund`), so every page draws the same fund looks.
+ */
+export function useTeamState(): { state: TeamState | null; online: boolean; votes: VoteView[] | null; fund: FundPerson[] | null } {
+  const [raw, setState] = useState<TeamState | null>(null);
   const [votes, setVotes] = useState<VoteView[] | null>(null);
+  const [fund, setFund] = useState<FundPerson[] | null>(null);
   const [online, setOnline] = useState(true);
-  useEffect(() => subscribe(setState, setOnline, setVotes), []);
-  return { state, online, votes };
+  useEffect(() => subscribe(setState, setOnline, setVotes, setFund), []);
+  const state = useMemo(() => (raw && fund?.length ? { ...raw, users: withFund(raw.users, fund) } : raw), [raw, fund]);
+  return { state, online, votes, fund };
 }
 
 export function useElementSize(ref: RefObject<HTMLElement | null>): { width: number; height: number } {

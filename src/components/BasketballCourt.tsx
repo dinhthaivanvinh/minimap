@@ -3,6 +3,7 @@ import { Component, lazy, Suspense, useRef, type ReactNode } from 'react';
 import styled from 'styled-components';
 import { COURT, FREE_THROW_Z, courtMarkings, floorPath } from '../lib/basketballCourt.ts';
 import { MochiArt } from './Mochi.tsx';
+import { userFundTier } from '../lib/fundLook.ts';
 import { lookFor } from '../lib/look.ts';
 import {
   crowdSpot,
@@ -134,7 +135,7 @@ function Court2D(props: CourtProps & { viewWidth: number; nameScale: number; hid
   const recent = props.shot ? Math.max(0, props.elapsed - props.shot.at) : 2000;
   const release = props.reduced || recent > 650 ? 0 : Math.sin(Math.PI * Math.min(1, recent / 500));
   const basketCheer = props.shot?.hit && recent < 1400 ? 1 : 0;
-  const playerLook = lookFor(props.cast.player.username, props.cast.player.look);
+  const playerLook = lookFor(props.cast.player.username, props.cast.player.look, userFundTier(props.cast.player));
   return (
     <svg
       viewBox={`${320 - props.viewWidth / 2} 0 ${props.viewWidth} 520`}
@@ -239,7 +240,7 @@ function Court2D(props: CourtProps & { viewWidth: number; nameScale: number; hid
             : Math.max(0, Math.sin(props.elapsed / (basketCheer ? 95 : 260) + i * 1.9)) *
               (basketCheer ? 8 : 2);
           const y = [280, 385, 500][spot.row]! - bob;
-          const look = lookFor(user.username, user.look);
+          const look = lookFor(user.username, user.look, userFundTier(user));
           const banner = props.cast.banners[user.username];
           const lean = banner ? bannerAngle(banner) * 0.6 : 0;
           return (
