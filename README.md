@@ -7,7 +7,7 @@ A cute 2D and 3D map showing where your team is working today. It's a React and 
 | Map | `/` | Everyone. Add `?mode=3d` for a wall TV. If the browser takes away 3D graphics and doesn't give them back within 10 seconds, the screen switches to the 2D map until it's reloaded |
 | My status | `/me` | Team members claim a username, then set their nickname, place and status |
 | Admin | `/admin` | The admin creates usernames, sets the team address, clocks and office location, and links people to the team fund's sheet |
-| Team votes | `/vote` | Everyone sees open votes and results. Logged-in members start votes and vote. `/vote?id=<id>` opens one vote |
+| Team votes | `/vote` | Everyone sees open votes and results. Logged-in members start votes and vote. `/vote?id=<id>` opens one vote, and each vote's **Share** button sends or copies that link |
 
 ## Run on your own computer (no Docker)
 
@@ -227,6 +227,8 @@ Anyone logged in on **My status** can start a vote on `/vote` (or from the notic
 - **Single** or **multiple** choice.
 - **Custom options**: invited voters can add options while the vote is open, up to 20 in all.
 - **Named** or **anonymous**. A named vote shows who picked each option. An anonymous vote shows only counts: the server never sends anyone's picks to anyone else, not to the creator, the admin or the map. Each voter still sees their own picks. Who *has voted* is shown on both kinds, for turnout and the map's markers.
+
+**Share** on a vote opens the phone's share sheet, or copies the vote's link where there is none. The link uses the team address set on the Admin page when there is one, so it opens on other people's devices. Where the browser can't copy (a plain `http://` address), the link is shown to copy by hand. Opening a link to a vote that was deleted says so.
 
 Invited people can vote, and change their vote, until the end time; the server closes the vote exactly then. Results are live for everyone, logged in or not, so a wall TV can show them. The creator can change the end time while the vote is open. The creator or the admin (with the admin password saved in that browser tab) can **Close now** to end an open vote early: it moves to **History** straight away, its end time becomes the moment it was closed, and nobody can vote or add options after that. Closing can't be undone. The creator or the admin can also delete a vote. There can be up to 30 open votes, and the newest 100 closed votes are kept in **History**; older ones are dropped by themselves.
 
