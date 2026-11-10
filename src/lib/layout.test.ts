@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Place, TeamUser } from '../../shared/types.ts';
-import { computeLayout, isNotWorking, noticeBoardSpot, placeGroup, placeName, shareLength, standingArea, type Zone } from './layout.ts';
+import { computeLayout, isNotWorking, noticeBoardSpot, parkActivities, placeGroup, placeName, shareLength, type Zone } from './layout.ts';
 
 const office = (id: string): Place => ({ id, name: id, kind: 'office' });
 const TWO_OFFICES = [office('main'), office('other')];
@@ -55,18 +55,22 @@ for (const portrait of [false, true]) {
 }
 
 for (const portrait of [false, true]) {
-  test(`${portrait ? 'portrait' : 'landscape'} town: the notice board stands in the lobby, clear of the people waiting there`, () => {
-    for (const count of [0, 3, 12, 40]) {
-      const people = Array.from({ length: count }, (_, i) => user(`u${i}`, null));
+  test(`${portrait ? 'portrait' : 'landscape'} park: all three activities fit, away from rooms and people`, () => {
+    for (const count of [0, 3, 12, 40, 100]) {
+      const people = crowd({ lobby: count, off: count, out: count, main: count });
       const layout = computeLayout(TWO_OFFICES, people, { portrait });
-      const lobby = layout.zones.find((z) => z.id === 'lobby')!;
-      const board = noticeBoardSpot(layout)!;
-      assert.ok(board.x >= lobby.x && board.x + board.w <= lobby.x + lobby.w && board.y >= lobby.y && board.y + board.h <= lobby.y + lobby.h, `${count} waiting`);
-      assert.ok(board.w >= 10 && board.h >= 8, 'big enough to read');
-      const area = standingArea(lobby);
-      assert.ok(area.x + area.w <= board.x, 'nobody stands in front of it');
-      assert.ok(area.w > 5, 'and there is still room to stand');
-      for (const seat of layout.seats.values()) assert.ok(seat.x < board.x, `${count} waiting: a seat is clear of the board`);
+      const park = layout.park!;
+      const activities = Object.values(parkActivities(layout)!);
+      assert.deepEqual(noticeBoardSpot(layout), parkActivities(layout)!.board);
+      for (const a of activities) {
+        assert.ok(a.w > 0 && a.h > 0);
+        assert.ok(a.x >= park.x && a.x + a.w <= park.x + park.w + 1e-9);
+        assert.ok(a.y >= park.y && a.y + a.h <= park.y + park.h + 1e-9);
+        for (const seat of layout.seats.values()) assert.ok(seat.x < park.x || seat.x > park.x + park.w || seat.y < park.y || seat.y > park.y + park.h);
+      }
+      activities.forEach((a, i) => activities.slice(i+1).forEach(b => {
+        assert.ok(a.x+a.w < b.x || b.x+b.w < a.x || a.y+a.h < b.y || b.y+b.h < a.y);
+      }));
     }
   });
 }
@@ -129,7 +133,7 @@ test('people in the small rooms stay inside them', () => {
 
 test('Not checked in stays small unless people are in it', () => {
   const { w: emptyWidth } = zoneOf({ main: 15 }, 'lobby');
-  assert.equal(emptyWidth, 33, 'an empty lobby is only as wide as its name, plus the notice board');
+  assert.equal(emptyWidth, 20, 'the lobby no longer reserves space for the board');
   assert.ok(zoneOf({ lobby: 6 }, 'lobby').w > emptyWidth, 'it still grows for people');
 });
 
@@ -275,5 +279,15 @@ test('the arcade park remains clear of rooms and people in both map orientations
     assert.ok(park.x>=0 && park.y>=0 && park.x+park.w<=layout.width+.001 && park.y+park.h<=layout.height+.001);
     for (const zone of layout.zones) assert.ok(!overlaps({...park,kind:'lobby',id:'arcade',name:'arcade',count:0},zone),'the arcade does not occupy a team room');
     for (const seat of layout.seats.values()) assert.ok(!(seat.x>park.x && seat.x<park.x+park.w && seat.y>park.y && seat.y<park.y+park.h));
+  }
+});
+
+
+test('reserving the park does not collapse a quiet lobby or beach beside a crowded neighbour', () => {
+  for (const split of [{off:100, lobby:0}, {off:0, lobby:100}]) {
+    const layout = computeLayout(TWO_OFFICES, crowd(split));
+    assert.ok(layout.zones.find(z => z.id === 'lobby')!.w >= 20);
+    assert.ok(layout.zones.find(z => z.id === 'off')!.w >= 22);
+    assert.ok(layout.park!.w >= 38);
   }
 });

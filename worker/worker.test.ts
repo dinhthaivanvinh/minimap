@@ -109,7 +109,7 @@ async function openEvents(signal: AbortSignal, url: URL) {
 
 test('every page serves the React app, built files come from the assets, and the rest is 404', async (t) => {
   const { api } = await setup(t);
-  for (const page of ['/', '/me', '/admin', '/vote']) {
+  for (const page of ['/', '/me', '/account', '/admin', '/vote']) {
     const res = await api('GET', page);
     assert.equal(res.status, 200, page);
     assert.equal(res.text, PAGE, page);

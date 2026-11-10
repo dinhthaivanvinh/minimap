@@ -1,4 +1,4 @@
-// The lobby's notice board in 3D: a wooden board on two posts, with the open votes drawn
+// The park's notice board in 3D: a wooden board on two posts, with the open votes drawn
 // as paper notes on a canvas texture (lib/noticeBoard.ts, the same notes as 2D). Clicks
 // are picked by raycast; an HTML link anchored to it serves keyboards and screen readers.
 import * as THREE from 'three';

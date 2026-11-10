@@ -8,11 +8,10 @@ import { latestResult, waitingVoters, type VoteView } from '../../shared/vote.ts
 import { DetailCard } from '../components/DetailCard.tsx';
 import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
-import { RandomPicker } from '../components/RandomPicker.tsx';
+import { storeSession, useSession } from '../lib/session.ts';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
 import { moverFor, withMove, type PendingMove } from '../lib/dragMove.ts';
 import { useAmbience, useNow, useReducedMotion, useTeamState } from '../lib/hooks.ts';
-import { savedLogin } from '../lib/savedLogin.ts';
 import { reactions as planReactions, type VoteSnapshot } from '../lib/voteReactions.ts';
 import { shownStatus } from '../lib/status.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
@@ -26,6 +25,7 @@ import { Button, Count, Segmented, Wordmark } from '../styles/ui.ts';
 const Map3D = lazy(() => import('../map/Map3D.tsx'));
 // The celebration and arcade load only when their map buttons are pressed.
 const TeamAssemble = lazy(() => import('../components/TeamAssemble.tsx').then((m) => ({ default: m.TeamAssemble })));
+const RandomPicker = lazy(() => import('../components/RandomPicker.tsx').then(m => ({ default: m.RandomPicker })));
 const Basketball = lazy(() => import('../components/Basketball.tsx').then((m) => ({ default: m.Basketball })));
 
 const MODE_KEY = 'minimap.mode';
@@ -105,13 +105,17 @@ const MapArea = styled.div<{ $is3d: boolean }>`
 
   ${media.phone} {
     flex: none;
-    height: 150vw;
-    min-height: 520px;
+    height: clamp(560px, 185vw, 1080px);
+    min-height: 0;
 
     ${({ $is3d }) => $is3d && css`
-      height: 96vw;
-      min-height: 380px;
+      height: clamp(480px, 135vw, 850px);
+      min-height: 0;
     `}
+  }
+  @media (max-width: 860px) and (orientation: landscape) and (max-height: 600px) {
+    height: clamp(360px, 72vw, 640px);
+    ${({ $is3d }) => $is3d && css`height: clamp(360px, 55vw, 520px);`}
   }
 `;
 
@@ -373,7 +377,8 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 export function MonitorPage() {
   const { state: liveState, online, votes } = useTeamState();
   // Someone logged in on this browser can drag their own character to another room.
-  const [login] = useState(savedLogin);
+  const session = useSession(liveState);
+  const login = session.auth;
   const [move, setMove] = useState<(PendingMove & { saved: boolean }) | null>(null);
   const [moveError, setMoveError] = useState('');
   // The map shows a dragged move straight away, while the server saves it.
@@ -399,6 +404,8 @@ export function MonitorPage() {
       setAssemblyCast({members:structuredClone(attendance.members),total:attendance.total,trigger});
     }
   }
+  const pickerTrigger = useRef<HTMLElement | null>(null);
+  const openPicker = useCallback((trigger: HTMLElement) => { pickerTrigger.current = trigger; setSelection(null); setPickerOpen(true); }, []);
   const [pickerOpen, setPickerOpen] = useState(false);
   // Each screen can turn the town's daylight and weather off, if the admin has them on.
   const [weatherOn, setWeatherOn] = useState(() => readSaved(WEATHER_KEY) !== 'off');
@@ -459,10 +466,11 @@ export function MonitorPage() {
         setMove((current) => (current && isThis(current) ? { ...current, saved: true } : current));
       } catch (err) {
         // Put them back where the server has them.
+        if (err instanceof ApiFailure && err.status === 401) storeSession(null);
         setMove((current) => (isThis(current) ? null : current));
         setMoveError(
           err instanceof ApiFailure && err.status === 401
-            ? 'Your login has ended. Log in again on My status to move yourself.'
+            ? 'Your login has ended. Use Log in on the home page to move yourself.'
             : `Could not move you. ${errorText(err)}`,
         );
       }
@@ -534,7 +542,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, onAssemble: openAssembly, look, votes: allVotes, voteMarks, reactions, mover, onMove: moveMe };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, onAssemble: openAssembly, onPicker: openPicker, look, votes: allVotes, voteMarks, reactions, mover, onMove: moveMe };
 
   return (
     <Page>
@@ -588,10 +596,13 @@ export function MonitorPage() {
           </button>
         </Segmented>
         <TopBarSpacer />
-        <Button type="button" disabled={!state?.users.length} onClick={() => { closeCard(); setPickerOpen(true); }}>
-          Random picker
-        </Button>
-        <Button as="a" $primary href="/me">Update my status</Button>
+        {session.auth ? <>
+          <Button as="a" $primary href="/me">Update status</Button>
+          <Button as="a" href="/account" style={{maxWidth: 'min(220px, 100%)', whiteSpace: 'normal', overflowWrap: 'anywhere'}} aria-label={`Account settings for ${session.auth.username}`}>@{session.auth.username}</Button>
+        </> : session.pending ? <span role="status">Checking account…</span> :
+          session.error ? <Button onClick={session.retry}>Retry account check</Button> :
+          <Button as="a" $primary href="/me">Log in</Button>}
+
       </TopBar>
 
       <Stage>
@@ -637,7 +648,13 @@ export function MonitorPage() {
         </Guard>
       )}
 
-      {state && pickerOpen && <RandomPicker users={users} initialView={mode} onClose={closePicker} />}
+      {state && pickerOpen && (
+        <Guard what="the random picker" onFail={closePicker}>
+          <Suspense fallback={null}>
+            <RandomPicker users={users} initialView={mode} trigger={pickerTrigger.current} onClose={closePicker}/>
+          </Suspense>
+        </Guard>
+      )}
 
       {state && selection && selectedUser && (
         <DetailCard user={selectedUser} places={state.places} votes={allVotes} anchor={selection.anchor} onClose={closeCard} />

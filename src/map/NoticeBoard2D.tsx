@@ -1,4 +1,4 @@
-// The lobby's notice board on the 2D map: a cork board with a paper note for each open
+// The park's notice board on the 2D map: a cork board with a paper note for each open
 // vote (lib/noticeBoard.ts). A note opens its vote, and the board opens the /vote page.
 import type { CSSProperties } from 'react';
 import styled, { css, keyframes } from 'styled-components';

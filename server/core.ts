@@ -808,6 +808,11 @@ export function createCore({
       return jsonResponse(200, { token: tokenFor(user), username: user.username } satisfies AuthResult);
     }
 
+    if (route === 'GET /api/me') {
+      const user = userFromToken(req);
+      return jsonResponse(200, { username: user.username });
+    }
+
     if (route === 'PATCH /api/me') {
       const user = userFromToken(req);
       const body = await req.readJson();

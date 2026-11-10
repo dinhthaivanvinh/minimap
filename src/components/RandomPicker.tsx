@@ -27,6 +27,7 @@ import {
 import { media, theme } from '../styles/theme.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
 import { Button, FieldLabel, Input, Segmented } from '../styles/ui.ts';
+import { PICKER_LABELS } from '../lib/pickerAppearance.ts';
 import { Mochi } from './Mochi.tsx';
 
 // three.js is large, so the 3D machine only loads when someone switches to it.
@@ -34,7 +35,7 @@ const ClawMachine3D = lazy(() => import('./ClawMachine3D.tsx'));
 
 export type PickerView = '2d' | '3d';
 
-const DEFAULT_TITLE = 'Random pick';
+const DEFAULT_TITLE = PICKER_LABELS.title;
 const EASE = { move: 'cubic-bezier(.45, 0, .3, 1)', drop: 'cubic-bezier(.5, 0, .9, .5)' } as const;
 
 /** A length in machine units, which are hundredths of the glass's width. */
@@ -495,10 +496,11 @@ interface RandomPickerProps {
   users: TeamUser[];
   /** Starts in the same style as the map behind it. */
   initialView?: PickerView;
+  trigger?: HTMLElement | null;
   onClose: () => void;
 }
 
-export function RandomPicker({ users, initialView = '2d', onClose }: RandomPickerProps) {
+export function RandomPicker({ users, initialView = '2d', onClose, trigger }: RandomPickerProps) {
   const reduced = useReducedMotion();
   const has3D = useMemo(supportsWebGL, []);
   const [view, setView] = useState<PickerView>(() => (initialView === '3d' && has3D ? '3d' : '2d'));
@@ -533,9 +535,23 @@ export function RandomPicker({ users, initialView = '2d', onClose }: RandomPicke
 
   // Focus moves into the dialog, and back to whatever opened it afterwards.
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
+    const opener = trigger ?? document.activeElement as HTMLElement | null;
     dialog.current?.focus();
-    return () => opener?.focus?.();
+    return () => {
+      // 3D labels are attached at 30 fps; wait for a visible replacement after a resize.
+      let frames = 12;
+      const restore = () => {
+        if (dialog.current?.isConnected) return;
+        const available = (node: HTMLElement | null) =>
+          node?.isConnected && !node.matches(':disabled') && node.getClientRects().length > 0;
+        const target = available(opener) ? opener :
+          [...document.querySelectorAll<HTMLElement>('[data-picker-play]')].find(available);
+        if (target) target.focus({ preventScroll: true });
+        else if (frames-- > 0) requestAnimationFrame(restore);
+        else document.querySelector<HTMLElement>('header a')?.focus({ preventScroll: true });
+      };
+      requestAnimationFrame(() => requestAnimationFrame(restore));
+    };
   }, []);
 
   useEffect(() => {
@@ -654,7 +670,7 @@ export function RandomPicker({ users, initialView = '2d', onClose }: RandomPicke
                 ) : (
                   <>
                     <Rail />
-                    <ChuteBox><span>PRIZE</span></ChuteBox>
+                    <ChuteBox><span>{PICKER_LABELS.prize}</span></ChuteBox>
                     <Floor />
 
                     {shown.map((user, i) => {
@@ -730,7 +746,7 @@ export function RandomPicker({ users, initialView = '2d', onClose }: RandomPicke
                 <Button type="button" onClick={skip}>Skip animation</Button>
               ) : (
                 <Button type="button" $primary disabled={!pool.length} onClick={start}>
-                  {draw ? 'Pick again' : 'Start draw'}
+                  {draw ? 'Pick again' : PICKER_LABELS.start}
                 </Button>
               )}
             </Controls>
