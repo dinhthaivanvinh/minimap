@@ -12,6 +12,7 @@ import { watchContextLoss } from '../lib/contextLoss.ts';
 import { fundArt, userFundTier } from '../lib/fundLook.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
 import { boardNotes, voteLink } from '../lib/noticeBoard.ts';
+import { DRAG_START_PX, dropPlace, zoneAt } from '../lib/dragMove.ts';
 import { computeLayout, noticeBoardSpot, parkActivities, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { box, clampTo, contains, grow, hopHeight, pickSpot, steer, type Box } from '../lib/wander.ts';
 import type { Reaction, ReactionKind } from '../lib/voteReactions.ts';
@@ -64,6 +65,8 @@ export interface Scene3D {
   setVoteMarks(marks: VoteMarks | null): void;
   /** Plays characters' reactions to votes once (lib/voteReactions.ts). */
   react(list: Reaction[]): void;
+  /** The person logged in on this browser, who may drag their own character to another room. */
+  setMover(username: string | null): void;
   destroy(): void;
 }
 
@@ -76,6 +79,8 @@ interface SceneOptions {
   onCamera: (camera: CameraState) => void;
   /** The browser took away the 3D context and didn't give it back. */
   onContextGone: () => void;
+  /** The mover dropped their character on another room: its place, or null for Not checked in. */
+  onMove: (place: string | null) => void;
 }
 
 type Vec3 = [number, number, number];
@@ -124,6 +129,8 @@ interface Character {
   closest: number;
   closerAt: number;
   placed: boolean;
+  /** Picked up by the person dragging themselves to another room. */
+  held: boolean;
   opacity: number;
   targetOpacity: number;
   scale: number;
@@ -280,7 +287,7 @@ function checkerTexture(a: string, b: string) {
   return texture;
 }
 
-export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade, onPicker, onNoticeBoard }: SceneOptions): Scene3D {
+export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade, onPicker, onNoticeBoard, onMove }: SceneOptions): Scene3D {
   const ramp = toonRamp();
   const materials = new Map<number, THREE.MeshToonMaterial>();
   const mat = (color: number): THREE.MeshToonMaterial => {
@@ -1006,6 +1013,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       closest: Infinity,
       closerAt: 0,
       placed: false,
+      held: false,
       opacity: 1,
       targetOpacity: 1,
       scale: 1,
@@ -1188,6 +1196,115 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
   renderer.domElement.addEventListener('pointerup', onPointerUp);
 
+  // ---- Dragging yourself to another room ----------------------------------
+  // The person logged in on this browser can pick up their own character, by its body
+  // or its name, and drop it on another room. This listens before the camera controls,
+  // so dragging yourself doesn't turn the camera.
+
+  let mover: string | null = null;
+  let hold: { character: Character; pointerId: number; x: number; y: number; moved: boolean } | null = null;
+  let dropZone: string | null = null;
+  // Characters stand on y = 1.
+  const floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), -1);
+  const floorPoint = new THREE.Vector3();
+  const HELD_LIFT = 1.2;
+
+  function aim(e: PointerEvent) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+  }
+
+  function showDropZone(id: string | null) {
+    if (id === dropZone) return;
+    if (dropZone) delete zoneLabels.get(dropZone)?.dataset.dropTarget;
+    dropZone = id;
+    const label = id ? zoneLabels.get(id) : undefined;
+    if (label) label.dataset.dropTarget = '';
+  }
+
+  // The floor under the pointer, in layout units, kept on the map.
+  function layoutPointAt(e: PointerEvent): { x: number; y: number } | null {
+    aim(e);
+    if (!raycaster.ray.intersectPlane(floor, floorPoint)) return null;
+    return {
+      x: THREE.MathUtils.clamp(floorPoint.x + center.x, 0, layout.width),
+      y: THREE.MathUtils.clamp(floorPoint.z + center.z, 0, layout.height),
+    };
+  }
+
+  function onHoldStart(e: PointerEvent) {
+    const character = mover ? characters.get(mover) : undefined;
+    if (!character || hold || e.button !== 0 || !(e.target instanceof Node)) return;
+    const onCanvas = e.target === renderer.domElement;
+    if (onCanvas) {
+      aim(e);
+      if (!raycaster.intersectObject(character.group, true).some((h) => h.object.userData.username)) return;
+    } else if (!character.labelElement.contains(e.target)) {
+      return;
+    }
+    e.stopPropagation();
+    hold = { character, pointerId: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+    // A press that doesn't move is still a click, which opens their card.
+    if (onCanvas) downAt = { x: e.clientX, y: e.clientY };
+  }
+
+  function onHoldMove(e: PointerEvent) {
+    if (!hold || hold.pointerId !== e.pointerId) return;
+    const { character } = hold;
+    if (!hold.moved) {
+      if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) < DRAG_START_PX) return;
+      hold.moved = true;
+      character.held = true;
+      root.setPointerCapture(e.pointerId);
+      tween = null;
+    }
+    const point = layoutPointAt(e);
+    if (!point) return;
+    const { x, z } = toWorld(point.x, point.y);
+    character.group.position.set(x, 1 + HELD_LIFT, z);
+    const zone = zoneAt(layout, point.x, point.y);
+    showDropZone(zone && zone.id !== character.zoneId ? zone.id : null);
+  }
+
+  function onHoldEnd(e: PointerEvent) {
+    if (!hold || hold.pointerId !== e.pointerId) return;
+    const { character, moved } = hold;
+    hold = null;
+    if (!moved) return;
+    const point = e.type === 'pointerup' ? layoutPointAt(e) : null;
+    letGo(character);
+    const place = point ? dropPlace(layout, character.username, point.x, point.y) : undefined;
+    if (place !== undefined) onMove(place);
+  }
+
+  // Back to their own spot. A drop on another room moves the spot itself.
+  function letGo(character: Character) {
+    showDropZone(null);
+    character.held = false;
+    character.inner.rotation.z = 0;
+    character.group.position.y = 1;
+    character.goal.copy(character.seat);
+    character.goingHome = true;
+    if (reducedMotion) {
+      character.group.position.copy(character.seat);
+      character.mode = 'idle';
+    } else {
+      character.mode = 'travel';
+    }
+  }
+
+  // Lets the page style the mover's name as something to grab.
+  function markMover() {
+    const label = mover ? characters.get(mover)?.labelElement : undefined;
+    if (label) label.dataset.mover = '';
+  }
+
+  root.addEventListener('pointerdown', onHoldStart, { capture: true });
+  root.addEventListener('pointermove', onHoldMove);
+  root.addEventListener('pointerup', onHoldEnd);
+  root.addEventListener('pointercancel', onHoldEnd);
+
   // ---- Applying data ----------------------------------------------------
 
   function apply(state: TeamState, isDimmed: (user: TeamUser) => boolean): SceneLabels {
@@ -1239,6 +1356,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       character.cell = seat.cell;
       character.area = seat.cell >= CROWDED_CELL ? wanderArea(seat.zone, character.scale) : null;
       character.targetOpacity = isDimmed(user) ? 0.22 : 1;
+      // Someone being dragged stays under the pointer, and heads to their spot when let go.
+      if (character.held) return;
       if (!character.placed || reducedMotion || reflow) {
         character.group.position.copy(character.seat);
         character.goal.copy(character.seat);
@@ -1265,6 +1384,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
     // A new map only when people come or go, so React re-renders just for that.
     if (changed) labelElements = new Map([...characters].map(([username, c]) => [username, c.labelElement]));
+    markMover();
 
     const zones = layout.zones.flatMap(({ id, name, count }) => {
       const element = zoneLabels.get(id);
@@ -1304,20 +1424,26 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
         c.labelElement.style.transform = `scale(${labelScale})`;
       }
 
-      if (c.mode === 'idle' && time >= c.waitUntil && wandering && c.area && !reducedMotion) setOff(c, time);
-
-      if (c.mode === 'idle') {
-        // Standing still: turn to face the camera and breathe.
+      if (c.held) {
+        // Wriggles while picked up. Nothing else moves them until they're let go.
         inner.position.y = 0;
-        inner.rotation.y += shortestAngle(-inner.rotation.y) * Math.min(1, dt * 4);
-        if (!reducedMotion) {
-          const breathe = Math.sin(time * 2.2 + c.phase) * 0.025;
-          inner.scale.set(1 + breathe, 1 - breathe, 1 + breathe);
-        }
+        if (!reducedMotion) inner.rotation.z = Math.sin(time * 12) * 0.12;
       } else {
-        walk(c, dt, time);
+        if (c.mode === 'idle' && time >= c.waitUntil && wandering && c.area && !reducedMotion) setOff(c, time);
+
+        if (c.mode === 'idle') {
+          // Standing still: turn to face the camera and breathe.
+          inner.position.y = 0;
+          inner.rotation.y += shortestAngle(-inner.rotation.y) * Math.min(1, dt * 4);
+          if (!reducedMotion) {
+            const breathe = Math.sin(time * 2.2 + c.phase) * 0.025;
+            inner.scale.set(1 + breathe, 1 - breathe, 1 + breathe);
+          }
+        } else {
+          walk(c, dt, time);
+        }
+        animateReaction(c, time);
       }
-      animateReaction(c, time);
 
       if (Math.abs(c.opacity - c.targetOpacity) > 0.005) {
         setOpacity(c, c.opacity + (c.targetOpacity - c.opacity) * Math.min(1, dt * 8));
@@ -1579,7 +1705,21 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       flyTo(target, position);
       reportCamera();
     },
+    setMover(username) {
+      if (mover === username) return;
+      if (mover) delete characters.get(mover)?.labelElement.dataset.mover;
+      if (hold && hold.character.username !== username) {
+        if (hold.moved) letGo(hold.character);
+        hold = null;
+      }
+      mover = username;
+      markMover();
+    },
     destroy() {
+      root.removeEventListener('pointerdown', onHoldStart, { capture: true });
+      root.removeEventListener('pointermove', onHoldMove);
+      root.removeEventListener('pointerup', onHoldEnd);
+      root.removeEventListener('pointercancel', onHoldEnd);
       cancelAnimationFrame(raf);
       observer.disconnect();
       controls.dispose();

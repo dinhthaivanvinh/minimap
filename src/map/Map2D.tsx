@@ -1,12 +1,13 @@
 // The 2D floor plan, built from plain HTML and SVG.
 import { officeAssembly } from '../lib/assembly.ts';
 import { AssemblePlay, OfficeDecor } from '../components/AssemblyDecor.tsx';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import styled, { css, keyframes, type RuleSet } from 'styled-components';
 import type { TeamUser } from '../../shared/types.ts';
 import { Badge, BadgeFigure, type SelectHandler } from '../components/Badge.tsx';
 import { Desk, Mochi, MochiSvg } from '../components/Mochi.tsx';
 import { useElementSize, useReducedMotion } from '../lib/hooks.ts';
+import { DRAG_START_PX, dropPlace, zoneAt } from '../lib/dragMove.ts';
 import { computeLayout, noticeBoardSpot, parkActivities, type MapLayout, type Seat, type Zone, type ZoneKind } from '../lib/layout.ts';
 import type { Ambience } from '../lib/ambience.ts';
 import { lookFor } from '../lib/look.ts';
@@ -124,7 +125,7 @@ const ZONE_LOOKS: Record<ZoneKind, RuleSet> = {
 
 const GLIDE = '.9s cubic-bezier(.45, .05, .3, 1)';
 
-const Room = styled.section<{ $kind: ZoneKind }>`
+const Room = styled.section<{ $kind: ZoneKind; $dropTarget: boolean }>`
   position: absolute;
   border: ${theme.line};
   border-radius: 20px;
@@ -137,6 +138,12 @@ const Room = styled.section<{ $kind: ZoneKind }>`
   ${({ $kind }) => ZONE_LOOKS[$kind]}
   ${({ $kind }) => ($kind === 'office' || $kind === 'lobby') && INDOORS}
   ${shade}
+
+  /* The room someone is about to drop themselves into. */
+  ${({ $dropTarget }) => $dropTarget && css`
+    outline: 4px dashed ${theme.focus};
+    outline-offset: 3px;
+  `}
 `;
 
 const Park = styled.div`
@@ -371,7 +378,7 @@ const CONFETTI = Array.from({ length: 14 }, (_, i) => {
   };
 });
 
-const PersonBox = styled.div<{ $dimmed: boolean; $moving: boolean; $strolling: boolean; $reaction?: ReactionKind }>`
+const PersonBox = styled.div<{ $dimmed: boolean; $moving: boolean; $strolling: boolean; $reaction?: ReactionKind; $draggable: boolean; $dragging: boolean }>`
   position: absolute;
   z-index: 3;
   transform: translate(-50%, -50%) scale(var(--s, 1));
@@ -412,6 +419,26 @@ const PersonBox = styled.div<{ $dimmed: boolean; $moving: boolean; $strolling: b
     `}
   }
 
+  /* Your own character can be picked up, also by touch, so the page mustn't scroll or select text instead. */
+  ${({ $draggable }) => $draggable && css`
+    touch-action: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+
+    [data-badge] { cursor: grab; }
+  `}
+
+  /* Follows the pointer straight away, then glides to its new seat when let go. */
+  ${({ $dragging }) => $dragging && css`
+    &, &:hover, &:focus-within { z-index: 20; }
+    transition: opacity .25s, transform .3s;
+    animation: none;
+
+    [data-badge] { cursor: grabbing; }
+
+    ${MochiSvg} { animation: ${waddle} .3s ease-in-out infinite; }
+  `}
+
   ${media.reducedMotion} {
     animation: none;
     transition: opacity .25s;
@@ -424,7 +451,7 @@ function percent(part: number, whole: number): string {
   return `${(part / whole) * 100}%`;
 }
 
-function ZoneRoom({ zone, layout, busy, snowy, assembled, onAssemble }: { zone: Zone; layout: MapLayout; busy: boolean; snowy: boolean; assembled: boolean; onAssemble: (trigger: HTMLElement)=>void }) {
+function ZoneRoom({ zone, layout, busy, snowy, assembled, dropTarget, onAssemble }: { zone: Zone; layout: MapLayout; busy: boolean; snowy: boolean; assembled: boolean; dropTarget: boolean; onAssemble: (trigger: HTMLElement)=>void }) {
   const style: CSSProperties = {
     left: percent(zone.x, layout.width),
     top: percent(zone.y, layout.height),
@@ -432,7 +459,7 @@ function ZoneRoom({ zone, layout, busy, snowy, assembled, onAssemble }: { zone: 
     height: percent(zone.h, layout.height),
   };
   return (
-    <Room $kind={zone.kind} style={style} data-office-assembled={assembled || undefined}>
+    <Room $kind={zone.kind} $dropTarget={dropTarget} style={style} data-office-assembled={assembled || undefined}>
       {assembled && <OfficeDecor aria-hidden="true"/>}
       <RoomTitle>
         <RoomName>{zone.name}</RoomName>
@@ -475,12 +502,72 @@ interface PersonProps {
   /** Hasn't voted on a vote shown on the map. */
   waiting: boolean;
   reaction: ReactionKind | undefined;
+  /** Set only for the person logged in on this browser, who may drag themselves to another room. */
+  drag?: PersonDrag;
 }
 
-function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrella, waiting, reaction }: PersonProps) {
+/** Where the pointer is while someone drags themselves, in screen pixels. */
+interface PersonDrag {
+  onOver: (clientX: number, clientY: number) => void;
+  onDrop: (clientX: number, clientY: number) => void;
+  onCancel: () => void;
+}
+
+/** Lets a person be picked up and dropped. A press that doesn't move still opens their card. */
+function useDrag(drag: PersonDrag | undefined) {
+  const press = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
+  const justDropped = useRef(false);
+  const [offset, setOffset] = useState<{ x: number; y: number } | null>(null);
+  if (!drag) return { offset: null, handlers: {} };
+
+  function end(event: ReactPointerEvent<HTMLElement>, dropped: boolean) {
+    const current = press.current;
+    if (!current || current.id !== event.pointerId) return;
+    press.current = null;
+    if (!current.moved) return;
+    justDropped.current = true;
+    setOffset(null);
+    if (dropped) drag?.onDrop(event.clientX, event.clientY);
+    else drag?.onCancel();
+  }
+
+  const handlers = {
+    onPointerDown(event: ReactPointerEvent<HTMLElement>) {
+      if (event.button !== 0 || press.current) return;
+      justDropped.current = false;
+      press.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+    },
+    onPointerMove(event: ReactPointerEvent<HTMLElement>) {
+      const current = press.current;
+      if (!current || current.id !== event.pointerId) return;
+      const x = event.clientX - current.x;
+      const y = event.clientY - current.y;
+      if (!current.moved) {
+        if (Math.hypot(x, y) < DRAG_START_PX) return;
+        current.moved = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      setOffset({ x, y });
+      drag?.onOver(event.clientX, event.clientY);
+    },
+    onPointerUp: (event: ReactPointerEvent<HTMLElement>) => end(event, true),
+    onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => end(event, false),
+    // A drag isn't a click, so it doesn't open the card.
+    onClickCapture(event: { stopPropagation(): void; preventDefault(): void }) {
+      if (!justDropped.current) return;
+      justDropped.current = false;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+  };
+  return { offset, handlers };
+}
+
+function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrella, waiting, reaction, drag }: PersonProps) {
   const zoneId = seat.zone.id;
   const previousZone = useRef(zoneId);
   const [moving, setMoving] = useState(false);
+  const { offset, handlers } = useDrag(drag);
 
   // People hop as they glide to a new room.
   useEffect(() => {
@@ -492,15 +579,27 @@ function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrell
   }, [zoneId]);
 
   const cellPx = seat.cell * scale;
+  const left = percent(seat.x, layout.width);
+  const top = percent(seat.y, layout.height);
   const style = {
-    left: percent(seat.x, layout.width),
-    top: percent(seat.y, layout.height),
+    left: offset ? `calc(${left} + ${offset.x}px)` : left,
+    top: offset ? `calc(${top} + ${offset.y}px)` : top,
     '--s': Math.max(0.5, Math.min(cellPx / 100, 1.15)).toFixed(3),
     '--d': `${-lookFor(user.username).phase * 0.37}s`,
   } as CSSProperties;
 
   return (
-    <PersonBox $dimmed={dimmed} $moving={moving} $strolling={seat.zone.kind === 'street'} $reaction={reaction} style={style}>
+    <PersonBox
+      $dimmed={dimmed}
+      $moving={moving}
+      $strolling={seat.zone.kind === 'street'}
+      $reaction={reaction}
+      $draggable={Boolean(drag)}
+      $dragging={Boolean(offset)}
+      title={drag ? 'Drag yourself to another room to change your place' : undefined}
+      style={style}
+      {...handlers}
+    >
       {reaction === 'cheer' && <ReactionTag aria-hidden="true">🙌</ReactionTag>}
       {reaction === 'clap' && <ReactionTag aria-hidden="true">👏</ReactionTag>}
       {reaction === 'confetti' && (
@@ -561,9 +660,11 @@ function isPlain(look: Ambience): boolean {
   return look.daylight === 1 && look.warmth === 0 && look.weather.gloom === 0;
 }
 
-export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, onAssemble, onPicker, look, votes, voteMarks, reactions }: MapProps) {
+export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, onAssemble, onPicker, look, votes, voteMarks, reactions, mover, onMove }: MapProps) {
   const attendance = officeAssembly(state);
   const fillRef = useRef<HTMLDivElement>(null);
+  const planRef = useRef<HTMLDivElement>(null);
+  const [dropZone, setDropZone] = useState<string | null>(null);
   const reduced = useReducedMotion();
   const daylight = {
     '--night': 1 - look.daylight,
@@ -601,6 +702,30 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
   // Fit the whole plan inside the available space, keeping its proportions.
   const scale = Math.min(width / layout.width, height / layout.height);
 
+  // A point on the screen, in layout units.
+  function toLayout(clientX: number, clientY: number): { x: number; y: number } | null {
+    const rect = planRef.current?.getBoundingClientRect();
+    if (!rect?.width || !rect.height) return null;
+    return { x: ((clientX - rect.left) / rect.width) * layout.width, y: ((clientY - rect.top) / rect.height) * layout.height };
+  }
+
+  const drag: PersonDrag | undefined = mover
+    ? {
+        onOver(clientX, clientY) {
+          const point = toLayout(clientX, clientY);
+          const zone = point && zoneAt(layout, point.x, point.y);
+          setDropZone(zone && zone.id !== layout.seats.get(mover)?.zone.id ? zone.id : null);
+        },
+        onDrop(clientX, clientY) {
+          setDropZone(null);
+          const point = toLayout(clientX, clientY);
+          const place = point ? dropPlace(layout, mover, point.x, point.y) : undefined;
+          if (place !== undefined) onMove(place);
+        },
+        onCancel: () => setDropZone(null),
+      }
+    : undefined;
+
   function isBusy(zone: Zone): boolean {
     if (portrait) return true;
     const seat = [...layout.seats.values()].find((s) => s.zone.id === zone.id);
@@ -620,7 +745,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
       <Sky />
       <Stars />
       {width > 0 && height > 0 && (
-        <Plan style={{ width: layout.width * scale, height: layout.height * scale }}>
+        <Plan ref={planRef} style={{ width: layout.width * scale, height: layout.height * scale }}>
           {layout.park && (
             <Park
               data-park
@@ -636,7 +761,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
             </Park>
           )}
           {layout.zones.map((zone) => (
-            <ZoneRoom key={zone.id} zone={zone} layout={layout} busy={isBusy(zone)} snowy={snowy} assembled={attendance.unlocked && zone.kind==='office' && zone.count>0} onAssemble={onAssemble} />
+            <ZoneRoom key={zone.id} zone={zone} layout={layout} busy={isBusy(zone)} snowy={snowy} assembled={attendance.unlocked && zone.kind==='office' && zone.count>0} dropTarget={dropZone === zone.id} onAssemble={onAssemble} />
           ))}
           {layout.park && parkTrees(layout.park).map((tree, i) => (
             <div key={`park-tree-${i}`} data-park-tree aria-hidden="true"
@@ -669,6 +794,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
                 umbrella={wet && (seat.zone.kind === 'street' || seat.zone.kind === 'off')}
                 waiting={voteMarks?.waiting.has(user.username) ?? false}
                 reaction={playing.get(user.username)}
+                drag={user.username === mover ? drag : undefined}
               />
             );
           })}

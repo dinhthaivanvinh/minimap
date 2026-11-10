@@ -41,4 +41,8 @@ export interface MapProps {
   voteMarks: VoteMarks | null;
   /** Characters hop when they vote, and cheer, clap or get confetti when a vote closes. */
   reactions: ReactionPlay | null;
+  /** The person logged in on this browser, who may drag their own character to another room. Null for nobody. */
+  mover: string | null;
+  /** The mover dropped their character on another room: its place, or null for Not checked in. */
+  onMove: (place: string | null) => void;
 }

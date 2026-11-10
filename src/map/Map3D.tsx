@@ -53,15 +53,6 @@ const SkyLayer = styled.div`
   pointer-events: none;
 `;
 
-const SceneStage = styled.div`
-  position: absolute;
-  inset: 0;
-
-  canvas {
-    display: block;
-  }
-`;
-
 const ZoneLabel = styled.div`
   padding: 0 10px;
   border: ${theme.line};
@@ -76,6 +67,29 @@ const ZoneLabel = styled.div`
     border-width: 2px;
     border-radius: 8px;
     font-size: 11px;
+  }
+`;
+
+const SceneStage = styled.div`
+  position: absolute;
+  inset: 0;
+
+  canvas {
+    display: block;
+  }
+
+  /* The room someone is about to drop themselves into. */
+  [data-drop-target] > ${ZoneLabel} {
+    outline: 4px dashed ${theme.focus};
+    outline-offset: 2px;
+    background: ${theme.butter};
+  }
+
+  /* Your own name can be grabbed to drag yourself, also by touch. */
+  [data-mover] [data-badge] {
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
   }
 `;
 
@@ -187,6 +201,8 @@ export default function Map3D({
   votes,
   voteMarks,
   reactions,
+  mover,
+  onMove,
   onFail,
 }: Map3DProps) {
   const attendance = officeAssembly(state);
@@ -213,6 +229,8 @@ export default function Map3D({
   onSelectRef.current = onSelect;
   const onFailRef = useRef(onFail);
   onFailRef.current = onFail;
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -223,6 +241,7 @@ export default function Map3D({
       onArcade: (trigger) => onArcadeRef.current(trigger),
       onNoticeBoard: (link) => location.assign(link),
       onContextGone: () => onFailRef.current(),
+      onMove: (place) => onMoveRef.current(place),
       // Clicking a character opens the same card as clicking its badge.
       onPick: (username, label) =>
         onSelectRef.current(username, label.querySelector<HTMLElement>('[data-badge]') ?? label),
@@ -267,6 +286,10 @@ export default function Map3D({
   }, [focus]);
 
   useEffect(() => {
+    sceneRef.current?.setMover(mover);
+  }, [mover]);
+
+  useEffect(() => {
     sceneRef.current?.setWandering(wanderOn);
   }, [wanderOn]);
 
@@ -308,7 +331,9 @@ export default function Map3D({
         </Button>
       </CameraBar>
 
-      <CameraHint>Drag to rotate, scroll to zoom, click someone for details</CameraHint>
+      <CameraHint>
+        Drag to rotate, scroll to zoom, click someone for details{mover && ', drag yourself to another room to move'}
+      </CameraHint>
 
       {arcadeSlot &&
         createPortal(
