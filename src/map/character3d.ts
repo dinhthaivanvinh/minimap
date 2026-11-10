@@ -127,21 +127,25 @@ export function createCharacterBuilder({ ramp, mat, mesh }: CharacterTools): (in
     inner.add(mesh(new THREE.SphereGeometry(0.11, 8, 6), 0xe24b4a, { y: 2.6, z: 0.66, shadow: false }));
   }
 
-  // A birthday or anniversary, matching the 2D art: a party hat with a pompom, and a balloon on a string.
+  // A birthday or anniversary, matching the 2D art: a party hat with a pompom, and a balloon on a
+  // string. Both are a little larger than in 2D, so they still read when the 3D map is zoomed out.
   function addParty(inner: THREE.Group, kind: CelebrationKind) {
     const hex = (color: string) => parseInt(color.slice(1), 16);
-    inner.add(mesh(new THREE.ConeGeometry(0.55, 1.25, 16), hex(PARTY_HAT), { y: 2.95 }));
-    inner.add(mesh(new THREE.SphereGeometry(0.17, 10, 8), hex(PARTY_DOTS), { y: 3.62, shadow: false }));
-    for (const [x, y, z] of [[-0.18, 2.75, 0.4], [0.2, 3.05, 0.3], [0.05, 2.55, 0.5]] as const) {
-      inner.add(mesh(new THREE.SphereGeometry(0.07, 6, 4), hex(PARTY_DOTS), { x, y, z, shadow: false }));
+    // The cone's base sits on the head at y = 2.35, and its tip is at 3.95.
+    inner.add(mesh(new THREE.ConeGeometry(0.72, 1.6, 16), hex(PARTY_HAT), { y: 3.15 }));
+    inner.add(mesh(new THREE.SphereGeometry(0.22, 10, 8), hex(PARTY_DOTS), { y: 3.98, shadow: false }));
+    // Dots on the front of the cone's surface.
+    for (const [x, y, z] of [[-0.25, 2.65, 0.53], [0.18, 3.05, 0.36], [0.12, 2.5, 0.64]] as const) {
+      inner.add(mesh(new THREE.SphereGeometry(0.09, 6, 4), hex(PARTY_DOTS), { x, y, z, shadow: false }));
     }
     const { fill, shade } = BALLOON[kind];
-    const balloon = mesh(new THREE.SphereGeometry(0.42, 16, 12), hex(fill), { x: 1.55, y: 3.55, z: 0.2 });
+    const balloon = mesh(new THREE.SphereGeometry(0.58, 16, 12), hex(fill), { x: 1.85, y: 3.9, z: 0.2 });
     balloon.scale.y = 1.2;
     inner.add(balloon);
-    inner.add(mesh(new THREE.ConeGeometry(0.08, 0.14, 6), hex(shade), { x: 1.55, y: 3.0, z: 0.2, shadow: false }));
-    const string = mesh(new THREE.CylinderGeometry(0.015, 0.015, 2.1, 4), INK, { x: 1.35, y: 1.95, z: 0.2, shadow: false });
-    string.rotation.z = 0.19;
+    inner.add(mesh(new THREE.ConeGeometry(0.11, 0.18, 6), hex(shade), { x: 1.85, y: 3.15, z: 0.2, shadow: false }));
+    // The string runs from the knot (1.85, 3.1) down to the side of the body (1.35, 1.0).
+    const string = mesh(new THREE.CylinderGeometry(0.02, 0.02, 2.16, 4), INK, { x: 1.6, y: 2.05, z: 0.2, shadow: false });
+    string.rotation.z = -Math.atan2(0.5, 2.1);
     inner.add(string);
   }
 
