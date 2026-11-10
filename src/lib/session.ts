@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { AuthResult, TeamState } from '../../shared/types.ts';
 import { api, ApiFailure, errorText } from './api.ts';
 import { savedLogin } from './savedLogin.ts';
+import { shouldDropSession } from './sessionRules.ts';
 
 // A blocked storage area should still allow login until this page is left.
 let transient: AuthResult | null | undefined;
@@ -24,6 +25,10 @@ export function useSession(state: TeamState | null) {
   const [confirmed, setConfirmed] = useState<AuthResult | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const member = state?.users.find((u) => u.username === candidate?.username);
+  const known = state ? Boolean(member) : null;
+  // A release keeps the username on the roster, but invalidates its token.
+  const claimed = member?.claimed ?? false;
   useEffect(() => {
     const read = () => {
       const next = readSession();
@@ -46,8 +51,8 @@ export function useSession(state: TeamState | null) {
       setConfirmed(null);
       return;
     }
-    if (!state) return;
-    if (!state.users.some((u) => u.username === candidate.username)) {
+    if (known === null) return;
+    if (shouldDropSession(known)) {
       storeSession(null);
       return;
     }
@@ -61,13 +66,13 @@ export function useSession(state: TeamState | null) {
       })
       .catch((err) => {
         if (!active) return;
-        if (err instanceof ApiFailure && err.status === 401) storeSession(null);
+        if (shouldDropSession(known, err instanceof ApiFailure ? err.status : undefined)) storeSession(null);
         else setError(errorText(err));
       });
     return () => {
       active = false;
     };
-  }, [candidate, state, attempt]);
+  }, [candidate, known, claimed, attempt]);
   const auth =
     candidate && confirmed?.token === candidate.token && confirmed.username === candidate.username
       ? candidate

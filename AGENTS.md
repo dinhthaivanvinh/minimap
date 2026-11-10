@@ -112,7 +112,7 @@ Paths are from the project root. Function names are given instead of line number
 |---|---|
 | Admin password check and lockout | `core.ts`: `requireAdmin`, `checkLock`, `recordFailure`; header `x-admin-password` |
 | Claim a username with a PIN, log in, tokens | `core.ts`: routes `POST /api/claim`, `POST /api/login`; `tokenFor`, `userFromToken` (reads the token from the end, because usernames can contain dots), `signature` |
-| Browser side | `src/lib/session.ts`: `useSession` / `storeSession` (validated with `GET /api/me`, `localStorage` key `minimap.auth`, also read by the arcade); `AdminPage.tsx`: `readSavedPassword` (`minimap.admin`) |
+| Browser side | `src/lib/session.ts`: `useSession` / `storeSession`; session retention rules in `src/lib/sessionRules.ts` with `sessionRules.test.ts` (validated with `GET /api/me`, `localStorage` key `minimap.auth`, also read by the arcade); `AdminPage.tsx`: `readSavedPassword` (`minimap.admin`) |
 
 ### Monitor page (`/`)
 | Feature | Code |
