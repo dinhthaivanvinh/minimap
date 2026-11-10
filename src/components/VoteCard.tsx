@@ -1,11 +1,13 @@
 // One vote on the /vote page: its details, the ballot for invited people while it is open,
-// the results, and the creator's and admin's controls (extend, close early, delete).
+// the results, a Share button for its address, and the creator's and admin's controls
+// (extend, close early, delete).
 import { useEffect, useState, type FormEvent } from 'react';
 import styled, { css } from 'styled-components';
 import { canVote, isOpen, MAX_OPTION, type VoteView } from '../../shared/vote.ts';
 import { api, errorText } from '../lib/api.ts';
 import { useMessage } from '../lib/hooks.ts';
 import { endsText, fromLocalInput, localInputValue } from '../lib/voteTime.ts';
+import { shareLink, shareVote } from '../lib/voteShare.ts';
 import { theme } from '../styles/theme.ts';
 import { Button, Input, Panel, Row } from '../styles/ui.ts';
 import { BALLOT_DROP_MS, BallotDrop } from './BallotDrop.tsx';
@@ -92,12 +94,14 @@ export interface Viewer {
   adminPassword: string;
 }
 
-export function VoteCard({ vote, mine, viewer, now, highlighted, nameOf, onChanged, onDeleted }: {
+export function VoteCard({ vote, mine, viewer, now, highlighted, publicUrl, nameOf, onChanged, onDeleted }: {
   vote: VoteView;
   mine: string[] | undefined;
   viewer: Viewer;
   now: Date;
   highlighted: boolean;
+  /** The team address the admin set, used for shared links. */
+  publicUrl: string;
   nameOf: (username: string) => string;
   onChanged: (vote: VoteView) => void;
   onDeleted: (id: string) => void;
@@ -113,6 +117,8 @@ export function VoteCard({ vote, mine, viewer, now, highlighted, nameOf, onChang
   const [newEnd, setNewEnd] = useState(vote.endsAt);
   const [busy, setBusy] = useState(false);
   const [dropping, setDropping] = useState(false);
+  // Shown when the link can't be shared or copied here, so it can be copied by hand.
+  const [manualLink, setManualLink] = useState('');
   const [message, show] = useMessage(4000);
   const auth: Record<string, string> = viewer.token ? { Authorization: `Bearer ${viewer.token}` } : {};
   const voting = me !== null && canVote(vote, me, now) && (!hasVoted || changing);
@@ -192,6 +198,16 @@ export function VoteCard({ vote, mine, viewer, now, highlighted, nameOf, onChang
     if (await send('DELETE', `/api/vote/${encodeURIComponent(vote.id)}`, undefined, headers)) onDeleted(vote.id);
   }
 
+  async function share() {
+    const url = shareLink(vote.id, publicUrl, location.origin);
+    const result = await shareVote(vote.title, url, navigator);
+    if (result === 'copied') show('Link copied. Paste it to share this vote.');
+    if (result === 'failed') {
+      setManualLink(url);
+      show('Copy the link below to share this vote.');
+    }
+  }
+
   const owner = vote.owner === null ? 'a former member' : nameOf(vote.owner);
 
   return (
@@ -268,15 +284,30 @@ export function VoteCard({ vote, mine, viewer, now, highlighted, nameOf, onChang
           <Button type="button" disabled={busy} onClick={() => void extend()}>Save</Button>
         </Row>
       )}
-      {(isOwner || viewer.adminPassword) && (
-        <Actions>
-          {open && isOwner && !extending && (
-            <Button type="button" $small onClick={() => { setNewEnd(vote.endsAt); setExtending(true); }}>Change end time</Button>
-          )}
-          {open && <Button type="button" $small disabled={busy} onClick={() => void close()}>Close now</Button>}
-          <Button type="button" $small disabled={busy} onClick={() => void remove()}>Delete</Button>
-        </Actions>
+      {manualLink && (
+        <Row>
+          <Input
+            readOnly
+            value={manualLink}
+            aria-label="Link to this vote"
+            autoFocus
+            onFocus={(e) => e.target.select()}
+          />
+          <Button type="button" $small onClick={() => setManualLink('')}>Done</Button>
+        </Row>
       )}
+      <Actions>
+        <Button type="button" $small onClick={() => void share()}>Share</Button>
+        {(isOwner || viewer.adminPassword) && (
+          <>
+            {open && isOwner && !extending && (
+              <Button type="button" $small onClick={() => { setNewEnd(vote.endsAt); setExtending(true); }}>Change end time</Button>
+            )}
+            {open && <Button type="button" $small disabled={busy} onClick={() => void close()}>Close now</Button>}
+            <Button type="button" $small disabled={busy} onClick={() => void remove()}>Delete</Button>
+          </>
+        )}
+      </Actions>
       <StatusLine message={message} />
     </Card>
   );
