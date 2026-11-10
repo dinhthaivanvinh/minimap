@@ -80,6 +80,8 @@ npm test
 | `src/styles/` | Colors and fonts (`theme.ts`), page-wide styles, and shared buttons and form pieces. Other styles sit in the component that uses them |
 | `public/` | Fonts and Cloudflare's cache rules (`_headers`), copied as they are into the build |
 
+Want to send a change? Anyone can open a pull request from a fork; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Run on the office server (Docker)
 
 1. Copy this folder to the server.
