@@ -100,7 +100,7 @@ test('on a usual day, people in the main office and at home are the same size an
   assert.ok(seats.get('out0')!.cell >= 10, 'the street has plenty of room for two');
 });
 
-test('on a usual day, Not checked in and Off today are far smaller than the working rooms', () => {
+test('on a usual day, Not checked in and Off are far smaller than the working rooms', () => {
   const day = { main: 5, wfh: 5, other: 3, out: 2, off: 1 };
   const area = (id: string) => {
     const z = zoneOf(day, id);

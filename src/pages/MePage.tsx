@@ -6,6 +6,7 @@ import { Mochi } from '../components/Mochi.tsx';
 import { SheetNav, StatusLine } from '../components/SheetNav.tsx';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
 import { useMessage, useTeamState, type Message } from '../lib/hooks.ts';
+import { FIXED_ZONES } from '../lib/layout.ts';
 import { storeSession, useSession } from '../lib/session.ts';
 import { clockTime, nextInstant, timeInputValue } from '../lib/status.ts';
 import { theme } from '../styles/theme.ts';
@@ -241,6 +242,8 @@ interface EditorProps {
 
 function Editor({ user, state, token, onLogOut, account }: EditorProps) {
   const [message, showMessage] = useMessage(2500);
+  // The account page is long, so each form shows its own message right below itself.
+  const [lookMessage, showLookMessage] = useMessage(2500);
   const [scheduleMessage, showScheduleMessage] = useMessage(2500);
   const [nickname, setNickname] = useState(user.nickname);
   const [status, setStatus] = useState(user.status);
@@ -272,11 +275,12 @@ function Editor({ user, state, token, onLogOut, account }: EditorProps) {
 
   const workingPlaces = [
     ...state.places.map((p, i) => ({ id: p.id, name: p.name, icon: OFFICE_ICONS[i] ?? '🏬' })),
-    { id: 'wfh', name: 'Work from home', icon: '🏡' },
+    { id: 'wfh', name: FIXED_ZONES.wfh.name, icon: '🏡' },
   ];
+  // Named as the map names them, so a room is called the same thing everywhere.
   const awayPlaces = [
-    { id: 'out', name: 'Out of Office', icon: '🚶' },
-    { id: 'off', name: 'Off today', icon: '🏖️' },
+    { id: 'out', name: FIXED_ZONES.out.name, icon: '🚶' },
+    { id: 'off', name: FIXED_ZONES.off.name, icon: '🏖️' },
   ];
 
   function placeButton(option: { id: string; name: string; icon: string }) {
@@ -373,16 +377,21 @@ function Editor({ user, state, token, onLogOut, account }: EditorProps) {
               />
               <Button type="submit">Save nickname</Button>
             </Row>
+            <StatusLine message={message} />
           </StackPanel>
 
           <Suspense fallback={<Panel role="status">Loading account settings…</Panel>}>
-            <CharacterEditor user={user} onSave={(look) => void patchMe({ look }, 'Character saved')} />
+            <CharacterEditor
+              user={user}
+              message={lookMessage}
+              onSave={(look) => void patchMe({ look }, 'Character saved', showLookMessage)}
+            />
 
             <FundPanel user={user} token={token} />
           </Suspense>
         </>
       )}
-      <StatusLine message={message} />
+      {!account && <StatusLine message={message} />}
     </div>
   );
 }

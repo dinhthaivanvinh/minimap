@@ -4,10 +4,12 @@ import styled from 'styled-components';
 import { MAX_DRAWING_POINTS, MAX_STROKES, WORN_ITEMS, type CharacterDesign, type Stroke, type WornItem } from '../../shared/look.ts';
 import type { TeamUser } from '../../shared/types.ts';
 import { clampToFace, countPoints, extendStroke, strokePath } from '../lib/drawing.ts';
+import type { Message } from '../lib/hooks.ts';
 import { defaultDesign, DEFAULT_COLORS, lookFor } from '../lib/look.ts';
 import { theme } from '../styles/theme.ts';
 import { Button, Chip, Chips, FieldLabel, PanelHint, Row, StackPanel } from '../styles/ui.ts';
 import { MochiArt } from './Mochi.tsx';
+import { StatusLine } from './SheetNav.tsx';
 
 const SKIN_TONES = ['#ffe3cc', '#f6c9a0', '#dca477', '#a9714b', '#6f4a33'];
 const BODY_COLORS = [...SKIN_TONES, ...DEFAULT_COLORS];
@@ -90,10 +92,12 @@ const Hint = styled(PanelHint)`
 
 interface CharacterEditorProps {
   user: TeamUser;
+  /** Whether the last save worked, shown under the Save button. */
+  message: Message;
   onSave: (design: CharacterDesign) => void;
 }
 
-export function CharacterEditor({ user, onSave }: CharacterEditorProps) {
+export function CharacterEditor({ user, message, onSave }: CharacterEditorProps) {
   const saved = user.look ?? defaultDesign(user.username);
   const savedKey = JSON.stringify(saved);
   const [draft, setDraft] = useState<CharacterDesign>(saved);
@@ -242,6 +246,7 @@ export function CharacterEditor({ user, onSave }: CharacterEditorProps) {
           Start over
         </Button>
       </Actions>
+      <StatusLine message={message} />
     </StackPanel>
   );
 }
