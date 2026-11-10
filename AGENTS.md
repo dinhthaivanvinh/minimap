@@ -191,12 +191,13 @@ Paths are from the project root. Function names are given instead of line number
 | Live updates | `onChange` → `event: vote` on `/api/events` (public views only, never `mine`), also sent when a stream opens |
 | Page `/vote`: tabs, form, cards (Close now, Change end time, Delete), bar results, deep link | `src/pages/VotePage.tsx` (lazy in `main.tsx`), `src/components/VoteForm.tsx`, `src/components/VoteCard.tsx`, `src/components/VoteResults.tsx`; `useNow(ms, votes)` in `hooks.ts` reads the clock again on each update, so an early close shows at once |
 | The saved login and admin password the page reads | `src/lib/savedLogin.ts` (`savedLogin`, `savedAdminPassword`) |
+| Share a vote's link (team address first, share sheet, then clipboard, then shown to copy by hand); a missing linked vote | `src/lib/voteShare.ts` (`shareLink`, `shareVote`), `share` in `VoteCard.tsx`; `missing` in `VotePage.tsx` |
 | Times in words, quick end picks | `src/lib/voteTime.ts` (`endsText`, `timeLeft`, `quickEnds`, `localInputValue`) |
 | Notice board (both maps) | `src/lib/noticeBoard.ts` (`boardNotes`, `countdown`, `voteLink`), `src/map/NoticeBoard2D.tsx` (also `NoticeBoardLink`, the 3D board's keyboard link), `src/map/noticeBoard3d.ts` (canvas texture, `linkAt` for raycast); in `scene3d.ts`: `drawBoard` |
 | Results banner and "hasn't voted" marks | `MonitorPage.tsx` builds `VoteMarks` (switch `minimap.voteMarks`); 2D: `src/map/ResultBanner2D.tsx`, `src/components/BallotMark.tsx` (on `Badge`); 3D: `src/map/blimp3d.ts`, `scene3d.ts` `setVoteMarks`, `markBallot`, `animateVoteMarks`; `DetailCard.tsx` lists pending votes |
 | Character reactions | `src/lib/voteReactions.ts` (`reactions`), planned in `MonitorPage.tsx`; 2D: `Map2D.tsx` `usePlaying`; 3D: `scene3d.ts` `react`, `animateReaction`, `confettiAt`, with `hopHeight` from `wander.ts` |
 | Ballot drop | `src/components/BallotDrop.tsx` (CSS and SVG, no three.js) |
-| Tests | `shared/vote.test.ts`, `server/vote/vote.test.ts`, `src/lib/voteTime.test.ts`, `src/lib/noticeBoard.test.ts`, `src/lib/voteReactions.test.ts`, `src/lib/savedLogin.test.ts`, the vote test in `worker/worker.test.ts` |
+| Tests | `shared/vote.test.ts`, `server/vote/vote.test.ts`, `src/lib/voteTime.test.ts`, `src/lib/voteShare.test.ts`, `src/lib/noticeBoard.test.ts`, `src/lib/voteReactions.test.ts`, `src/lib/savedLogin.test.ts`, the vote test in `worker/worker.test.ts` |
 
 ### Team fund looks
 | Feature | Code |

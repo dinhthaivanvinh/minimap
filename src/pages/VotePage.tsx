@@ -1,4 +1,5 @@
 // Team votes page (/vote): open votes and history, the form for a new vote, and each vote's ballot and results.
+// `/vote?id=<id>` is a vote's shared link: it opens that vote, or says the vote is gone.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import styled from 'styled-components';
 import { closedNewestFirst, isOpen, mapSummary, type VoteView } from '../../shared/vote.ts';
@@ -44,6 +45,7 @@ export function VotePage() {
   const [creating, setCreating] = useState(false);
   const [linked] = useState(() => new URLSearchParams(location.search).get('id'));
   const [highlighted, setHighlighted] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
 
   useEffect(() => {
     document.title = 'Team votes';
@@ -86,7 +88,10 @@ export function VotePage() {
   useEffect(() => {
     if (!linked || !votes) return;
     const vote = votes.find((v) => v.id === linked);
-    if (!vote) return;
+    if (!vote) {
+      setMissing(true);
+      return;
+    }
     setTab(isOpen(vote, new Date()) ? 'open' : 'history');
     setHighlighted(linked);
     requestAnimationFrame(() => document.getElementById(`vote-${linked}`)?.scrollIntoView({ block: 'start' }));
@@ -126,6 +131,12 @@ export function VotePage() {
         </PanelHint>
       )}
 
+      {missing && (
+        <PanelHint role="status" style={{ marginTop: 12 }}>
+          The vote in this link isn't here anymore. It may have been deleted, or dropped from History as an old vote.
+        </PanelHint>
+      )}
+
       {creating && state && username && viewer.token && (
         <VoteForm
           users={state.users}
@@ -151,6 +162,7 @@ export function VotePage() {
           viewer={viewer}
           now={now}
           highlighted={highlighted === vote.id}
+          publicUrl={state?.settings.publicUrl ?? ''}
           nameOf={nameOf}
           onChanged={changed}
           onDeleted={deleted}
