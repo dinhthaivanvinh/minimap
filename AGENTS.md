@@ -105,7 +105,8 @@ Paths are from the project root. Function names are given instead of line number
 | Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, which also takes features' named events such as `vote` and `fund`, `errorText`), `src/lib/hooks.ts` (`useTeamState` gives the state, with each user's fund standing added, the votes and the fund, `useNow`, `useAmbience`, ...) |
 | Styles and shared controls | `src/styles/theme.ts`, `src/styles/ui.ts`, `src/styles/GlobalStyle.ts` |
 | 3D support and lost-context fallback | `src/lib/webgl.ts` (`supportsWebGL`), `src/lib/contextLoss.ts` (`watchContextLoss`, 10 s wait) |
-| CI | `.github/workflows/check.yml` |
+| CI (read-only token, safe for pull requests from forks) | `.github/workflows/check.yml` |
+| Guide and pull request template for outside contributors | `CONTRIBUTING.md`, `.github/pull_request_template.md` |
 
 ### Auth
 | Feature | Code |
