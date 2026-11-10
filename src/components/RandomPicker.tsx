@@ -538,8 +538,19 @@ export function RandomPicker({ users, initialView = '2d', onClose, trigger }: Ra
     const opener = trigger ?? document.activeElement as HTMLElement | null;
     dialog.current?.focus();
     return () => {
-      const target = opener?.isConnected ? opener : document.querySelector<HTMLElement>('[data-picker-play]');
-      target?.focus();
+      // 3D labels are attached at 30 fps; wait for a visible replacement after a resize.
+      let frames = 12;
+      const restore = () => {
+        if (dialog.current?.isConnected) return;
+        const available = (node: HTMLElement | null) =>
+          node?.isConnected && !node.matches(':disabled') && node.getClientRects().length > 0;
+        const target = available(opener) ? opener :
+          [...document.querySelectorAll<HTMLElement>('[data-picker-play]')].find(available);
+        if (target) target.focus({ preventScroll: true });
+        else if (frames-- > 0) requestAnimationFrame(restore);
+        else document.querySelector<HTMLElement>('header a')?.focus({ preventScroll: true });
+      };
+      requestAnimationFrame(() => requestAnimationFrame(restore));
     };
   }, []);
 

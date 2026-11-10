@@ -24,7 +24,7 @@ const Hero = styled(Panel)`
   > div:not(:first-child) { flex: 1; min-width: 0; }
 
   h1 { font-size: clamp(24px, 5vw, 30px); overflow-wrap: anywhere; }
-  p { margin: 0; color: ${theme.inkSoft}; font-weight: 700; }
+  p { margin: 0; color: ${theme.inkSoft}; font-weight: 700; overflow-wrap: anywhere; }
 `;
 
 const HeroAvatar = styled.div`
