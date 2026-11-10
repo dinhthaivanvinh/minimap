@@ -134,7 +134,7 @@ Paths are from the project root. Function names are given instead of line number
 |---|---|
 | Fetch weather and sun times (Open-Meteo), city search | `core.ts`: `refreshWeather`, `searchPlaces`, `sunTimes`; route `GET /api/admin/places` |
 | How light / warm / wet the town looks | `src/lib/ambience.ts` (`ambience`, `conditions`, `previewTime`) |
-| 2D weather layer | `src/map/Weather2D.tsx` |
+| Shared foreground weather layer (2D and 3D) | `src/map/WeatherOverlay.tsx`, ordering in `src/map/layers.ts` |
 | 3D daylight, night lights, weather | `scene3d.ts`: sections "Daylight", "Lights that come on after dark", "Weather" |
 | Daylight/weather switches | setting `mapWeather` (`core.ts` → `PATCH /api/admin/settings`); `MonitorPage.tsx` key `minimap.weather` |
 

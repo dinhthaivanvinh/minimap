@@ -15,9 +15,11 @@ import { createScene3D, type CameraState, type Scene3D, type ZoneLabelSlot } fro
 import type { MapProps } from './types.ts';
 import { ArcadePlay } from './ArcadeCabinet.tsx';
 import { NoticeBoardLink } from './NoticeBoard2D.tsx';
-import { Clouds } from './Weather2D.tsx';
+import { hasWeather, WeatherOverlay } from './WeatherOverlay.tsx';
+import { MAP_LAYERS } from './layers.ts';
 
 const View = styled.div<{ $namesOff: boolean }>`
+  isolation: isolate;
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -47,12 +49,6 @@ const View = styled.div<{ $namesOff: boolean }>`
     `}
 `;
 
-const SkyLayer = styled.div`
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-`;
-
 const ZoneLabel = styled.div`
   padding: 0 10px;
   border: ${theme.line};
@@ -73,6 +69,7 @@ const ZoneLabel = styled.div`
 const SceneStage = styled.div`
   position: absolute;
   inset: 0;
+  z-index: ${MAP_LAYERS.scene};
 
   canvas {
     display: block;
@@ -103,7 +100,7 @@ const CameraBar = styled.div`
   left: 12px;
   right: 12px;
   top: 12px;
-  z-index: 5;
+  z-index: ${MAP_LAYERS.controls};
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -136,7 +133,7 @@ const CameraHint = styled.p`
   position: absolute;
   left: 14px;
   bottom: 10px;
-  z-index: 5;
+  z-index: ${MAP_LAYERS.controls};
   margin: 0;
   color: ${theme.ink};
   font-size: 13px;
@@ -161,7 +158,7 @@ const ResultLink = styled.a`
   position: absolute;
   left: 12px;
   bottom: 36px;
-  z-index: 6;
+  z-index: ${MAP_LAYERS.controls + 1};
   padding: 2px 10px;
   border: ${theme.thinLine};
   border-radius: 10px;
@@ -305,11 +302,8 @@ export default function Map3D({
       $namesOff={!namesOn}
       style={{ '--sky-top': look.sky.top, '--sky-bottom': look.sky.bottom } as CSSProperties}
     >
-      {/* Behind the canvas, so they only show in the sky above the town. */}
-      <SkyLayer aria-hidden="true">
-        <Clouds look={look} reduced={reduced} sky />
-      </SkyLayer>
       <SceneStage ref={stageRef} />
+      {hasWeather(look) && <WeatherOverlay look={look} reduced={reduced} />}
 
       <CameraBar>
         {camera.presets.map((preset) => (

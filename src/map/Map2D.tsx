@@ -20,11 +20,12 @@ import { NoticeBoard2D } from './NoticeBoard2D.tsx';
 import { ResultBanner2D } from './ResultBanner2D.tsx';
 import type { MapProps } from './types.ts';
 import type { ReactionKind } from '../lib/voteReactions.ts';
-import { hasWeather, Weather2D } from './Weather2D.tsx';
+import { hasWeather, WeatherOverlay } from './WeatherOverlay.tsx';
 
 const HOP_MS = 900;
 
 const MapFill = styled.div`
+  isolation: isolate;
   /* Keep the previous measured plan from spilling while ResizeObserver catches up. */
   overflow: clip;
   /* Resizing reflows the whole town together; attendance changes can still glide. */
@@ -776,7 +777,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
             <PickerCabinet x={percent(activities.picker.x + activities.picker.w / 2, layout.width)} y={percent(activities.picker.y + activities.picker.h, layout.height)} width={activities.picker.w * scale} disabled={!state.users.length} onPlay={onPicker}/>
           </>}
           {board && <NoticeBoard2D spot={board} width={layout.width} height={layout.height} votes={votes} />}
-          {hasWeather(look) && <Weather2D look={look} reduced={reduced} />}
+          {hasWeather(look) && <WeatherOverlay look={look} reduced={reduced} />}
           {street && voteMarks?.result && <ResultBanner2D result={voteMarks.result} street={street} width={layout.width} height={layout.height} />}
           {state.users.map((user) => {
             const seat = layout.seats.get(user.username);
