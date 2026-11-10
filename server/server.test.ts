@@ -477,7 +477,7 @@ test('static files cannot escape the public folder', async (t) => {
 
 test('every page serves the React app, and built files can be cached for good', async (t) => {
   const { port } = await setup(t);
-  for (const page of ['/', '/me', '/admin']) {
+  for (const page of ['/', '/me', '/account', '/admin']) {
     const res = await fetch(`http://127.0.0.1:${port}${page}`);
     assert.equal(res.status, 200, page);
     assert.match(await res.text(), /id="root"/);
@@ -927,4 +927,21 @@ test('sun times pair up by day, leaving out days without a real sunrise and suns
   // Polar night and day: no sunrise, a sunset before sunrise, or a full day of sun.
   assert.deepEqual(sunTimes([null, 100, 0], [50, 50, 86_400]), []);
   assert.deepEqual(sunTimes(), []);
+});
+
+
+test('the session check validates tokens without changing presence, and rejects a released account', async (t) => {
+  const { api, addUser, claim } = await setup(t);
+  await addUser('alex');
+  assert.equal((await api('GET', '/api/me')).status, 401);
+  assert.equal((await api('GET', '/api/me', undefined, { Authorization: 'Bearer invalid' })).status, 401);
+  const token = await claim('alex');
+  const headers = { Authorization: `Bearer ${token}` };
+  const before = await api('GET', '/api/state');
+  const check = await api('GET', '/api/me', undefined, headers);
+  assert.equal(check.status, 200);
+  assert.deepEqual(check.json, { username: 'alex' });
+  assert.deepEqual((await api('GET', '/api/state')).json, before.json);
+  await api('POST', '/api/admin/users/alex/release', {}, ADMIN);
+  assert.equal((await api('GET', '/api/me', undefined, headers)).status, 401);
 });

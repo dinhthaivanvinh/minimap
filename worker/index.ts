@@ -21,7 +21,7 @@ interface Env {
 }
 
 // React decides which page to show, so these serve the same file as /.
-const PAGES = new Set(['/me', '/admin', '/vote']);
+const PAGES = new Set(['/me', '/account', '/admin', '/vote']);
 const PING_MS = 25 * 1000;
 const encoder = new TextEncoder();
 

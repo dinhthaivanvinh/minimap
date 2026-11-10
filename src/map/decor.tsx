@@ -32,7 +32,7 @@ const House = (
   </svg>
 );
 
-const Tree = (
+export const Tree = (
   <svg viewBox="0 0 40 52" width="100%" height="100%">
     <rect x="16" y="32" width="8" height="18" rx="2" fill="#c99467" {...line} />
     <circle cx="20" cy="20" r="17" fill="#7ad67f" {...line} />
@@ -71,12 +71,6 @@ const Car = (
   </svg>
 );
 
-/** Trees for the town park, in percentages of the park. */
-export const PARK_TREES = [
-  { art: Tree, left: 8, bottom: 10, width: 14, sway: true },
-  { art: Tree, left: 42, bottom: 22, width: 12, sway: true },
-  { art: Tree, right: 10, bottom: 8, width: 15, sway: true },
-];
 
 export interface DecorItem {
   art: ReactNode;

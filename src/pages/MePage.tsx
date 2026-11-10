@@ -1,26 +1,29 @@
-// User page: claim a username, then set nickname, place and status.
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+// Shared login gate and separate status-update and account-maintenance views.
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import styled from 'styled-components';
 import type { AuthResult, ScheduledChangeRequest, TeamState, TeamUser } from '../../shared/types.ts';
-import { CharacterEditor } from '../components/CharacterEditor.tsx';
-import { FundPanel } from '../components/FundPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { SheetNav, StatusLine } from '../components/SheetNav.tsx';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
 import { useMessage, useTeamState, type Message } from '../lib/hooks.ts';
+import { storeSession, useSession } from '../lib/session.ts';
 import { clockTime, nextInstant, timeInputValue } from '../lib/status.ts';
 import { theme } from '../styles/theme.ts';
 import { Button, Chip, Chips, Field, FieldLabel, Input, Panel, PanelHint, Row, Sheet, StackPanel } from '../styles/ui.ts';
 
-const AUTH_KEY = 'minimap.auth';
+// Account-only editors stay out of the daily status flow.
+const CharacterEditor = lazy(() => import('../components/CharacterEditor.tsx').then(m => ({default:m.CharacterEditor})));
+const FundPanel = lazy(() => import('../components/FundPanel.tsx').then(m => ({default:m.FundPanel})));
 const OFFICE_ICONS = ['🏢', '🏬'];
 
 const Hero = styled(Panel)`
   display: flex;
   align-items: center;
   gap: 14px;
+  flex-wrap: wrap;
+  > div:not(:first-child) { flex: 1; min-width: 0; }
 
-  h1 { font-size: 30px; overflow-wrap: anywhere; }
+  h1 { font-size: clamp(24px, 5vw, 30px); overflow-wrap: anywhere; }
   p { margin: 0; color: ${theme.inkSoft}; font-weight: 700; }
 `;
 
@@ -84,21 +87,6 @@ const PendingMessage = styled.p`
   margin: 0;
   overflow-wrap: anywhere;
 `;
-
-function loadAuth(): AuthResult | null {
-  try {
-    return JSON.parse(localStorage.getItem(AUTH_KEY) ?? 'null') as AuthResult | null;
-  } catch {
-    return null;
-  }
-}
-
-function storeAuth(value: AuthResult | null): void {
-  try {
-    if (value) localStorage.setItem(AUTH_KEY, JSON.stringify(value));
-    else localStorage.removeItem(AUTH_KEY);
-  } catch {}
-}
 
 // ---- Choosing a username ------------------------------------------------
 
@@ -248,9 +236,10 @@ interface EditorProps {
   state: TeamState;
   token: string;
   onLogOut: (note?: string) => void;
+  account: boolean;
 }
 
-function Editor({ user, state, token, onLogOut }: EditorProps) {
+function Editor({ user, state, token, onLogOut, account }: EditorProps) {
   const [message, showMessage] = useMessage(2500);
   const [scheduleMessage, showScheduleMessage] = useMessage(2500);
   const [nickname, setNickname] = useState(user.nickname);
@@ -309,81 +298,90 @@ function Editor({ user, state, token, onLogOut }: EditorProps) {
       <Hero>
         <HeroAvatar><Mochi user={user} /></HeroAvatar>
         <div>
-          <h1>{user.nickname}</h1>
-          <p>@{user.username}</p>
+          <h1>{account ? 'Account settings' : 'Update status'}</h1>
+          <p>{user.nickname} · @{user.username}</p>
         </div>
-        <LogOutButton $small type="button" onClick={() => onLogOut()}>Log out</LogOutButton>
+        {account && <LogOutButton $small type="button" onClick={() => onLogOut()}>Log out</LogOutButton>}
       </Hero>
 
-      <Panel>
-        <h2>Where are you today?</h2>
-        <GroupLabel>Working</GroupLabel>
-        <ChoiceGrid>{workingPlaces.map(placeButton)}</ChoiceGrid>
-        <GroupLabel>Not working</GroupLabel>
-        <ChoiceGrid>{awayPlaces.map(placeButton)}</ChoiceGrid>
-      </Panel>
+      {!account && (
+        <>
+          <Panel>
+            <h2>Where are you today?</h2>
+            <GroupLabel>Working</GroupLabel>
+            <ChoiceGrid>{workingPlaces.map(placeButton)}</ChoiceGrid>
+            <GroupLabel>Not working</GroupLabel>
+            <ChoiceGrid>{awayPlaces.map(placeButton)}</ChoiceGrid>
+          </Panel>
 
-      <SchedulePanel
-        user={user}
-        message={scheduleMessage}
-        onSave={(scheduled, done) => patchMe({ scheduled }, done, showScheduleMessage)}
-      />
-
-      <StackPanel>
-        <h2>Status</h2>
-        <Row
-          as="form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void patchMe({ status }, status.trim() ? 'Status set' : 'Status cleared').then(() => statusRef.current?.blur());
-          }}
-        >
-          <Input
-            ref={statusRef}
-            maxLength={140}
-            placeholder="What's your status?"
-            aria-label="Status"
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
+          <SchedulePanel
+            user={user}
+            message={scheduleMessage}
+            onSave={(scheduled, done) => patchMe({ scheduled }, done, showScheduleMessage)}
           />
-          <Button type="submit">Set status</Button>
-          <Button
-            type="button"
-            onClick={() => {
-              setStatus('');
-              void patchMe({ status: '' }, 'Status cleared');
+
+          <StackPanel>
+            <h2>Status</h2>
+            <Row
+              as="form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void patchMe({ status }, status.trim() ? 'Status set' : 'Status cleared').then(() => statusRef.current?.blur());
+              }}
+            >
+              <Input
+                ref={statusRef}
+                maxLength={140}
+                placeholder="What's your status?"
+                aria-label="Status"
+                value={status}
+                onChange={(event) => setStatus(event.target.value)}
+              />
+              <Button type="submit">Set status</Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  setStatus('');
+                  void patchMe({ status: '' }, 'Status cleared');
+                }}
+              >
+                Clear
+              </Button>
+            </Row>
+          </StackPanel>
+
+        </>
+      )}
+      {account && (
+        <>
+          <StackPanel
+            as="form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void patchMe({ nickname }, 'Nickname saved').then(() => nicknameRef.current?.blur());
             }}
           >
-            Clear
-          </Button>
-        </Row>
-      </StackPanel>
+            <h2>Nickname</h2>
+            <Row>
+              <Input
+                ref={nicknameRef}
+                maxLength={24}
+                required
+                aria-label="Nickname"
+                value={nickname}
+                onChange={(event) => setNickname(event.target.value)}
+              />
+              <Button type="submit">Save nickname</Button>
+            </Row>
+          </StackPanel>
 
-      <StackPanel
-        as="form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void patchMe({ nickname }, 'Nickname saved').then(() => nicknameRef.current?.blur());
-        }}
-      >
-        <h2>Nickname</h2>
-        <Row>
-          <Input
-            ref={nicknameRef}
-            maxLength={24}
-            required
-            aria-label="Nickname"
-            value={nickname}
-            onChange={(event) => setNickname(event.target.value)}
-          />
-          <Button type="submit">Save nickname</Button>
-        </Row>
-      </StackPanel>
+          <Suspense fallback={<Panel role="status">Loading account settings…</Panel>}>
+            <CharacterEditor user={user} onSave={(look) => void patchMe({ look }, 'Character saved')} />
 
-      <CharacterEditor user={user} onSave={(look) => void patchMe({ look }, 'Character saved')} />
-
-      <FundPanel user={user} token={token} />
-
+            <FundPanel user={user} token={token} />
+          </Suspense>
+        </>
+      )}
       <StatusLine message={message} />
     </div>
   );
@@ -391,19 +389,18 @@ function Editor({ user, state, token, onLogOut }: EditorProps) {
 
 // ---- Page ---------------------------------------------------------------
 
-export function MePage() {
+export function MePage({ account = false }: { account?: boolean }) {
   const { state } = useTeamState();
-  const [auth, setAuth] = useState(loadAuth);
+  const { auth, pending, error, retry } = useSession(state);
   const [picked, setPicked] = useState<string | null>(null);
   const [note, setNote] = useState('');
 
   useEffect(() => {
-    document.title = 'My Status';
-  }, []);
+    document.title = account ? 'Account settings' : 'Update status';
+  }, [account]);
 
   function changeAuth(value: AuthResult | null) {
-    storeAuth(value);
-    setAuth(value);
+    storeSession(value);
     setPicked(null);
   }
 
@@ -417,9 +414,12 @@ export function MePage() {
 
   return (
     <Sheet>
-      <SheetNav links={[{ href: '/', label: 'Map' }, { href: '/admin', label: 'Admin' }]} />
+      <SheetNav links={[{ href: '/', label: 'Map' }, { href: account ? '/me' : '/account', label: account ? 'Update status' : 'Account settings' }, { href: '/admin', label: 'Admin' }]} />
+      {(pending || !state) && <Panel role="status">Checking your account…</Panel>}
+      {error && <Panel role="alert">{error} <Button onClick={retry}>Retry</Button></Panel>}
       {state && me && auth && (
         <Editor
+          account={account}
           user={me}
           state={state}
           token={auth.token}
@@ -429,7 +429,7 @@ export function MePage() {
           }}
         />
       )}
-      {state && pickedUser && (
+      {state && !pending && !error && pickedUser && (
         <PinPanel
           key={pickedUser.username}
           user={pickedUser}
@@ -440,7 +440,7 @@ export function MePage() {
           onBack={() => setPicked(null)}
         />
       )}
-      {state && !me && !pickedUser && <PickPanel users={state.users} note={note} onPick={setPicked} />}
+      {state && !pending && !error && !me && !pickedUser && <PickPanel users={state.users} note={note} onPick={setPicked} />}
     </Sheet>
   );
 }

@@ -37,7 +37,7 @@ const MIME: Record<string, string> = {
 };
 
 // React decides which page to show, so these all serve the same file.
-const PAGES = new Set(['/', '/me', '/admin', '/vote']);
+const PAGES = new Set(['/', '/me', '/account', '/admin', '/vote']);
 
 function readFile(file: string): any {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;

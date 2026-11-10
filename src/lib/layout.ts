@@ -73,14 +73,10 @@ const MIN_BEACH = 22;
 const LOBBY_WEIGHT = 0.5; // People waiting in the lobby need less room than people at work.
 const LOBBY_PERSON_WIDTH = 5; // The lobby and beach only get as wide as their people need.
 const BEACH_PERSON_WIDTH = 8;
-const MIN_PARK = 8;
+const MIN_PARK = 38;
 const STREET_HEIGHT = 12;
 const MAX_STREET_HEIGHT = 20;
 const STREET_FITS = 8; // People who fit before the street needs to get wider.
-// The team's notice board for votes stands at the lobby's right edge. People stand clear of it.
-const BOARD_W = 12;
-const BOARD_SPACE = BOARD_W + 1;
-const MAX_BOARD_H = 15;
 
 export const FIXED_ZONES = {
   wfh: { name: 'Work from home', kind: 'wfh' },
@@ -158,10 +154,12 @@ function landscapeZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'
   const available = MAP_WIDTH - GAP * 4 - MIN_PARK;
   const wantedLobby = Math.max(MIN_LOBBY, count('lobby') * LOBBY_PERSON_WIDTH + 4);
   const wantedBeach = Math.max(MIN_BEACH, count('off') * BEACH_PERSON_WIDTH + 4);
-  // The notice board keeps its space; the people in the lobby and on the beach share the rest.
-  const fit = Math.min(1, (available - BOARD_SPACE) / (wantedLobby + wantedBeach));
-  const lobbyWidth = BOARD_SPACE + wantedLobby * fit;
-  const offWidth = wantedBeach * fit;
+  // Activities keep their park space even when the lobby and beach are crowded.
+  const lobbyExtra = wantedLobby - MIN_LOBBY;
+  const beachExtra = wantedBeach - MIN_BEACH;
+  const fit = Math.min(1, (available - MIN_LOBBY - MIN_BEACH) / Math.max(1, lobbyExtra + beachExtra));
+  const lobbyWidth = MIN_LOBBY + lobbyExtra * fit;
+  const offWidth = MIN_BEACH + beachExtra * fit;
   zones.push(zone('lobby', FIXED_ZONES.lobby, GAP, bottomY, lobbyWidth, bottomHeight));
   zones.push(zone('off', FIXED_ZONES.off, MAP_WIDTH - GAP - offWidth, bottomY, offWidth, bottomHeight));
 
@@ -229,21 +227,31 @@ function portraitZones(places: Place[], count: Counts): Omit<MapLayout, 'seats'>
   return { zones, width: 100, height: y, park };
 }
 
-/** Where the notice board for team votes stands: at the right edge of the lobby, in both layouts. */
-export function noticeBoardSpot(layout: Pick<MapLayout, 'zones'>): Rect | null {
-  const lobby = layout.zones.find((z) => z.kind === 'lobby');
-  if (!lobby) return null;
-  return { x: lobby.x + lobby.w - BOARD_SPACE, y: lobby.y + 1.5, w: BOARD_W, h: Math.min(lobby.h - 3, MAX_BOARD_H) };
+/** Reserved activity footprints, shared by both map renderers. Nobody is seated in the park. */
+export function parkActivities(layout: Pick<MapLayout, 'park'>) {
+  const p = layout.park;
+  if (!p) return null;
+  const cabinetW = Math.min(12, p.w * 0.22, (p.h - 2) / 1.6);
+  const cabinet = (fraction: number): Rect => ({
+    x: p.x + p.w * fraction - cabinetW / 2,
+    y: p.y + p.h * 0.92 - cabinetW * 1.6,
+    w: cabinetW, h: cabinetW * 1.6,
+  });
+  const boardH = Math.min(14, p.h * 0.78);
+  return {
+    board: { x: p.x + p.w * 0.03, y: p.y + (p.h - boardH) / 2, w: Math.min(22, p.w * 0.34), h: boardH },
+    arcade: cabinet(0.59),
+    picker: cabinet(0.86),
+  };
 }
 
-/** Where people stand in a room: clear of its name and the lobby's notice board, with a little margin from its edges. */
-export function standingArea(z: Zone): Rect {
-  if (z.kind === 'lobby') {
-    const area = roomArea(z);
-    return { ...area, w: area.w - BOARD_SPACE };
-  }
-  return roomArea(z);
+/** The vote board now stands beside the games in the park. */
+export function noticeBoardSpot(layout: Pick<MapLayout, 'park'>): Rect | null {
+  return parkActivities(layout)?.board ?? null;
 }
+
+/** People stand clear of room names and edges. Activities have their own park. */
+export function standingArea(z: Zone): Rect { return roomArea(z); }
 
 function roomArea(z: Zone): Rect {
   // A short street has no room below its name, so people stand beside it instead.

@@ -7,7 +7,8 @@ import styled, { css } from 'styled-components';
 import { mapSummary, resultText, type VoteView } from '../../shared/vote.ts';
 import { voteLink } from '../lib/noticeBoard.ts';
 import { Badge, BadgeName } from '../components/Badge.tsx';
-import { useReducedMotion } from '../lib/hooks.ts';
+import { PICKER_LABELS } from '../lib/pickerAppearance.ts';
+import { useElementSize, useReducedMotion } from '../lib/hooks.ts';
 import { media, theme } from '../styles/theme.ts';
 import { Button } from '../styles/ui.ts';
 import { createScene3D, type CameraState, type Scene3D, type ZoneLabelSlot } from './scene3d.ts';
@@ -25,6 +26,17 @@ const View = styled.div<{ $namesOff: boolean }>`
   /* The sky follows the time of day at the office (lib/ambience.ts). */
   background: linear-gradient(var(--sky-top), var(--sky-bottom) 70%);
   box-shadow: 0 5px 0 ${theme.ink};
+
+  ${media.phone} {
+    [data-arcade-play], [data-picker-play] {
+      width: 44px;
+      min-width: 44px;
+      min-height: 44px;
+      padding: 3px;
+      font-size: 9px;
+      white-space: normal;
+    }
+  }
 
   ${({ $namesOff }) =>
     $namesOff &&
@@ -169,6 +181,7 @@ export default function Map3D({
   focus,
   onSelect,
   onArcade,
+  onPicker,
   onAssemble,
   look,
   votes,
@@ -179,7 +192,12 @@ export default function Map3D({
   const attendance = officeAssembly(state);
   const officeIds = new Set(state.places.map(place=>place.id));
   const stageRef = useRef<HTMLDivElement>(null);
+  const viewport = useElementSize(stageRef);
+  const portrait = viewport.height > 0 && viewport.width / viewport.height < 0.95;
   const sceneRef = useRef<Scene3D | null>(null);
+  const [pickerSlot, setPickerSlot] = useState<HTMLElement | null>(null);
+  const onPickerRef = useRef(onPicker);
+  onPickerRef.current = onPicker;
   const [arcadeSlot, setArcadeSlot] = useState<HTMLElement | null>(null);
   const [boardSlot, setBoardSlot] = useState<HTMLElement | null>(null);
   const onArcadeRef = useRef(onArcade);
@@ -201,6 +219,7 @@ export default function Map3D({
     if (!stage) return;
     const scene = createScene3D(stage, {
       onCamera: setCamera,
+      onPicker: trigger => onPickerRef.current(trigger),
       onArcade: (trigger) => onArcadeRef.current(trigger),
       onNoticeBoard: (link) => location.assign(link),
       onContextGone: () => onFailRef.current(),
@@ -214,6 +233,7 @@ export default function Map3D({
       sceneRef.current = null;
       setPersonLabels(new Map());
       setZoneLabels([]);
+      setPickerSlot(null);
       setArcadeSlot(null);
       setBoardSlot(null);
     };
@@ -222,12 +242,13 @@ export default function Map3D({
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    const { people, zones, arcade, board } = scene.update(state, isDimmed);
+    const { people, zones, arcade, picker, board } = scene.update(state, isDimmed);
     setPersonLabels(people);
     setZoneLabels(zones);
+    setPickerSlot(picker);
     setArcadeSlot(arcade);
     setBoardSlot(board);
-  }, [state, isDimmed]);
+  }, [state, isDimmed, portrait]);
 
   useEffect(() => {
     sceneRef.current?.setVotes(votes);
@@ -256,6 +277,7 @@ export default function Map3D({
   return (
     <View
       data-map-root
+      data-layout={portrait ? 'portrait' : 'landscape'}
       data-daylight={look.phase}
       $namesOff={!namesOn}
       style={{ '--sky-top': look.sky.top, '--sky-bottom': look.sky.bottom } as CSSProperties}
@@ -302,6 +324,8 @@ export default function Map3D({
           arcadeSlot,
         )}
 
+      {pickerSlot && createPortal(
+        <ArcadePlay data-picker-play disabled={!state.users.length} aria-label={!state.users.length ? 'Random picker unavailable: no team members' : 'Open random picker'} aria-haspopup="dialog" onClick={event => onPicker(event.currentTarget)} style={{background: theme.bubblegum}}>{PICKER_LABELS.start}</ArcadePlay>, pickerSlot)}
       {boardSlot &&
         createPortal(
           <NoticeBoardLink href="/vote" data-notice-board="3d" aria-label={boardLabel(votes)}>

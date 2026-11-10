@@ -112,13 +112,14 @@ Paths are from the project root. Function names are given instead of line number
 |---|---|
 | Admin password check and lockout | `core.ts`: `requireAdmin`, `checkLock`, `recordFailure`; header `x-admin-password` |
 | Claim a username with a PIN, log in, tokens | `core.ts`: routes `POST /api/claim`, `POST /api/login`; `tokenFor`, `userFromToken` (reads the token from the end, because usernames can contain dots), `signature` |
-| Browser side | `MePage.tsx`: `loadAuth` / `storeAuth` (`localStorage` key `minimap.auth`, also read by the arcade); `AdminPage.tsx`: `readSavedPassword` (`minimap.admin`) |
+| Browser side | `src/lib/session.ts`: `useSession` / `storeSession` (validated with `GET /api/me`, `localStorage` key `minimap.auth`, also read by the arcade); `AdminPage.tsx`: `readSavedPassword` (`minimap.admin`) |
 
 ### Monitor page (`/`)
 | Feature | Code |
 |---|---|
 | Page, filters, people list, 2D/3D switch | `src/pages/MonitorPage.tsx`: `MonitorPage`, `PeopleList`, `chooseMode`, `chooseFilter` |
-| Where rooms and seats go (both maps), park space kept for the arcade, lobby space kept for the notice board | `src/lib/layout.ts`: `computeLayout`, `FIXED_ZONES`, `placeGroup`, `noticeBoardSpot`, `standingArea` |
+| Where rooms and seats go (both maps), park space kept for votes, arcade and picker | `src/lib/layout.ts`: `computeLayout`, `FIXED_ZONES`, `placeGroup`, `noticeBoardSpot`, `parkActivities`, `standingArea` |
+| Park tree placement (stable random positions shared by both maps) | `src/lib/parkTrees.ts`, `src/lib/parkTrees.test.ts`, tree art in `src/map/decor.tsx` |
 | 2D map | `src/map/Map2D.tsx` (`ZoneRoom`, `Person`, `StreetDecor`), furniture `src/map/decor.tsx` |
 | 3D map | `src/map/Map3D.tsx` (React around the scene, 2D fallback), `src/map/scene3d.ts` (`createScene3D`: rooms, lights, weather, camera) |
 | 3D characters (map, claw machine, arcade) | `src/map/character3d.ts` |
@@ -136,11 +137,11 @@ Paths are from the project root. Function names are given instead of line number
 | 3D daylight, night lights, weather | `scene3d.ts`: sections "Daylight", "Lights that come on after dark", "Weather" |
 | Daylight/weather switches | setting `mapWeather` (`core.ts` → `PATCH /api/admin/settings`); `MonitorPage.tsx` key `minimap.weather` |
 
-### User page (`/me`)
+### User pages (`/me`, `/account`)
 | Feature | Code |
 |---|---|
 | Pick a username, enter a PIN | `src/pages/MePage.tsx`: `PickPanel`, `PinPanel` |
-| Set nickname, place, status | `MePage.tsx`: `Editor`; server `PATCH /api/me` in `core.ts` (`cleanStatus`) |
+| Status, place and scheduling on `/me`; nickname, character, fund preferences and logout on `/account` | `MePage.tsx`: shared `Editor` and login gate, lazy `AccountPage.tsx`; server `PATCH /api/me` in `core.ts` (`cleanStatus`) |
 | Character color, drawing, worn items | `src/components/CharacterEditor.tsx`, `src/lib/drawing.ts`, `src/lib/wornItems.ts`, `src/lib/look.ts`; server `cleanLook` |
 | Mochi character art (2D) | `src/components/Mochi.tsx` |
 
@@ -207,14 +208,15 @@ Paths are from the project root. Function names are given instead of line number
 | Live updates | `onChange` → `event: fund` on `/api/events`, also sent when a stream opens; `useTeamState` adds it to users with `withFund` |
 | What each tier wears (lines on the body, mouth, headwear, cloud, fly, sparkles) | `src/lib/fundLook.ts` (`fundArt`, `userFundTier`, `withFund`); `Look.fund` in `src/lib/look.ts` |
 | Drawing it | 2D: `src/components/Mochi.tsx` (`TOP_HAT`, `CROWN`, `RAIN_CLOUD`, `FLY`, `SPARKLES`, `MOUTHS`); 3D: `src/map/character3d.ts` (`addTopHat`, `addCrown`, `addFundProps`); `scene3d.ts` `designKeyOf` (redraw on change), `labelHeight` (name above the cloud); arcade `BasketballCourt.tsx` |
-| Admin panel, Me panel, title on the card | `src/components/FundAdminPanel.tsx` (on `AdminPage.tsx`), `src/components/FundPanel.tsx` (on `MePage.tsx`), `CardFund` in `DetailCard.tsx` |
+| Admin panel, account panel, title on the card | `src/components/FundAdminPanel.tsx` (on `AdminPage.tsx`), `src/components/FundPanel.tsx` (on `MePage.tsx`), `CardFund` in `DetailCard.tsx` |
 | Tests | `shared/fund.test.ts`, `server/fund/fund.test.ts` (a pretend sheet through `fetchImpl`), `src/lib/fundLook.test.ts`, the fund test in `worker/worker.test.ts` |
 
 ### Random member picker (claw machine)
 | Feature | Code |
 |---|---|
 | Choosing the winner and planning the animation | `src/lib/picker.ts` (`createDraw`, `pickIndex`, `planSteps`) |
-| 2D claw machine and draw dialog | `src/components/RandomPicker.tsx` (opened from `MonitorPage.tsx`) |
+| 2D claw machine and draw dialog | `src/components/RandomPicker.tsx` (loaded lazily from `MonitorPage.tsx`, opened by `PickerCabinet.tsx` or `pickerCabinet3d.ts` in the park, wired through `MonitorPage.tsx`) |
+| Cabinet and dialog appearance | `src/lib/pickerAppearance.ts` (shared labels and palette), `src/map/PickerCabinet.tsx`, `src/map/pickerCabinet3d.ts` |
 | 3D claw machine | `src/components/ClawMachine3D.tsx` (lazy), positions `src/lib/picker3d.ts` |
 
 ### Daily reset

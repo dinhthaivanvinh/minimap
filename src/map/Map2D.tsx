@@ -1,18 +1,20 @@
 // The 2D floor plan, built from plain HTML and SVG.
 import { officeAssembly } from '../lib/assembly.ts';
 import { AssemblePlay, OfficeDecor } from '../components/AssemblyDecor.tsx';
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import styled, { css, keyframes, type RuleSet } from 'styled-components';
 import type { TeamUser } from '../../shared/types.ts';
 import { Badge, BadgeFigure, type SelectHandler } from '../components/Badge.tsx';
 import { Desk, Mochi, MochiSvg } from '../components/Mochi.tsx';
 import { useElementSize, useReducedMotion } from '../lib/hooks.ts';
-import { computeLayout, noticeBoardSpot, type MapLayout, type Seat, type Zone, type ZoneKind } from '../lib/layout.ts';
+import { computeLayout, noticeBoardSpot, parkActivities, type MapLayout, type Seat, type Zone, type ZoneKind } from '../lib/layout.ts';
 import type { Ambience } from '../lib/ambience.ts';
 import { lookFor } from '../lib/look.ts';
 import { media, theme } from '../styles/theme.ts';
-import { DECOR, PARK_TREES, STREET_ART, Umbrella } from './decor.tsx';
+import { DECOR, Tree, STREET_ART, Umbrella } from './decor.tsx';
 import { ArcadeCabinet2D } from './ArcadeCabinet.tsx';
+import { parkTrees } from '../lib/parkTrees.ts';
+import { PickerCabinet } from './PickerCabinet.tsx';
 import { NoticeBoard2D } from './NoticeBoard2D.tsx';
 import { ResultBanner2D } from './ResultBanner2D.tsx';
 import type { MapProps } from './types.ts';
@@ -22,6 +24,10 @@ import { hasWeather, Weather2D } from './Weather2D.tsx';
 const HOP_MS = 900;
 
 const MapFill = styled.div`
+  /* Keep the previous measured plan from spilling while ResizeObserver catches up. */
+  overflow: clip;
+  /* Resizing reflows the whole town together; attendance changes can still glide. */
+  &[data-reflow] * { transition: none !important; }
   position: absolute;
   inset: 0;
 `;
@@ -555,7 +561,7 @@ function isPlain(look: Ambience): boolean {
   return look.daylight === 1 && look.warmth === 0 && look.weather.gloom === 0;
 }
 
-export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, onAssemble, look, votes, voteMarks, reactions }: MapProps) {
+export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, onAssemble, onPicker, look, votes, voteMarks, reactions }: MapProps) {
   const attendance = officeAssembly(state);
   const fillRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
@@ -575,9 +581,20 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
   const wet = look.weather.precipitation !== 'none';
   const { width, height } = useElementSize(fillRef);
   const portrait = height > 0 && width / height < 0.95;
+  useLayoutEffect(() => {
+    const root = fillRef.current;
+    if (!root) return;
+    root.setAttribute('data-reflow', '');
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => root.removeAttribute('data-reflow'));
+    });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [width, height]);
   const layout = useMemo(() => computeLayout(state.places, state.users, { portrait }), [state.places, state.users, portrait]);
 
   const board = noticeBoardSpot(layout);
+  const activities = parkActivities(layout);
   const playing = usePlaying(reactions);
   const street = layout.zones.find((z) => z.kind === 'street');
 
@@ -593,6 +610,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
   return (
     <MapFill
       data-map-root
+      data-layout={portrait ? 'portrait' : 'landscape'}
       data-daylight={look.phase}
       data-plain={isPlain(look) || undefined}
       data-windy={look.weather.wind > 0.2 || undefined}
@@ -605,6 +623,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
         <Plan style={{ width: layout.width * scale, height: layout.height * scale }}>
           {layout.park && (
             <Park
+              data-park
               style={{
                 left: percent(layout.park.x, layout.width),
                 top: percent(layout.park.y, layout.height),
@@ -613,28 +632,24 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
               }}
             >
               {snowy && <SnowCap />}
-              {PARK_TREES.map(({ art, width: treeWidth, left, right, bottom }, i) => (
-                <DecorBox
-                  key={i}
-                  data-sway
-                  $hidden={false}
-                  style={{
-                    width: `${treeWidth}%`,
-                    aspectRatio: '1',
-                    left: left === undefined ? undefined : `${left}%`,
-                    right: right === undefined ? undefined : `${right}%`,
-                    bottom: `${55+bottom*.25}%`,
-                  }}
-                >
-                  {art}
-                </DecorBox>
-              ))}
-              <ArcadeCabinet2D x="50%" y="90%" width={4.8*scale} onPlay={onArcade}/>
+
             </Park>
           )}
           {layout.zones.map((zone) => (
             <ZoneRoom key={zone.id} zone={zone} layout={layout} busy={isBusy(zone)} snowy={snowy} assembled={attendance.unlocked && zone.kind==='office' && zone.count>0} onAssemble={onAssemble} />
           ))}
+          {layout.park && parkTrees(layout.park).map((tree, i) => (
+            <div key={`park-tree-${i}`} data-park-tree aria-hidden="true"
+              style={{position: 'absolute', width: tree.size * scale, height: tree.size * 1.3 * scale,
+                left: percent(tree.x, layout.width), top: percent(tree.y, layout.height),
+                transform: 'translate(-50%, -100%)', zIndex: 1, pointerEvents: 'none'}}>
+              <DecorBox data-sway $hidden={false} style={{width:'100%', height:'100%', maxWidth:'none', maxHeight:'none'}}>{Tree}</DecorBox>
+            </div>
+          ))}
+          {activities && <>
+            <ArcadeCabinet2D x={percent(activities.arcade.x + activities.arcade.w / 2, layout.width)} y={percent(activities.arcade.y + activities.arcade.h, layout.height)} width={activities.arcade.w * scale} onPlay={onArcade}/>
+            <PickerCabinet x={percent(activities.picker.x + activities.picker.w / 2, layout.width)} y={percent(activities.picker.y + activities.picker.h, layout.height)} width={activities.picker.w * scale} disabled={!state.users.length} onPlay={onPicker}/>
+          </>}
           {board && <NoticeBoard2D spot={board} width={layout.width} height={layout.height} votes={votes} />}
           {hasWeather(look) && <Weather2D look={look} reduced={reduced} />}
           {street && voteMarks?.result && <ResultBanner2D result={voteMarks.result} street={street} width={layout.width} height={layout.height} />}

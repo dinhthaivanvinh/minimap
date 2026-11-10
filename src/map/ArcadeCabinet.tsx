@@ -23,7 +23,7 @@ export const ArcadePlay = styled.button`
     outline-offset: 3px;
   }
 `;
-const Cabinet = styled.button`
+export const Cabinet = styled.button`
   position: absolute;
   z-index: 2;
   padding: 0;
@@ -31,7 +31,7 @@ const Cabinet = styled.button`
   background: transparent;
   transform: translate(-50%, -100%);
   cursor: pointer;
-  width: clamp(36px, var(--cabinet-width), 64px);
+  width: clamp(44px, var(--cabinet-width), 64px);
   aspect-ratio: 100 / 160;
   &::before {
     content: '';

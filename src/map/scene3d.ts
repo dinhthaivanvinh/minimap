@@ -12,9 +12,11 @@ import { watchContextLoss } from '../lib/contextLoss.ts';
 import { fundArt, userFundTier } from '../lib/fundLook.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
 import { boardNotes, voteLink } from '../lib/noticeBoard.ts';
-import { computeLayout, noticeBoardSpot, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
+import { computeLayout, noticeBoardSpot, parkActivities, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { box, clampTo, contains, grow, hopHeight, pickSpot, steer, type Box } from '../lib/wander.ts';
 import type { Reaction, ReactionKind } from '../lib/voteReactions.ts';
+import { parkTrees } from '../lib/parkTrees.ts';
+import { createPickerCabinet } from './pickerCabinet3d.ts';
 import { createArcadeCabinet } from './arcade3d.ts';
 import { createBlimp } from './blimp3d.ts';
 import { createCharacterBuilder } from './character3d.ts';
@@ -42,6 +44,7 @@ export interface SceneLabels {
   people: ReadonlyMap<string, HTMLElement>;
   zones: ZoneLabelSlot[];
   arcade: HTMLElement | null;
+  picker: HTMLElement | null;
   /** Where the notice board's link goes. */
   board: HTMLElement | null;
 }
@@ -66,6 +69,7 @@ export interface Scene3D {
 
 interface SceneOptions {
   onArcade: (trigger: HTMLElement) => void;
+  onPicker: (trigger: HTMLElement) => void;
   /** A click on the notice board: the /vote page, or one vote on it. */
   onNoticeBoard: (link: string) => void;
   onPick: (username: string, label: HTMLElement) => void;
@@ -276,7 +280,7 @@ function checkerTexture(a: string, b: string) {
   return texture;
 }
 
-export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade, onNoticeBoard }: SceneOptions): Scene3D {
+export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade, onPicker, onNoticeBoard }: SceneOptions): Scene3D {
   const ramp = toonRamp();
   const materials = new Map<number, THREE.MeshToonMaterial>();
   const mat = (color: number): THREE.MeshToonMaterial => {
@@ -335,6 +339,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   controls.maxDistance = 230;
   controls.screenSpacePanning = false;
 
+  let picker: THREE.Group | null = null;
+  let pickerSlot: HTMLElement | null = null;
   let arcade: THREE.Group | null = null;
   let arcadeSlot: HTMLElement | null = null;
   let noticeBoard: NoticeBoard3D | null = null;
@@ -360,6 +366,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   const zoneLabels = new Map<string, HTMLElement>();
   let labelElements: ReadonlyMap<string, HTMLElement> = new Map();
   let layout: MapLayout = computeLayout([], []);
+  let portraitLayout = false;
   let center: Point = { x: 0, z: 0 };
   let buildKey = '';
   let assembledOffices = new Set<string>();
@@ -563,11 +570,12 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     parent.add(mesh(new THREE.ConeGeometry(0.9, 2.2, 7), 0x7ad67f, { x, y: 5, z }));
   }
 
-  function addTree(parent: THREE.Group, x: number, z: number) {
-    block(x, z, 1.2, 1.2);
+  function addTree(parent: THREE.Group, x: number, z: number, scale = 1) {
+    block(x, z, 1.2 * scale, 1.2 * scale);
     // Built around the foot of its trunk, so it sways from there in the wind.
     const tree = new THREE.Group();
     tree.position.set(x, 1, z);
+    tree.scale.setScalar(scale);
     tree.add(mesh(new THREE.CylinderGeometry(0.55, 0.75, 3, 8), 0xc99467, { y: 1.5 }));
     tree.add(mesh(new THREE.IcosahedronGeometry(2.5, 1), 0x63c96c, { y: 4.6 }));
     tree.add(mesh(new THREE.IcosahedronGeometry(1.7, 1), 0x7ad67f, { x: 1, y: 6, z: 0.4 }));
@@ -729,11 +737,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     world.add(island);
 
     if (layout.park) {
-      const { x, y, w, h } = layout.park;
-      const middle = toWorld(x + w / 2, y + h / 2);
-      addTree(world, middle.x - w * 0.3, middle.z - h * 0.28);
-      addTree(world, middle.x + w * 0.05, middle.z - h * 0.36);
-      addTree(world, middle.x + w * 0.32, middle.z - h * 0.25);
+      for (const tree of parkTrees(layout.park)) {
+        const at = toWorld(tree.x, tree.y);
+        addTree(world, at.x, at.z, tree.size / 7.7);
+      }
     }
 
     for (const z of layout.zones) {
@@ -755,26 +762,28 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       zoneLabels.set(z.id, label);
     }
 
-    arcade = null;
-    arcadeSlot = null;
-    if (layout.park) {
-      const park = layout.park;
-      const at = toWorld(park.x + park.w / 2, park.y + park.h * 0.8);
-      const cabinet = createArcadeCabinet();
-      arcade = cabinet.group;
-      arcadeSlot = cabinet.playElement;
-      arcade.position.set(at.x, 0.1, at.z);
-      arcade.rotation.y = -0.22;
-      arcade.scale.setScalar(0.75);
-      world.add(arcade);
-      block(at.x, at.z, 3.2, 2.4);
+    arcade = null; arcadeSlot = null; picker = null; pickerSlot = null;
+    const activities = parkActivities(layout);
+    if (activities) {
+      for (const kind of ['arcade', 'picker'] as const) {
+        const spot = activities[kind];
+        const at = toWorld(spot.x + spot.w / 2, spot.y + spot.h * 0.8);
+        const cabinet = kind === 'arcade' ? createArcadeCabinet() : createPickerCabinet();
+        cabinet.group.position.set(at.x, 0.1, at.z);
+        cabinet.group.rotation.y = -0.12;
+        cabinet.group.scale.setScalar(spot.w / 8);
+        world.add(cabinet.group);
+        block(at.x, at.z, spot.w / 2, spot.w / 3);
+        if (kind === 'arcade') { arcade = cabinet.group; arcadeSlot = cabinet.playElement; }
+        else { picker = cabinet.group; pickerSlot = cabinet.playElement; }
+      }
     }
 
     // The notice board stands at the back of its spot, facing the camera, lit after dark.
     noticeBoard = null;
     const spot = noticeBoardSpot(layout);
     if (spot) {
-      const at = toWorld(spot.x + spot.w / 2, spot.y + spot.h * 0.35);
+      const at = toWorld(spot.x + spot.w / 2, spot.y + spot.h * 0.75);
       noticeBoard = createNoticeBoard();
       noticeBoard.group.position.set(at.x, 1, at.z);
       noticeBoard.group.scale.setScalar(spot.w / 10.5);
@@ -1061,9 +1070,14 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   function buildPresets() {
     const all = { w: layout.width + 8, h: layout.height + 8 };
     presets = [
-      { id: 'overview', name: 'Overview', target: [0, 0, 1], ...all, direction: [0, 0.76, 0.64], tilt: 0.86 },
+      { id: 'overview', name: 'Overview', target: [0, 0, 1], ...all, direction: [0, 0.76, 0.64], tilt: portraitLayout ? 1.15 : 0.86 },
       { id: 'top', name: 'From above', target: [0, 0, 0], ...all, direction: [0, 1, 0.001], tilt: 1.12 },
     ];
+    if (layout.park) {
+      const park = layout.park;
+      const center = toWorld(park.x + park.w / 2, park.y + park.h / 2);
+      presets.push({ id: 'park', name: 'Park', target: [center.x, 4, center.z], w: park.w + 18, h: park.h + 24, direction: [0, 0.76, 0.64], tilt: 0.9 });
+    }
     for (const z of layout.zones) {
       if (z.kind === 'lobby') continue;
       const c = zoneCenter(z);
@@ -1108,7 +1122,14 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     activePreset = preset.id;
     const target = new THREE.Vector3(...preset.target);
     const direction = new THREE.Vector3(...preset.direction).normalize();
-    const position = target.clone().addScaledVector(direction, fitDistance(preset.w, preset.h, preset.tilt));
+    const distance = fitDistance(preset.w, preset.h, preset.tilt);
+    // A tall town needs more distance than the old landscape-only orbit limit allowed.
+    const overview = presets[0]!;
+    const overviewDistance = fitDistance(overview.w, overview.h, overview.tilt);
+    controls.maxDistance = Math.max(230, overviewDistance * 1.5, distance * 1.25);
+    camera.far = controls.maxDistance + Math.hypot(layout.width, layout.height);
+    camera.updateProjectionMatrix();
+    const position = target.clone().addScaledVector(direction, distance);
     flyTo(target, position, immediate);
     reportCamera();
   }
@@ -1136,10 +1157,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     raycaster.setFromCamera(pointer, camera);
     const meshes = [...characters.values()].map((c) => c.group);
     if (arcade) meshes.push(arcade);
+    if (picker) meshes.push(picker);
     if (noticeBoard) meshes.push(noticeBoard.group);
     if (blimp.group.visible) meshes.push(blimp.group);
     const hit = raycaster.intersectObjects(meshes, true).find(
-      (h) => h.object.userData.username || h.object.userData.arcade || h.object.userData.noticeBoard || h.object.userData.resultBanner,
+      (h) => h.object.userData.username || h.object.userData.arcade || h.object.userData.picker || h.object.userData.noticeBoard || h.object.userData.resultBanner,
     );
     if (hit?.object.userData.resultBanner && voteMarks?.result) {
       onNoticeBoard(voteLink(voteMarks.result.vote.id));
@@ -1147,6 +1169,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     }
     if (hit?.object.userData.noticeBoard && noticeBoard) {
       onNoticeBoard(hit.object.userData.noticeFace && hit.uv ? noticeBoard.linkAt(hit.uv) : '/vote');
+      return;
+    }
+    if (hit?.object.userData.picker && pickerSlot) {
+      const control = pickerSlot.querySelector<HTMLButtonElement>('[data-picker-play]');
+      if (control && !control.disabled) onPicker(control);
       return;
     }
     if (hit?.object.userData.arcade && arcadeSlot) {
@@ -1164,7 +1191,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   // ---- Applying data ----------------------------------------------------
 
   function apply(state: TeamState, isDimmed: (user: TeamUser) => boolean): SceneLabels {
-    layout = computeLayout(state.places, state.users);
+    const portrait = root.clientHeight > 0 && root.clientWidth / root.clientHeight < 0.95;
+    const reflow = portrait !== portraitLayout;
+    portraitLayout = portrait;
+    layout = computeLayout(state.places, state.users, { portrait });
 
     // Rooms change size with their people, which means rebuilding the town.
     const attendance = officeAssembly(state);
@@ -1175,7 +1205,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       buildKey = key;
       buildWorld();
     }
-    if (isFirstBuild) applyPreset('overview', true);
+    if (isFirstBuild || reflow) applyPreset(activePreset ?? 'overview', true);
 
     const nextDeskKey = [...layout.seats.entries()].map(([u, s]) => `${u}:${s.x}:${s.y}:${s.zone.kind}`).join();
     if (nextDeskKey !== deskKey) {
@@ -1209,7 +1239,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       character.cell = seat.cell;
       character.area = seat.cell >= CROWDED_CELL ? wanderArea(seat.zone, character.scale) : null;
       character.targetOpacity = isDimmed(user) ? 0.22 : 1;
-      if (!character.placed || reducedMotion) {
+      if (!character.placed || reducedMotion || reflow) {
         character.group.position.copy(character.seat);
         character.goal.copy(character.seat);
         character.mode = 'idle';
@@ -1240,7 +1270,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       const element = zoneLabels.get(id);
       return element ? [{ id, name, count, element }] : [];
     });
-    return { people: labelElements, zones, arcade: arcadeSlot, board: noticeBoard?.slot ?? null };
+    return { people: labelElements, zones, arcade: arcadeSlot, picker: pickerSlot, board: noticeBoard?.slot ?? null };
   }
 
   // ---- Animation --------------------------------------------------------
