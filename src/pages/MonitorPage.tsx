@@ -3,6 +3,7 @@ import type { AssemblyCast } from '../components/TeamAssemble.tsx';
 import { officeAssembly } from '../lib/assembly.ts';
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
+import type { CelebrateView } from '../../shared/celebrate.ts';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
 import { latestResult, waitingVoters, type VoteView } from '../../shared/vote.ts';
 import { DetailCard } from '../components/DetailCard.tsx';
@@ -10,6 +11,7 @@ import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { storeSession, useSession } from '../lib/session.ts';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
+import { wishReactions } from '../lib/celebrateLook.ts';
 import { moverFor, withMove, type PendingMove } from '../lib/dragMove.ts';
 import { useAmbience, useNow, useReducedMotion, useTeamState } from '../lib/hooks.ts';
 import { reactions as planReactions, type VoteSnapshot } from '../lib/voteReactions.ts';
@@ -375,7 +377,7 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }
 
 export function MonitorPage() {
-  const { state: liveState, online, votes } = useTeamState();
+  const { state: liveState, online, votes, celebrate } = useTeamState();
   // Someone logged in on this browser can drag their own character to another room.
   const session = useSession(liveState);
   const login = session.auth;
@@ -431,6 +433,14 @@ export function MonitorPage() {
     lastLook.current = look;
     if (list.length && !reduced) setReactions({ id: look.at.getTime(), list });
   }, [votes, now, reduced]);
+  // Confetti over someone celebrating when a teammate sends wishes.
+  const lastParty = useRef<CelebrateView | null>(null);
+  useEffect(() => {
+    if (!celebrate) return;
+    const list = wishReactions(lastParty.current, celebrate);
+    lastParty.current = celebrate;
+    if (list.length && !reduced) setReactions({ id: Date.now(), list });
+  }, [celebrate, reduced]);
 
   useEffect(() => {
     document.title = 'Team Minimap';
@@ -633,7 +643,7 @@ export function MonitorPage() {
         </MapArea>
 
         <Side>
-          {state && <InfoPanel state={state} votes={allVotes} />}
+          {state && <InfoPanel state={state} votes={allVotes} celebrate={celebrate} />}
           <People aria-label="Team members">
             {state && <PeopleList state={state} people={people} filter={filter} selected={selection?.username ?? null} onPick={pickFromList} />}
           </People>
@@ -657,7 +667,16 @@ export function MonitorPage() {
       )}
 
       {state && selection && selectedUser && (
-        <DetailCard user={selectedUser} places={state.places} votes={allVotes} anchor={selection.anchor} onClose={closeCard} />
+        <DetailCard
+          user={selectedUser}
+          places={state.places}
+          votes={allVotes}
+          users={state.users}
+          celebrate={celebrate}
+          login={login ?? null}
+          anchor={selection.anchor}
+          onClose={closeCard}
+        />
       )}
     </Page>
   );

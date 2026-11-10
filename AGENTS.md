@@ -9,7 +9,7 @@ A small React + TypeScript app that shows where the team works today, on a 2D an
 - **Node.js** (`server/server.ts`): data is kept in a JSON file, `data/data.json`. Used locally and in Docker.
 - **Cloudflare Workers** (`worker/index.ts`): the same data is kept as one value (key `data`) in the `Minimap` Durable Object named `team`. Only `main` is deployed.
 
-Features with their own data live in their own folder (`server/basketball/`, `server/vote/`, `server/fund/`) and keep their own file (`data/basketball.json`, `data/vote.json`, `data/fund.json`) or storage key (`basketball`, `vote`, `fund`).
+Features with their own data live in their own folder (`server/basketball/`, `server/vote/`, `server/fund/`, `server/celebrate/`) and keep their own file (`data/basketball.json`, `data/vote.json`, `data/fund.json`, `data/celebrate.json`) or storage key (`basketball`, `vote`, `fund`, `celebrate`).
 
 `core.ts` never knows where data comes from or goes to. The host hands it `saved`, `save()` and `onChange()`, and does the same for each feature. A feature's `save()` may return a promise: on Cloudflare it resolves once the write is stored.
 
@@ -95,14 +95,14 @@ Paths are from the project root. Function names are given instead of line number
 |---|---|
 | Team API routes, data shape (`Data`), validation, `ApiError` | `server/core.ts`: `createCore` → `route()`; the routes are `if (route === 'METHOD /api/...')` blocks; `handle()` and `errorResponse` turn errors into JSON |
 | What features may use from the team | `core.ts`: `Team` (`core.team`: `player`, `members`, `sign`, `requireAdmin`), `TeamFeature` (`core.attach`), `backupError`, `safeEqual` |
-| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `sendAll`, `voteEvent`, `fundEvent`, `serveStatic`, `runTimedChanges`, `start`) |
-| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data`, `basketball`, `vote` and `fund`, `alarm`, `syncAlarm`, `runTimedChanges`, `refreshFundIfDue`, SSE, ping), `voteEvent`, `fundEvent` |
+| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `sendAll`, `voteEvent`, `fundEvent`, `celebrateEvent`, `serveStatic`, `runTimedChanges`, `start`) |
+| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data`, `basketball`, `vote`, `fund` and `celebrate`, `alarm`, `syncAlarm`, `runTimedChanges`, `refreshFundIfDue`, SSE, ping), `voteEvent`, `fundEvent`, `celebrateEvent` |
 | Cloudflare settings (vars, bindings, build) | `wrangler.jsonc` |
-| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json`, `basketball.json`, `vote.json` and `fund.json`), `.dockerignore` |
-| Types sent to the browser | `shared/types.ts` (`TeamState`, `TeamUser` (its `fund` is added by the browser, never sent), `ScheduledChange`, `Weather`, ...) |
+| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json`, `basketball.json`, `vote.json`, `fund.json` and `celebrate.json`), `.dockerignore` |
+| Types sent to the browser | `shared/types.ts` (`TeamState`, `TeamUser` (its `fund` and `celebration` are added by the browser, never sent), `ScheduledChange`, `Weather`, ...) |
 | Character design limits (server and editor) | `shared/look.ts` |
 | Frontend entry and page switch | `src/main.tsx` |
-| Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, which also takes features' named events such as `vote` and `fund`, `errorText`), `src/lib/hooks.ts` (`useTeamState` gives the state, with each user's fund standing added, the votes and the fund, `useNow`, `useAmbience`, ...) |
+| Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, which also takes features' named events such as `vote`, `fund` and `celebrate`, `errorText`), `src/lib/hooks.ts` (`useTeamState` gives the state, with each user's fund standing and today's celebration added, the votes, the fund and the celebrations, `useNow`, `useAmbience`, ...) |
 | Styles and shared controls | `src/styles/theme.ts`, `src/styles/ui.ts`, `src/styles/GlobalStyle.ts` |
 | 3D support and lost-context fallback | `src/lib/webgl.ts` (`supportsWebGL`), `src/lib/contextLoss.ts` (`watchContextLoss`, 10 s wait) |
 | CI (read-only token, safe for pull requests from forks) | `.github/workflows/check.yml` |
@@ -214,6 +214,19 @@ Paths are from the project root. Function names are given instead of line number
 | Admin panel, account panel, title on the card | `src/components/FundAdminPanel.tsx` (on `AdminPage.tsx`), `src/components/FundPanel.tsx` (on `MePage.tsx`), `CardFund` in `DetailCard.tsx` |
 | Tests | `shared/fund.test.ts`, `server/fund/fund.test.ts` (a pretend sheet through `fetchImpl`), `src/lib/fundLook.test.ts`, the fund test in `worker/worker.test.ts` |
 
+### Birthdays and anniversaries
+| Feature | Code |
+|---|---|
+| Rules shared by browser and server (valid dates, the team's day, leap days, the coming list, words) | `shared/celebrate.ts` (`isMonthDay`, `isDate`, `dateIn`, `fallsOn`, `celebrations`, `todayKind`, `wishesFor`, `celebrationText`, `todayText`, `whenText`, `UPCOMING_DAYS`) |
+| API: my dates, anyone's dates (admin), send wishes | `server/celebrate/core.ts`: `createCelebrate` → `route()` with `GET /api/celebrate`, `GET/PATCH /api/celebrate/me`, `GET/PATCH /api/celebrate/admin`, `POST /api/celebrate/wish`; `change` (queue, save, undo), `tick` |
+| Stored data | `CelebrateData` (`people` as pairs, today's `wishes`): `data/celebrate.json` on Node, key `celebrate` on Cloudflare. A new day needs no alarm: `tick` runs from `runTimedChanges` in both hosts and sends the new day to open maps, and old wishes are left out by their `day` |
+| Backup part, deleted people | `server/celebrate/core.ts`: `feature` (`checkPeople`, `checkWishes`, `forget`) |
+| Live updates | `onChange` → `event: celebrate` on `/api/events`, also sent when a stream opens; `useTeamState` adds `celebration` to users with `withCelebration` |
+| Party hat and balloon | `src/lib/celebrateLook.ts` (`withCelebration`, `wishReactions`, `BALLOON`); `Look.party` in `src/lib/look.ts`; 2D `Mochi.tsx` (`PARTY_HAT_ART`, `Balloon`); 3D `character3d.ts` (`addParty`); `scene3d.ts` `designKeyOf`, `labelHeight`; arcade `BasketballCourt.tsx` |
+| Side panel, card, confetti | `Celebrations` in `src/components/InfoPanel.tsx`; `src/components/CardParty.tsx` (on `DetailCard.tsx`, Send wishes); confetti planned in `MonitorPage.tsx` with `wishReactions` |
+| Account and admin panels | `src/components/CelebratePanel.tsx` (on `MePage.tsx` account view), `src/components/BirthdayInput.tsx` (shared), `src/components/CelebrateAdminPanel.tsx` (on `AdminPage.tsx`) |
+| Tests | `shared/celebrate.test.ts`, `server/celebrate/celebrate.test.ts`, `src/lib/celebrateLook.test.ts`, the birthdays test in `worker/worker.test.ts` |
+
 ### Random member picker (claw machine)
 | Feature | Code |
 |---|---|
@@ -232,7 +245,7 @@ Paths are from the project root. Function names are given instead of line number
 | What | Where |
 |---|---|
 | Test runner (fails when no tests run) | `scripts/run-tests.ts`, its own test `scripts/run-tests.test.ts` |
-| API tests (through a real Node server) | `server/server.test.ts` (`setup()` makes a temp data file), `server/basketball/basketball.test.ts`, `server/vote/vote.test.ts` |
+| API tests (through a real Node server) | `server/server.test.ts` (`setup()` makes a temp data file), `server/basketball/basketball.test.ts`, `server/vote/vote.test.ts`, `server/celebrate/celebrate.test.ts` |
 | Worker tests (real workerd) | `worker/worker.test.ts` |
 | Pure logic tests | `src/lib/*.test.ts`, `shared/*.test.ts` |
 | 20 pretend users | `scripts/sample-team.ts` (`npm run test-members`) |

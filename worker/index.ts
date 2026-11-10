@@ -10,6 +10,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { createBasketball, takeOldBasketball, type Basketball } from '../server/basketball/core.ts';
 import { createVote, type Votes } from '../server/vote/core.ts';
 import { createFund, type Fund } from '../server/fund/core.ts';
+import { createCelebrate, type Celebrate } from '../server/celebrate/core.ts';
 import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type Core, type JsonBody } from '../server/core.ts';
 
 interface Env {
@@ -34,6 +35,14 @@ function voteEvent(views: unknown): string {
 function fundEvent(people: unknown): string {
   return `event: fund
 data: ${JSON.stringify(people)}
+
+`;
+}
+
+// Birthdays and anniversaries too.
+function celebrateEvent(view: unknown): string {
+  return `event: celebrate
+data: ${JSON.stringify(view)}
 
 `;
 }
@@ -75,6 +84,7 @@ export class Minimap extends DurableObject<Env> {
   private basketball!: Basketball;
   private votes!: Votes;
   private fund!: Fund;
+  private celebrate!: Celebrate;
   private clients = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private ticker: ReturnType<typeof setInterval> | undefined;
   private weatherAt = 0;
@@ -130,6 +140,17 @@ export class Minimap extends DurableObject<Env> {
       });
       this.core.attach(this.fund.feature);
 
+      const celebrateSaved = await ctx.storage.get<string>('celebrate');
+      this.celebrate = createCelebrate({
+        saved: celebrateSaved ? JSON.parse(celebrateSaved) : null,
+        // Awaited, so a reply only says a date or wish is stored once it is.
+        save: (data) => ctx.storage.put('celebrate', JSON.stringify(data)),
+        team: this.core.team,
+        onChange: (view) => this.sendAll(celebrateEvent(view)),
+        timeZone: env.TZ || 'UTC',
+      });
+      this.core.attach(this.celebrate.feature);
+
       this.runTimedChanges();
       this.core.save();
       this.syncAlarm();
@@ -142,10 +163,12 @@ export class Minimap extends DurableObject<Env> {
     this.syncAlarm();
   }
 
-  // The reset goes first, so it wins over schedules that are overdue.
+  // The reset goes first, so it wins over schedules that are overdue. A new day for
+  // celebrations needs no alarm: nobody sees it until a map is open, and open maps tick.
   private runTimedChanges(): void {
     this.core.runResetIfDue();
     this.core.runScheduledIfDue();
+    this.celebrate.tick();
   }
 
   private syncAlarm(): void {
@@ -169,7 +192,7 @@ export class Minimap extends DurableObject<Env> {
       readJson: (maxBytes) => readJson(request, maxBytes),
     };
     const { status, body, headers } =
-      (await this.basketball.handle(req)) ?? (await this.votes.handle(req)) ?? (await this.fund.handle(req)) ?? (await this.core.handle(req));
+      (await this.basketball.handle(req)) ?? (await this.votes.handle(req)) ?? (await this.fund.handle(req)) ?? (await this.celebrate.handle(req)) ?? (await this.core.handle(req));
     return new Response(JSON.stringify(body), { status, headers });
   }
 
@@ -191,6 +214,7 @@ export class Minimap extends DurableObject<Env> {
     this.send(writer, `data: ${JSON.stringify(this.core.publicState())}\n\n`);
     this.send(writer, voteEvent(this.votes.views()));
     this.send(writer, fundEvent(this.fund.people()));
+    this.send(writer, celebrateEvent(this.celebrate.view()));
     // While a map is open, keep the connection alive and the reset and weather on time.
     this.ticker ??= setInterval(() => {
       this.sendAll(': ping\n\n');

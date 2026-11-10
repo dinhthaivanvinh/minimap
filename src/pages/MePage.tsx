@@ -15,6 +15,7 @@ import { Button, Chip, Chips, Field, FieldLabel, Input, Panel, PanelHint, Row, S
 // Account-only editors stay out of the daily status flow.
 const CharacterEditor = lazy(() => import('../components/CharacterEditor.tsx').then(m => ({default:m.CharacterEditor})));
 const FundPanel = lazy(() => import('../components/FundPanel.tsx').then(m => ({default:m.FundPanel})));
+const CelebratePanel = lazy(() => import('../components/CelebratePanel.tsx').then((m) => ({ default: m.CelebratePanel })));
 const OFFICE_ICONS = ['🏢', '🏬'];
 
 const Hero = styled(Panel)`
@@ -386,6 +387,8 @@ function Editor({ user, state, token, onLogOut, account }: EditorProps) {
               message={lookMessage}
               onSave={(look) => void patchMe({ look }, 'Character saved', showLookMessage)}
             />
+
+            <CelebratePanel token={token} />
 
             <FundPanel user={user} token={token} />
           </Suspense>

@@ -1,4 +1,5 @@
 // What the server sends to browsers. Used by both the server and the frontend.
+import type { CelebrationKind } from './celebrate.ts';
 import type { FundPerson } from './fund.ts';
 import type { CharacterDesign } from './look.ts';
 
@@ -35,6 +36,8 @@ export interface TeamUser {
    * from the fund's own `fund` event (see withFund in src/lib/fundLook.ts).
    */
   fund?: Omit<FundPerson, 'username'>;
+  /** What they celebrate today. Added by the browser from the `celebrate` event, never sent here. */
+  celebration?: CelebrationKind;
 }
 
 export interface Clock {
