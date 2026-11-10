@@ -124,7 +124,8 @@ Paths are from the project root. Function names are given instead of line number
 | 3D characters (map, claw machine, arcade) | `src/map/character3d.ts` |
 | 3D wandering | `src/lib/wander.ts` |
 | Person badge and detail card | `src/components/Badge.tsx`, `src/components/DetailCard.tsx` |
-| Map props and focus requests (and the votes, vote marks and reactions the maps get) | `src/map/types.ts` |
+| Map props and focus requests (and the votes, vote marks, reactions and the mover the maps get) | `src/map/types.ts` |
+| Drag yourself to another room (the logged-in person only): which room is under a point, the place to send, the move shown before the server agrees | `src/lib/dragMove.ts` (`zoneAt`, `dropPlace`, `moverFor`, `withMove`); `MonitorPage.tsx` (`moveMe` sends `PATCH /api/me`, pending move, `MoveNote`); 2D: `Map2D.tsx` (`useDrag`, the room's `$dropTarget`); 3D: `scene3d.ts` section "Dragging yourself to another room" (`setMover`, `onHoldStart`, `letGo`), `Map3D.tsx` (`[data-drop-target]`, `[data-mover]`) |
 | Side panel: clocks, weather, QR code, a vote's last-hour countdown | `src/components/InfoPanel.tsx` (`VoteCountdown`) |
 
 ### Time of day and weather

@@ -9,7 +9,10 @@ import { DetailCard } from '../components/DetailCard.tsx';
 import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { RandomPicker } from '../components/RandomPicker.tsx';
+import { api, ApiFailure, errorText } from '../lib/api.ts';
+import { moverFor, withMove, type PendingMove } from '../lib/dragMove.ts';
 import { useAmbience, useNow, useReducedMotion, useTeamState } from '../lib/hooks.ts';
+import { savedLogin } from '../lib/savedLogin.ts';
 import { reactions as planReactions, type VoteSnapshot } from '../lib/voteReactions.ts';
 import { shownStatus } from '../lib/status.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
@@ -29,6 +32,9 @@ const MODE_KEY = 'minimap.mode';
 const NO_VOTES: VoteView[] = [];
 const WEATHER_KEY = 'minimap.weather';
 const VOTE_MARKS_KEY = 'minimap.voteMarks';
+// After the server saves a drag, the map waits this long for the live update before it trusts the server again.
+const MOVE_SETTLE_MS = 5000;
+const MOVE_NOTE_MS = 6000;
 
 type Filter = 'all' | 'office' | 'wfh' | 'notWorking';
 type Mode = '2d' | '3d';
@@ -125,6 +131,14 @@ const OfflineNote = styled.p`
   border-radius: 12px;
   background: ${theme.bubblegum};
   font-weight: 800;
+`;
+
+const MoveNote = styled(OfflineNote)`
+  top: auto;
+  bottom: 12px;
+  width: max-content;
+  max-width: 90%;
+  text-align: center;
 `;
 
 const EmptyNote = styled.p`
@@ -357,7 +371,14 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }
 
 export function MonitorPage() {
-  const { state, online, votes } = useTeamState();
+  const { state: liveState, online, votes } = useTeamState();
+  // Someone logged in on this browser can drag their own character to another room.
+  const [login] = useState(savedLogin);
+  const [move, setMove] = useState<(PendingMove & { saved: boolean }) | null>(null);
+  const [moveError, setMoveError] = useState('');
+  // The map shows a dragged move straight away, while the server saves it.
+  const state = useMemo(() => liveState && withMove(liveState, move), [liveState, move]);
+  const mover = useMemo(() => moverFor(liveState?.users ?? [], login?.username), [liveState, login]);
   const has3D = useMemo(supportsWebGL, []);
   const [filter, setFilter] = useState<Filter>('all');
   const [mode, setMode] = useState<Mode>(() => {
@@ -407,6 +428,47 @@ export function MonitorPage() {
   useEffect(() => {
     document.title = 'Team Minimap';
   }, []);
+
+  // A saved move is done once the live update shows it, or after a while if that update is missed.
+  const liveMoved = move?.saved && liveState?.users.find((u) => u.username === move.username)?.place === move.place;
+  useEffect(() => {
+    if (!move?.saved) return;
+    if (liveMoved) {
+      setMove(null);
+      return;
+    }
+    const timer = setTimeout(() => setMove(null), MOVE_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [move, liveMoved]);
+
+  useEffect(() => {
+    if (!moveError) return;
+    const timer = setTimeout(() => setMoveError(''), MOVE_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [moveError]);
+
+  const moveMe = useCallback(
+    async (place: string | null) => {
+      if (!login || !mover) return;
+      const request = { username: login.username, place };
+      const isThis = (current: PendingMove | null) => current?.username === request.username && current.place === place;
+      setMove({ ...request, saved: false });
+      setMoveError('');
+      try {
+        await api('PATCH', '/api/me', { place }, { Authorization: `Bearer ${login.token}` });
+        setMove((current) => (current && isThis(current) ? { ...current, saved: true } : current));
+      } catch (err) {
+        // Put them back where the server has them.
+        setMove((current) => (isThis(current) ? null : current));
+        setMoveError(
+          err instanceof ApiFailure && err.status === 401
+            ? 'Your login has ended. Log in again on My status to move yourself.'
+            : `Could not move you. ${errorText(err)}`,
+        );
+      }
+    },
+    [login, mover],
+  );
 
   const places = state?.places;
   const officeIds = useMemo(() => new Set(places?.map((p) => p.id)), [places]);
@@ -472,7 +534,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, onAssemble: openAssembly, look, votes: allVotes, voteMarks, reactions };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, onAssemble: openAssembly, look, votes: allVotes, voteMarks, reactions, mover, onMove: moveMe };
 
   return (
     <Page>
@@ -553,6 +615,7 @@ export function MonitorPage() {
             </Guard>
           )}
           {!online && <OfflineNote role="status">Reconnecting to the server</OfflineNote>}
+          {moveError && <MoveNote role="alert">{moveError}</MoveNote>}
           {state && !state.users.length && (
             <EmptyNote>No team members yet. Add usernames on the <a href="/admin">Admin page</a>.</EmptyNote>
           )}
