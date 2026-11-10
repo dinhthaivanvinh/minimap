@@ -7,7 +7,7 @@ import type { TeamUser } from '../../shared/types.ts';
 import { Badge, BadgeFigure, type SelectHandler } from '../components/Badge.tsx';
 import { Desk, Mochi, MochiSvg } from '../components/Mochi.tsx';
 import { useElementSize, useReducedMotion } from '../lib/hooks.ts';
-import { DRAG_START_PX, dropPlace, zoneAt } from '../lib/dragMove.ts';
+import { createPress, dropPlace, zoneAt } from '../lib/dragMove.ts';
 import { computeLayout, noticeBoardSpot, parkActivities, type MapLayout, type Seat, type Zone, type ZoneKind } from '../lib/layout.ts';
 import type { Ambience } from '../lib/ambience.ts';
 import { lookFor } from '../lib/look.ts';
@@ -128,6 +128,8 @@ const GLIDE = '.9s cubic-bezier(.45, .05, .3, 1)';
 
 const Room = styled.section<{ $kind: ZoneKind; $dropTarget: boolean }>`
   position: absolute;
+  /* Lets a small room's name get smaller when the room is narrow (see RoomTitle). */
+  container-type: inline-size;
   border: ${theme.line};
   border-radius: 20px;
   box-shadow: 0 5px 0 ${theme.ink};
@@ -158,7 +160,19 @@ const Park = styled.div`
   ${shade}
 `;
 
-const RoomTitle = styled.h2`
+// The lobby and the beach are kept small beside the park, so when they are narrow
+// their names get the smaller size a phone gets. "Not checked in" doesn't fit otherwise.
+const NARROW_ROOM = '@container (max-width: 172px)';
+
+const compactTitle = css`
+  left: 8px;
+  gap: 4px;
+  max-width: calc(100% - 12px);
+  padding: 0 7px 1px;
+  font-size: 12.5px;
+`;
+
+const RoomTitle = styled.h2<{ $smallRoom: boolean }>`
   position: absolute;
   top: -3px;
   left: 14px;
@@ -173,25 +187,29 @@ const RoomTitle = styled.h2`
   font-family: ${theme.displayFont};
   font-size: 15px;
   font-weight: 800;
-  white-space: nowrap;
+  line-height: 1.15;
 
-  ${media.phone} {
-    left: 8px;
-    gap: 4px;
-    max-width: calc(100% - 12px);
-    padding: 0 7px 1px;
-    font-size: 12.5px;
-  }
+  ${({ $smallRoom }) => $smallRoom && css`${NARROW_ROOM} { ${compactTitle} }`}
+  ${media.phone} { ${compactTitle} }
 `;
 
+// A name still too long for its room goes onto a second line, so "Not checked in" is
+// never cut short. Only a name that needs more than two lines ends in an ellipsis.
 const RoomName = styled.span`
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  /* With the tight line height above, this keeps a one-line name as tall as it always was. */
+  padding: .25em 0 .2em;
 `;
 
 const RoomCount = styled.span`
   flex: none;
+  padding: .25em 0 .2em;
   font-weight: 500;
 `;
 
@@ -462,7 +480,7 @@ function ZoneRoom({ zone, layout, busy, snowy, assembled, dropTarget, onAssemble
   return (
     <Room $kind={zone.kind} $dropTarget={dropTarget} style={style} data-office-assembled={assembled || undefined}>
       {assembled && <OfficeDecor aria-hidden="true"/>}
-      <RoomTitle>
+      <RoomTitle $smallRoom={zone.kind === 'lobby' || zone.kind === 'off'}>
         <RoomName>{zone.name}</RoomName>
         <RoomCount>{zone.count}</RoomCount>
         {assembled && <AssemblePlay data-assemble-play aria-label={`Assemble team from ${zone.name}`} aria-haspopup="dialog" onClick={event=>onAssemble(event.currentTarget)}>✦ Assemble</AssemblePlay>}
@@ -516,43 +534,52 @@ interface PersonDrag {
 
 /** Lets a person be picked up and dropped. A press that doesn't move still opens their card. */
 function useDrag(drag: PersonDrag | undefined) {
-  const press = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
+  const stop = useRef<(() => void) | null>(null);
   const justDropped = useRef(false);
   const [offset, setOffset] = useState<{ x: number; y: number } | null>(null);
+  // The window's listeners outlive a render, so they read the newest callbacks from here.
+  const latest = useRef(drag);
+  latest.current = drag;
+  useEffect(() => () => stop.current?.(), []);
   if (!drag) return { offset: null, handlers: {} };
-
-  function end(event: ReactPointerEvent<HTMLElement>, dropped: boolean) {
-    const current = press.current;
-    if (!current || current.id !== event.pointerId) return;
-    press.current = null;
-    if (!current.moved) return;
-    justDropped.current = true;
-    setOffset(null);
-    if (dropped) drag?.onDrop(event.clientX, event.clientY);
-    else drag?.onCancel();
-  }
 
   const handlers = {
     onPointerDown(event: ReactPointerEvent<HTMLElement>) {
-      if (event.button !== 0 || press.current) return;
+      if (event.button !== 0 || stop.current) return;
       justDropped.current = false;
-      press.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+      const box = event.currentTarget;
+      const press = createPress(event);
+
+      // Moves are heard on the window: after a quick flick the first one is already off
+      // the character, so the character itself would never hear it.
+      const move = (e: PointerEvent) => {
+        const wasDragging = press.dragged();
+        const moved = press.move(e);
+        if (!moved) return;
+        // Capturing sends the click that ends a drag to the character, which drops it below.
+        if (!wasDragging && box.isConnected) box.setPointerCapture(e.pointerId);
+        setOffset(moved);
+        latest.current?.onOver(e.clientX, e.clientY);
+      };
+      const end = (e: PointerEvent) => {
+        if (e.pointerId !== press.pointerId) return;
+        stop.current?.();
+        if (!press.dragged()) return;
+        justDropped.current = true;
+        setOffset(null);
+        if (e.type === 'pointerup') latest.current?.onDrop(e.clientX, e.clientY);
+        else latest.current?.onCancel();
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
+      stop.current = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        stop.current = null;
+      };
     },
-    onPointerMove(event: ReactPointerEvent<HTMLElement>) {
-      const current = press.current;
-      if (!current || current.id !== event.pointerId) return;
-      const x = event.clientX - current.x;
-      const y = event.clientY - current.y;
-      if (!current.moved) {
-        if (Math.hypot(x, y) < DRAG_START_PX) return;
-        current.moved = true;
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }
-      setOffset({ x, y });
-      drag?.onOver(event.clientX, event.clientY);
-    },
-    onPointerUp: (event: ReactPointerEvent<HTMLElement>) => end(event, true),
-    onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => end(event, false),
     // A drag isn't a click, so it doesn't open the card.
     onClickCapture(event: { stopPropagation(): void; preventDefault(): void }) {
       if (!justDropped.current) return;

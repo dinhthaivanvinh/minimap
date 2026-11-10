@@ -7,6 +7,37 @@ import type { MapLayout, Zone } from './layout.ts';
 /** How far, in pixels, a pointer must move before a press becomes a drag, so a click still opens the card. */
 export const DRAG_START_PX = 6;
 
+/** What a press needs to know from a pointer event. */
+export interface PressPoint {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+}
+
+/**
+ * Follows one press on a character, from pointer down until it is let go. The 2D map
+ * feeds it every move of that pointer on the whole window, not only those over the
+ * character: a quick flick leaves the character before its first move arrives.
+ */
+export function createPress(start: PressPoint) {
+  const { pointerId, clientX, clientY } = start;
+  let dragged = false;
+  return {
+    pointerId,
+    /** Whether the press has moved far enough to be a drag. */
+    dragged: () => dragged,
+    /** How far the character has been dragged, or null while this is still a click, or for another pointer. */
+    move(event: PressPoint): { x: number; y: number } | null {
+      if (event.pointerId !== pointerId) return null;
+      const x = event.clientX - clientX;
+      const y = event.clientY - clientY;
+      if (!dragged && Math.hypot(x, y) < DRAG_START_PX) return null;
+      dragged = true;
+      return { x, y };
+    },
+  };
+}
+
 /** A move the map shows straight away, while the server saves it. */
 export interface PendingMove {
   username: string;

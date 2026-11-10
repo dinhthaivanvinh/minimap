@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Place, TeamState, TeamUser } from '../../shared/types.ts';
-import { dropPlace, moverFor, placeOfZone, withMove, zoneAt } from './dragMove.ts';
+import { DRAG_START_PX, createPress, dropPlace, moverFor, placeOfZone, withMove, zoneAt } from './dragMove.ts';
 import { computeLayout } from './layout.ts';
 
 const places: Place[] = [
@@ -78,4 +78,25 @@ test('a pending move shows straight away, and going to a scheduled place cancels
 
   const out = withMove(state, { username: 'ana', place: 'out' });
   assert.equal(out.users[0]!.scheduled, null);
+});
+
+test('a quick flick is a drag from its first move, however far that move lands', () => {
+  const press = createPress({ pointerId: 1, clientX: 100, clientY: 100 });
+  assert.equal(press.dragged(), false);
+  // The first move is already in another room, far outside the character.
+  assert.deepEqual(press.move({ pointerId: 1, clientX: 520, clientY: 340 }), { x: 420, y: 240 });
+  assert.equal(press.dragged(), true);
+});
+
+test('a press that barely moves stays a click, and another pointer is ignored', () => {
+  const press = createPress({ pointerId: 1, clientX: 100, clientY: 100 });
+  assert.equal(press.move({ pointerId: 1, clientX: 100 + DRAG_START_PX - 1, clientY: 100 }), null);
+  assert.equal(press.move({ pointerId: 2, clientX: 400, clientY: 400 }), null);
+  assert.equal(press.dragged(), false);
+});
+
+test('once a drag has started, it follows the pointer back to where it began', () => {
+  const press = createPress({ pointerId: 1, clientX: 100, clientY: 100 });
+  press.move({ pointerId: 1, clientX: 130, clientY: 100 });
+  assert.deepEqual(press.move({ pointerId: 1, clientX: 101, clientY: 100 }), { x: 1, y: 0 });
 });
