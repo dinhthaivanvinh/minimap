@@ -1,8 +1,9 @@
-// The weather over the 2D map: drifting clouds, fog, rain or snow, and soft lightning.
-// It sits between the rooms and the people, so names and statuses always stay on top.
+// Foreground weather for both map modes: clouds, fog, rain or snow, and soft lightning.
+// Pointer events pass through to the map, while its toolbars and dialogs stay above this layer.
 import { useEffect, useRef, type CSSProperties } from 'react';
 import styled, { keyframes } from 'styled-components';
 import { mixColor, type Ambience } from '../lib/ambience.ts';
+import { MAP_LAYERS } from './layers.ts';
 import { media } from '../styles/theme.ts';
 
 const FRAME_MS = 1000 / 30;
@@ -12,6 +13,7 @@ const MAX_PARTICLES = { rain: 340, drizzle: 260, snow: 220 } as const;
 const FULL_AREA = 1000 * 650;
 
 const Layer = styled.div`
+  z-index: ${MAP_LAYERS.weather};
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -189,11 +191,8 @@ export function hasWeather({ weather }: Ambience): boolean {
   return weather.precipitation !== 'none' || weather.clouds > 0 || weather.fog > 0;
 }
 
-/**
- * Flat cartoon clouds drifting across their parent, more of them the cloudier it is.
- * The 2D map spreads them over the town; the 3D map keeps them to the sky at the top.
- */
-export function Clouds({ look, reduced, sky = false }: { look: Ambience; reduced: boolean; sky?: boolean }) {
+/** Clouds drift across the entire map, in front of rooms and names in both views. */
+function Clouds({ look, reduced }: { look: Ambience; reduced: boolean }) {
   const { weather, daylight } = look;
   const colour = mixColor(mixColor('#ffffff', '#ccd3de', weather.gloom), '#6f78a8', 1 - daylight);
   const clouds = CLOUDS.slice(0, Math.round(weather.clouds * CLOUDS.length));
@@ -212,9 +211,9 @@ export function Clouds({ look, reduced, sky = false }: { look: Ambience; reduced
           <Cloud
             viewBox="0 0 100 50"
             style={{
-              top: `${sky ? cloud.top * 0.22 : cloud.top}%`,
-              width: `${sky ? cloud.width * 0.8 : cloud.width}%`,
-              opacity: sky ? 0.9 : 0.55 + weather.clouds * 0.25,
+              top: `${cloud.top}%`,
+              width: `${cloud.width}%`,
+              opacity: 0.55 + weather.clouds * 0.25,
             }}
           >
             <path
@@ -228,13 +227,13 @@ export function Clouds({ look, reduced, sky = false }: { look: Ambience; reduced
   );
 }
 
-export function Weather2D({ look, reduced }: { look: Ambience; reduced: boolean }) {
+export function WeatherOverlay({ look, reduced }: { look: Ambience; reduced: boolean }) {
   const { weather, daylight } = look;
   const night = 1 - daylight;
   const fogColour = mixColor('#e8edf3', '#5a6290', night);
 
   return (
-    <Layer aria-hidden="true" style={{ '--fog': fogColour } as CSSProperties}>
+    <Layer data-weather-overlay aria-hidden="true" style={{ '--fog': fogColour } as CSSProperties}>
       <Clouds look={look} reduced={reduced} />
       {weather.fog > 0 && <Fog style={{ opacity: weather.fog * 0.8 }} />}
       {weather.precipitation !== 'none' && (

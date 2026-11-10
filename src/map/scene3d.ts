@@ -184,20 +184,6 @@ const LIGHT = {
   glass: '#8fddf5', nightGlass: '#2c3770',
 };
 
-/** A soft round dot for snowflakes. */
-function flakeTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 32;
-  const ctx = canvas.getContext('2d')!;
-  const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-  gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.8)');
-  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 32, 32);
-  return new THREE.CanvasTexture(canvas);
-}
-
 // A little paper ballot with a tick box, for people who haven't voted.
 function ballotTexture() {
   const canvas = document.createElement('canvas');
@@ -413,37 +399,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   }
 
   // ---- Weather ------------------------------------------------------------
-  // Rain or snow falls over the whole island; people's names are drawn on top of the
-  // scene, so they stay readable. The clouds themselves drift across the sky behind
-  // the canvas (Map3D.tsx); here, invisible ones sail over the town, so only their
-  // shadows pass over the rooms and nobody is hidden.
+  // The shared foreground overlay draws clouds, precipitation, fog and lightning.
+  // The scene keeps their physical effects: shadows, snow caps, puddles, umbrellas and wind.
   let weather: Conditions = CLEAR;
-  let skyLight = 1.9;
-  let flashAt = 0;
-  const FALL_FROM = 45;
-  // Phones get fewer drops; a TV or desktop gets more.
-  const maxDrops = Math.min(1500, Math.round((root.clientWidth || 1000) * 1.4));
-  const drops = Array.from({ length: maxDrops }, () => ({ x: 0, y: Math.random() * FALL_FROM, z: 0, depth: 0.6 + Math.random() * 0.4, phase: Math.random() * 6.3 }));
-  const dropArea = () => ({ w: layout.width + 12, d: layout.height + 12 });
-  const scatter = (drop: (typeof drops)[number]) => {
-    const { w, d } = dropArea();
-    drop.x = (Math.random() - 0.5) * w;
-    drop.z = (Math.random() - 0.5) * d;
-  };
-
-  const rainPositions = new Float32Array(maxDrops * 6);
-  const rainGeometry = new THREE.BufferGeometry();
-  rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3).setUsage(THREE.DynamicDrawUsage));
-  const rain = new THREE.LineSegments(rainGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false }));
-  const snowPositions = new Float32Array(maxDrops * 3);
-  const snowGeometry = new THREE.BufferGeometry();
-  snowGeometry.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3).setUsage(THREE.DynamicDrawUsage));
-  const snow = new THREE.Points(snowGeometry, new THREE.PointsMaterial({ color: 0xffffff, size: 1.3, map: flakeTexture(), transparent: true, depthWrite: false }));
-  for (const fall of [rain, snow]) {
-    fall.frustumCulled = false;
-    fall.visible = false;
-    scene.add(fall);
-  }
+  const cloudArea = () => ({ w: layout.width + 12, d: layout.height + 12 });
 
   // Draws nothing, but still casts a shadow.
   const shadowOnly = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
@@ -470,7 +429,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   }));
 
   function placeClouds(time: number) {
-    const { w, d } = dropArea();
+    const { w, d } = cloudArea();
     const span = w + 40;
     const shown = Math.round(weather.clouds * clouds.length);
     for (const [i, cloud] of clouds.entries()) {
@@ -517,54 +476,13 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     puddleMaterial.visible = wet;
   }
 
-  function animateWeather(dt: number, time: number) {
+  function animateWeather(time: number) {
     placeClouds(time);
     // People outdoors open their umbrellas.
     const raining = weather.precipitation !== 'none';
     for (const c of characters.values()) c.umbrella.visible = raining && (c.zoneKind === 'street' || c.zoneKind === 'off');
     const sway = reducedMotion ? 0 : weather.wind;
     for (const { tree, phase } of trees) tree.rotation.z = sway ? Math.sin(time * (1.1 + sway) + phase) * 0.05 * sway : 0;
-    // A rare, soft brightening of the sky in a storm: never a strobe.
-    let flash = 0;
-    if (weather.storm && !reducedMotion) {
-      if (time > flashAt + 1.2) flashAt = time + 15 + Math.random() * 15;
-      const since = time - flashAt;
-      if (since > 0) flash = since < 0.25 ? since / 0.25 : Math.max(0, 1 - (since - 0.25) / 0.9);
-    }
-    sky.intensity = skyLight + flash * 1.4;
-
-    const kind = weather.precipitation;
-    rain.visible = kind === 'rain' || kind === 'drizzle';
-    snow.visible = kind === 'snow';
-    if (kind === 'none') return;
-    const count = Math.round(maxDrops * weather.intensity);
-    const snowing = kind === 'snow';
-    const speed = snowing ? 3.5 : kind === 'drizzle' ? 26 : 40;
-    const blow = snowing ? weather.wind * 3 : 1.5 + weather.wind * 9;
-    const length = kind === 'drizzle' ? 0.8 : 1.7;
-    const { w } = dropArea();
-    for (let i = 0; i < count; i++) {
-      const drop = drops[i]!;
-      if (!drop.x && !drop.z) scatter(drop);
-      if (!reducedMotion) {
-        drop.y -= speed * drop.depth * dt;
-        drop.x += (blow + (snowing ? Math.sin(time * 1.3 + drop.phase) * 0.8 : 0)) * dt;
-        if (drop.y < 0) {
-          drop.y += FALL_FROM;
-          scatter(drop);
-        }
-        if (drop.x > w / 2) drop.x -= w;
-      }
-      if (snowing) {
-        snowPositions.set([drop.x, drop.y, drop.z], i * 3);
-      } else {
-        const lean = (blow / speed) * length;
-        rainPositions.set([drop.x - lean, drop.y + length, drop.z, drop.x, drop.y, drop.z], i * 6);
-      }
-    }
-    const geometry = snowing ? snowGeometry : rainGeometry;
-    geometry.attributes.position!.needsUpdate = true;
-    geometry.setDrawRange(0, snowing ? count : count * 2);
   }
 
   // ---- Building the rooms -----------------------------------------------
@@ -1587,7 +1505,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     last = now;
     lastFrame = now;
     animate(dt, now / 1000);
-    animateWeather(dt, now / 1000);
+    animateWeather(now / 1000);
     renderer.render(scene, camera);
     labels.render(scene, camera);
   }
@@ -1610,27 +1528,17 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   return {
     update: apply,
     applyPreset: (id) => applyPreset(id),
-    setAmbience({ daylight, warmth, phase, lamps, sky: skyColours, weather: now }) {
+    setAmbience({ daylight, warmth, phase, lamps, weather: now }) {
       weather = now;
       showWeatherDetails();
       sky.color.set(mixColor(LIGHT.nightSky, LIGHT.sky, daylight));
       sky.groundColor.set(mixColor(LIGHT.nightGround, LIGHT.ground, daylight));
-      skyLight = 1.4 + 0.5 * daylight;
-      sky.intensity = skyLight;
+      sky.intensity = 1.4 + 0.5 * daylight;
 
       sun.color.set(mixColor(LIGHT.moon, mixColor(LIGHT.sun, LIGHT.warmSun, warmth), daylight));
       // Grey skies soften the sunlight and its shadows.
       sun.intensity = (0.65 + 0.7 * daylight) * (1 - now.gloom * 0.55);
 
-      (rain.material as THREE.LineBasicMaterial).color.set(mixColor('#ffffff', '#b8c4ff', 1 - daylight));
-      if (now.fog > 0) {
-        const colour = mixColor(skyColours.bottom, '#dfe5ee', 0.5 * daylight);
-        if (scene.fog instanceof THREE.FogExp2) scene.fog.color.set(colour);
-        else scene.fog = new THREE.FogExp2(colour);
-        (scene.fog as THREE.FogExp2).density = now.fog * 0.009;
-      } else {
-        scene.fog = null;
-      }
       // Low on the rising or setting side, swinging up to midday as it gets light.
       const low = phase === 'dusk' ? SUNSET : SUNRISE;
       const daySun = low.clone().lerp(NOON, daylight);
@@ -1739,12 +1647,6 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       for (const burst of bursts) {
         burst.points.geometry.dispose();
         (burst.points.material as THREE.Material).dispose();
-      }
-      for (const fall of [rain, snow]) {
-        fall.geometry.dispose();
-        const material = fall.material as THREE.PointsMaterial;
-        material.map?.dispose();
-        material.dispose();
       }
       puff.dispose();
       shadowOnly.dispose();
