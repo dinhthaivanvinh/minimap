@@ -3,14 +3,17 @@ import type { AssemblyCast } from '../components/TeamAssemble.tsx';
 import { officeAssembly } from '../lib/assembly.ts';
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import styled, { css } from 'styled-components';
+import type { PetView } from '../../shared/pet.ts';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
 import { latestResult, waitingVoters, type VoteView } from '../../shared/vote.ts';
 import { DetailCard } from '../components/DetailCard.tsx';
+import { PetCard } from '../components/PetCard.tsx';
 import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
 import { storeSession, useSession } from '../lib/session.ts';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
 import { moverFor, withMove, type PendingMove } from '../lib/dragMove.ts';
+import { newFeed, petShown } from '../lib/petLook.ts';
 import { useAmbience, useNow, useReducedMotion, useTeamState } from '../lib/hooks.ts';
 import { reactions as planReactions, type VoteSnapshot } from '../lib/voteReactions.ts';
 import { shownStatus } from '../lib/status.ts';
@@ -375,7 +378,7 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }
 
 export function MonitorPage() {
-  const { state: liveState, online, votes } = useTeamState();
+  const { state: liveState, online, votes, pet: petView } = useTeamState();
   // Someone logged in on this browser can drag their own character to another room.
   const session = useSession(liveState);
   const login = session.auth;
@@ -492,9 +495,28 @@ export function MonitorPage() {
   );
   const isDimmed = useCallback((user: TeamUser) => !matches(user), [matches]);
 
+  // The office cat hops each time someone feeds it, and its card opens from either map.
+  const [cheer, setCheer] = useState(0);
+  const lastPet = useRef<PetView | null>(null);
+  useEffect(() => {
+    if (!petView) return;
+    if (newFeed(lastPet.current, petView)) setCheer((n) => n + 1);
+    lastPet.current = petView;
+  }, [petView]);
+  const pet = useMemo(() => (state ? petShown(petView, state, cheer) : null), [petView, state, cheer]);
+  const [petAnchor, setPetAnchor] = useState<HTMLElement | null>(null);
+  const closePet = useCallback(() => setPetAnchor(null), []);
+  const openPet = useCallback((trigger: HTMLElement) => {
+    setSelection(null);
+    setPetAnchor(trigger);
+  }, []);
+
   const closeCard = useCallback(() => setSelection(null), []);
   const closePicker = useCallback(() => setPickerOpen(false), []);
-  const select = useCallback((username: string, anchor: HTMLElement) => setSelection({ username, anchor }), []);
+  const select = useCallback((username: string, anchor: HTMLElement) => {
+    setPetAnchor(null);
+    setSelection({ username, anchor });
+  }, []);
 
   // A list click points at the person on the map; the row is the fallback.
   function pickFromList(username: string, row: HTMLElement) {
@@ -542,7 +564,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, onAssemble: openAssembly, onPicker: openPicker, look, votes: allVotes, voteMarks, reactions, mover, onMove: moveMe };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, pet, onPet: openPet, onAssemble: openAssembly, onPicker: openPicker, look, votes: allVotes, voteMarks, reactions, mover, onMove: moveMe };
 
   return (
     <Page>
@@ -654,6 +676,10 @@ export function MonitorPage() {
             <RandomPicker users={users} initialView={mode} trigger={pickerTrigger.current} onClose={closePicker}/>
           </Suspense>
         </Guard>
+      )}
+
+      {state && petAnchor && petView && pet && (
+        <PetCard pet={petView} shown={pet} users={state.users} login={login ?? null} anchor={petAnchor} onClose={closePet} />
       )}
 
       {state && selection && selectedUser && (

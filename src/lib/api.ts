@@ -1,5 +1,6 @@
 // Fetch and live-update helpers shared by all pages.
 import type { FundPerson } from '../../shared/fund.ts';
+import type { PetView } from '../../shared/pet.ts';
 import type { TeamState } from '../../shared/types.ts';
 import type { VoteView } from '../../shared/vote.ts';
 
@@ -45,6 +46,7 @@ export function subscribe(
   onConnection: (online: boolean) => void,
   onVotes?: (votes: VoteView[]) => void,
   onFund?: (people: FundPerson[]) => void,
+  onPet?: (pet: PetView) => void,
 ): () => void {
   let source: EventSource;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -68,6 +70,7 @@ export function subscribe(
     };
     if (onVotes) source.addEventListener('vote', (event) => onVotes(JSON.parse((event as unknown as { data: string }).data) as VoteView[]));
     if (onFund) source.addEventListener('fund', (event) => onFund(JSON.parse((event as unknown as { data: string }).data) as FundPerson[]));
+    if (onPet) source.addEventListener('pet', (event) => onPet(JSON.parse((event as unknown as { data: string }).data) as PetView));
   }
 
   connect();
