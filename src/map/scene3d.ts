@@ -611,8 +611,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     const width = layout.width + 8;
     const origin = toWorld(z.x, z.y);
     road = streetRoad({ x: origin.x, y: origin.z, w: z.w, h: z.h });
-    // Broader 3D bodies, wheels and lamps share the same avoidance footprint.
-    road.carWidth *= 1.2;
+    // Widen across the lane (z) only; front-to-back length (x) stays unchanged.
+    road.carWidth *= 1.5;
     const pavement = road.curb - road.minZ;
     const roadDepth = z.h - pavement;
     const pavementZ = c.z - z.h / 2 + pavement / 2;

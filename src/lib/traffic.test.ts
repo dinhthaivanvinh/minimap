@@ -48,6 +48,17 @@ test('right-side lanes put eastbound cars south and westbound cars north of the 
   }
 });
 
+test('wider 3D footprints keep front-to-back length unchanged', () => {
+  const wider = { ...road, carWidth: road.carWidth * 1.5 };
+  const normal = parkedTraffic(road);
+  parkedTraffic(wider).forEach((car, index) => {
+    assert.equal(car.length, normal[index]!.length);
+    assert.equal(car.width, normal[index]!.width * 1.5);
+    assert.equal(car.x, normal[index]!.x);
+    assert.equal(car.z, normal[index]!.z);
+  });
+});
+
 test('larger 2D cars keep their lane positions and scale their traffic footprints', () => {
   const larger = streetRoad(rect, 1.5);
   assert.deepEqual(larger.lanes, road.lanes);
@@ -165,7 +176,7 @@ test('escape strips fit small, crowded and portrait layouts', () => {
       }));
       const layout = computeLayout([], users, { portrait });
       const zone = layout.zones.find((zone) => zone.kind === 'street')!;
-      for (const widthScale of [1, 1.2]) {
+      for (const widthScale of [1, 1.5]) {
         const base = streetRoad(zone);
         const r = { ...base, carWidth: base.carWidth * widthScale };
         for (const seat of layout.seats.values()) {
