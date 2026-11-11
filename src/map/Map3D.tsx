@@ -392,7 +392,7 @@ export default function Map3D({
 
       {/* The blimp's banner for keyboards and screen readers: it shows when focused. */}
       {voteMarks?.result && (
-        <ResultLink href={voteLink(voteMarks.result.vote.id)}>{resultText(voteMarks.result)}</ResultLink>
+        <ResultLink data-vote-result href={voteLink(voteMarks.result.vote.id)}>{resultText(voteMarks.result)}</ResultLink>
       )}
 
       {zoneLabels.map((zone) =>

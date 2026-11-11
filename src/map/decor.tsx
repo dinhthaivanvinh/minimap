@@ -62,16 +62,6 @@ const Lamp = (
   </svg>
 );
 
-const Car = (
-  <svg viewBox="0 0 90 50" width="100%" height="100%">
-    <path d="M26 24 34 8h24l10 16Z" fill="#dfe3ff" {...joined} />
-    <rect x="4" y="22" width="82" height="18" rx="7" fill="#ff8fb3" {...line} />
-    <circle cx="24" cy="41" r="7" fill={INK} />
-    <circle cx="66" cy="41" r="7" fill={INK} />
-  </svg>
-);
-
-
 export interface DecorItem {
   art: ReactNode;
   width: number;
@@ -114,5 +104,5 @@ export function Umbrella({ colour }: { colour: string }) {
   );
 }
 
-/** The street's own art. Map2D stands the lamps on the curb and drives the car in the road. */
-export const STREET_ART = { lamp: Lamp, car: Car };
+/** The street's own art. Map2D stands the lamps on the curb while Traffic2D draws the cars. */
+export const STREET_ART = { lamp: Lamp };

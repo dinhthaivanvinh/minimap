@@ -14,7 +14,7 @@ import {
   type CharacterDesign,
   type Stroke,
 } from '../shared/look.ts';
-import type { AuthResult, Clock, OfficeLocation, Place, ScheduledChange, SunTimes, TeamState, Weather } from '../shared/types.ts';
+import type { AuthResult, MeUpdateResult, TeamUser, Clock, OfficeLocation, Place, ScheduledChange, SunTimes, TeamState, Weather } from '../shared/types.ts';
 
 export type JsonBody = Record<string, unknown>;
 
@@ -415,23 +415,27 @@ export function createCore({
     store(data);
   }
 
+  function publicUser(u: StoredUser): TeamUser {
+    return {
+      username: u.username,
+      nickname: u.nickname,
+      place: u.place,
+      status: u.status,
+      updatedAt: u.updatedAt,
+      claimed: Boolean(u.pinHash),
+      // Characters saved before accessories existed have no "wearing" list.
+      look: u.look ? { color: u.look.color, wearing: u.look.wearing ?? [], strokes: u.look.strokes } : null,
+      scheduled: u.scheduled ?? null,
+    };
+  }
+
   function publicState(): TeamState {
     const { publicUrl, clocks, office, mapWeather } = data.settings;
     return {
       places: data.places,
       settings: { publicUrl, clocks, officeName: office?.name || '', mapWeather },
       weather,
-      users: data.users.map((u) => ({
-        username: u.username,
-        nickname: u.nickname,
-        place: u.place,
-        status: u.status,
-        updatedAt: u.updatedAt,
-        claimed: Boolean(u.pinHash),
-        // Characters saved before accessories existed have no "wearing" list.
-        look: u.look ? { color: u.look.color, wearing: u.look.wearing ?? [], strokes: u.look.strokes } : null,
-        scheduled: u.scheduled ?? null,
-      })),
+      users: data.users.map(publicUser),
     };
   }
 
@@ -831,8 +835,8 @@ export function createCore({
         next.place = place;
       }
       if ('status' in body) next.status = cleanStatus(body.status);
-      // "Updated at" tells teammates when someone's whereabouts changed, not their outfit.
-      const isWhereabouts = Object.keys(next).length > 0;
+      // "Updated at" tells teammates when someone's whereabouts changed, not their name or outfit.
+      const isWhereabouts = 'place' in next || 'status' in next;
       if ('look' in body) next.look = cleanLook(body.look);
       // A schedule only changes someone's whereabouts when it fires.
       if ('scheduled' in body) next.scheduled = cleanSchedule(body.scheduled);
@@ -841,7 +845,7 @@ export function createCore({
       if (next.place && next.place === pending?.place) next.scheduled = null;
       Object.assign(user, next, isWhereabouts ? { updatedAt: now().toISOString() } : {});
       commit();
-      return jsonResponse(200, { ok: true });
+      return jsonResponse(200, { ok: true, user: publicUser(user) } satisfies MeUpdateResult);
     }
 
     throw new ApiError(404, 'Not found.');

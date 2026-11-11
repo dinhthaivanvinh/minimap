@@ -1,4 +1,5 @@
 // The 2D floor plan, built from plain HTML and SVG.
+import { Traffic2D } from './Traffic2D.tsx';
 import { officeAssembly } from '../lib/assembly.ts';
 import { AssemblePlay, OfficeDecor } from '../components/AssemblyDecor.tsx';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
@@ -322,9 +323,6 @@ function StreetDecor() {
       <Puddle style={{ left: '22%', bottom: '14%', width: 'clamp(30px, 8%, 70px)' }} />
       <Puddle style={{ left: '61%', bottom: '38%', width: 'clamp(24px, 6%, 54px)' }} />
       <Puddle style={{ left: '76%', bottom: '10%', width: 'clamp(28px, 7%, 62px)' }} />
-      <StreetPiece style={{ right: '2%', bottom: '8%', height: `min(${(100 - PAVEMENT) * 0.5}%, 42px)`, aspectRatio: '90 / 50' }}>
-        {STREET_ART.car}
-      </StreetPiece>
     </>
   );
 }
@@ -332,11 +330,6 @@ function StreetDecor() {
 const bob = keyframes`
   0%, 100% { transform: scale(1, 1); }
   50% { transform: scale(1.03, .96); }
-`;
-
-const stroll = keyframes`
-  0%, 100% { translate: -12px 0; }
-  50% { translate: 12px 0; }
 `;
 
 const waddle = keyframes`
@@ -409,10 +402,8 @@ const PersonBox = styled.div<{ $dimmed: boolean; $moving: boolean; $strolling: b
   ${({ $dimmed }) => $dimmed && 'opacity: .22;'}
 
   ${({ $strolling }) => $strolling && css`
-    animation: ${stroll} 7s ease-in-out infinite;
-    animation-delay: var(--d, 0s);
-
-    &:hover, &:focus-within { animation-play-state: paused; }
+    /* Traffic updates these positions directly so dodges never lag behind a car. */
+    transition: opacity .25s, transform .3s;
   `}
 
   ${MochiSvg} {
@@ -549,6 +540,8 @@ function useDrag(drag: PersonDrag | undefined) {
       if (event.button !== 0 || stop.current) return;
       justDropped.current = false;
       const box = event.currentTarget;
+      // Freeze a street sidestep as soon as it is grabbed, before the drag threshold.
+      if (box.hasAttribute('data-street-person')) box.dataset.streetPressed = 'true';
       const press = createPress(event);
 
       // Moves are heard on the window: after a quick flick the first one is already off
@@ -575,6 +568,7 @@ function useDrag(drag: PersonDrag | undefined) {
       window.addEventListener('pointerup', end);
       window.addEventListener('pointercancel', end);
       stop.current = () => {
+        delete box.dataset.streetPressed;
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', end);
         window.removeEventListener('pointercancel', end);
@@ -608,8 +602,9 @@ function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrell
   }, [zoneId]);
 
   const cellPx = seat.cell * scale;
-  const left = percent(seat.x, layout.width);
-  const top = percent(seat.y, layout.height);
+  const street = seat.zone.kind === 'street';
+  const left = street ? `calc(${percent(seat.x, layout.width)} + var(--street-x, 0px))` : percent(seat.x, layout.width);
+  const top = street ? `calc(${percent(seat.y, layout.height)} + var(--street-z, 0px))` : percent(seat.y, layout.height);
   const style = {
     left: offset ? `calc(${left} + ${offset.x}px)` : left,
     top: offset ? `calc(${top} + ${offset.y}px)` : top,
@@ -619,6 +614,11 @@ function Person({ user, seat, layout, scale, dimmed, selected, onSelect, umbrell
 
   return (
     <PersonBox
+      data-street-person={street || undefined}
+      data-street-x={seat.x}
+      data-street-z={seat.y}
+      data-street-radius={Math.min(1.5, seat.cell * 0.16)}
+      data-street-held={Boolean(offset)}
       $dimmed={dimmed}
       $moving={moving}
       $strolling={seat.zone.kind === 'street'}
@@ -810,6 +810,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
           )}
           {board && <NoticeBoard2D spot={board} width={layout.width} height={layout.height} votes={votes} />}
           {hasWeather(look) && <WeatherOverlay look={look} reduced={reduced} />}
+          {street && <Traffic2D street={street} scale={scale} plan={planRef} daylight={look.daylight} reduced={reduced} />}
           {street && voteMarks?.result && <ResultBanner2D result={voteMarks.result} street={street} width={layout.width} height={layout.height} />}
           {state.users.map((user) => {
             const seat = layout.seats.get(user.username);

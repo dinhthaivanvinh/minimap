@@ -5,6 +5,7 @@ import type { PetView } from '../../shared/pet.ts';
 import type { VoteView } from '../../shared/vote.ts';
 import { ambience, DAY, defaultSun, PREVIEW_WEATHER, previewTime, type Ambience, type WeatherInput } from './ambience.ts';
 import { subscribe } from './api.ts';
+import { replaceSavedMember, type MemberUpdates } from './memberUpdates.ts';
 import { withFund } from './fundLook.ts';
 
 /**
@@ -18,7 +19,7 @@ export function useTeamState(): {
   votes: VoteView[] | null;
   fund: FundPerson[] | null;
   pet: PetView | null;
-} {
+} & MemberUpdates {
   const [raw, setState] = useState<TeamState | null>(null);
   const [votes, setVotes] = useState<VoteView[] | null>(null);
   const [fund, setFund] = useState<FundPerson[] | null>(null);
@@ -26,7 +27,11 @@ export function useTeamState(): {
   const [online, setOnline] = useState(true);
   useEffect(() => subscribe({ onState: setState, onConnection: setOnline, onVotes: setVotes, onFund: setFund, onPet: setPet }), []);
   const state = useMemo(() => (raw && fund?.length ? { ...raw, users: withFund(raw.users, fund) } : raw), [raw, fund]);
-  return { state, online, votes, fund, pet };
+  const onUserSaved = useCallback<MemberUpdates['onUserSaved']>((user) => {
+    setState(current => current ? { ...current, users: replaceSavedMember(current.users, user) } : current);
+  }, []);
+  const onFundSaved = useCallback<MemberUpdates['onFundSaved']>((people) => setFund(people), []);
+  return { state, online, votes, fund, pet, onUserSaved, onFundSaved };
 }
 
 export function useElementSize(ref: RefObject<HTMLElement | null>): { width: number; height: number } {
