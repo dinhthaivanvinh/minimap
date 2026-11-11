@@ -25,6 +25,7 @@ export interface TeamUser {
   nickname: string;
   place: string | null;
   status: string;
+  /** When they, or their scheduled change, last set their place or status, as an ISO instant. The morning reset leaves it alone. */
   updatedAt: string | null;
   claimed: boolean;
   /** Null means the default character chosen from the username. */

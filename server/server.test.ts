@@ -191,11 +191,12 @@ test('latestResetDate picks today after the reset time, yesterday before it', ()
   assert.equal(latestResetDate(new Date('2026-01-01T03:00:00Z'), '05:00', 'UTC'), '2025-12-31');
 });
 
-test('the daily reset clears place and status but keeps nickname and PIN', async (t) => {
+test('the daily reset clears place and status but keeps nickname, PIN and "updated at"', async (t) => {
   const { api, app, addUser, claim, me, clock } = await setup(t);
   await addUser('a');
   const token = await claim('a');
   await me(token, { nickname: 'Nick', place: 'wfh', status: 'Busy' });
+  const updatedAt = clock.now.toISOString();
 
   assert.equal(app.runResetIfDue(), false, 'same day: not due yet');
   clock.now = new Date(2026, 10, 4, 4, 59);
@@ -206,6 +207,7 @@ test('the daily reset clears place and status but keeps nickname and PIN', async
 
   const user = (await api('GET', '/api/state')).json.users[0];
   assert.deepEqual([user.nickname, user.place, user.status, user.claimed], ['Nick', null, '', true]);
+  assert.equal(user.updatedAt, updatedAt, 'the reset is not an update, or it would fill the Recent updates card with everyone');
   assert.equal((await me(token, { status: 'still logged in' })).status, 200);
 });
 
@@ -516,6 +518,29 @@ test('someone can save and reset their character, without changing "updated at"'
 
   assert.equal((await me(token, { look: null })).status, 200);
   assert.equal((await read('a')).look, null);
+});
+
+test('a new nickname alone keeps "updated at", which is about where someone is', async (t) => {
+  const { api, addUser, claim, me, clock } = await setup(t);
+  await addUser('a');
+  const token = await claim('a');
+  const read = async (): Promise<TeamUser> => (await api('GET', '/api/state')).json.users[0];
+
+  assert.equal((await me(token, { nickname: 'An' })).status, 200);
+  assert.equal((await read()).updatedAt, null, 'they have not said where they are yet');
+
+  await me(token, { place: 'wfh' });
+  const placeTime = (await read()).updatedAt;
+  assert.equal(placeTime, clock.now.toISOString());
+
+  clock.now = new Date(clock.now.getTime() + 60 * 1000);
+  assert.equal((await me(token, { nickname: 'Anh' })).status, 200);
+  const renamed = await read();
+  assert.equal(renamed.nickname, 'Anh');
+  assert.equal(renamed.updatedAt, placeTime);
+
+  assert.equal((await me(token, { nickname: 'Ánh', status: 'Lunch' })).status, 200);
+  assert.equal((await read()).updatedAt, clock.now.toISOString(), 'a status sent with the nickname still counts');
 });
 
 test('accessories are saved in a fixed order, without repeats', async (t) => {
