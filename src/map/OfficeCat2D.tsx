@@ -176,8 +176,6 @@ export function OfficeCat2D({ pet, x, y, width, onOpen }: OfficeCat2DProps) {
   const style = { left: x, top: y, width: Math.max(18, width * STAGE_SCALE[pet.stage]) } as CSSProperties;
   return (
     <Spot
-      // A new key restarts the hop each time someone feeds it.
-      key={pet.cheer}
       type="button"
       data-office-cat
       data-cheer={pet.cheer > 0 || undefined}
@@ -187,7 +185,9 @@ export function OfficeCat2D({ pet, x, y, width, onOpen }: OfficeCat2DProps) {
       aria-label={`${pet.name}, the office cat. ${moodText(pet.mood, pet.name)}`}
       onClick={(event) => onOpen(event.currentTarget)}
     >
-      <CatArt mood={pet.mood} />
+      {/* A new key restarts the hop each time someone feeds it. Only the art is keyed: the card
+          keeps this button as its anchor, and keyboard focus stays on it. */}
+      <CatArt key={pet.cheer} mood={pet.mood} />
       <Name>{pet.name}</Name>
     </Spot>
   );

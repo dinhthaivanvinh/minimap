@@ -40,7 +40,8 @@ function fromSaved(saved: Partial<PetState> | null): PetState {
   return {
     name: cleanName(saved.name) ?? base.name,
     day: isDay(saved.day) ? saved.day : base.day,
-    fed: Array.isArray(saved.fed) ? saved.fed.filter((name) => typeof name === 'string') : [],
+    // Each person counts once, even in a file written before duplicates were stopped.
+    fed: Array.isArray(saved.fed) ? [...new Set(saved.fed.filter((name) => typeof name === 'string'))] : [],
     goodDays: isCount(saved.goodDays) ? saved.goodDays : 0,
     quietDays: isCount(saved.quietDays) ? saved.quietDays : 0,
   };
@@ -53,9 +54,10 @@ function checkPet(value: unknown, usernames: ReadonlySet<string>): PetState {
   const cleaned = cleanName(name);
   if (!cleaned) throw backupError(`its office cat needs a name of 1 to ${MAX_NAME} characters.`);
   if (!isDay(day) || !isCount(goodDays) || !isCount(quietDays)) throw backupError('its office cat has broken days.');
-  if (!Array.isArray(fed) || !fed.every((n) => typeof n === 'string' && usernames.has(n)) || new Set(fed).size !== fed.length) {
+  if (!Array.isArray(fed) || !fed.every((n) => typeof n === 'string' && usernames.has(n))) {
     throw backupError('its office cat was fed by someone who is not on the team.');
   }
+  if (new Set(fed).size !== fed.length) throw backupError('its office cat was fed twice by the same person today.');
   return { name: cleaned, day, fed: fed as string[], goodDays, quietDays };
 }
 
@@ -112,6 +114,8 @@ export function createPet({ saved, save: store, team, onChange = () => {}, now =
       // Feeding twice in a day changes nothing, so a double tap is fine.
       if (view().fed.includes(username)) return jsonResponse(200, view());
       await change(() => {
+        // Checked again here: two feeds can both pass the check above while a save is pending.
+        if (pet.fed.includes(username)) return;
         pet = { ...pet, fed: [...pet.fed, username] };
       });
       return jsonResponse(200, view());

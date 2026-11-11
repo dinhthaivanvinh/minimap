@@ -111,3 +111,35 @@ test('the cat goes into the backup, and deleted people drop out of today’s fee
   assert.equal((await api('PUT', '/api/admin/data', backup, ADMIN)).status, 200);
   assert.deepEqual((await view()).fed, ['lan', 'bob']);
 });
+
+test('two feeds from one person queued behind a slow save count once', async () => {
+  const { createPet } = await import('./core.ts');
+  let release = () => {};
+  const saves: string[][] = [];
+  const pet = createPet({
+    saved: null,
+    save: async (data) => {
+      saves.push(data.fed);
+      // The first save waits, so the next feeds queue up behind it.
+      if (saves.length === 1) await new Promise<void>((done) => (release = done));
+    },
+    team: {
+      player: () => ({ username: 'lan', pinVersion: 1 }),
+      members: () => ['lan'],
+      sign: () => '',
+      requireAdmin: () => {},
+    },
+    now: () => new Date('2026-11-10T12:00:00Z'),
+    timeZone: 'UTC',
+  });
+  const req = { method: 'POST', url: new URL('http://x/api/pet/feed'), header: () => undefined, readJson: async () => ({}) };
+  const slow = pet.tick();
+  const first = pet.handle(req);
+  const second = pet.handle(req);
+  await new Promise((done) => setTimeout(done, 10));
+  release();
+  await slow;
+  const replies = await Promise.all([first, second]);
+  assert.deepEqual(replies.map((reply) => (reply?.body as PetView).fed), [['lan'], ['lan']]);
+  assert.deepEqual(saves.at(-1), ['lan']);
+});

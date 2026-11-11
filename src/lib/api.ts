@@ -41,13 +41,16 @@ const RETRY_MAX_MS = 30_000;
 // itself, but gives up for good on an HTTP error, such as a proxy's 502 during a
 // restart. Only then do we open a new one. Votes and the fund come as their own `vote` and
 // `fund` events, sent when the stream opens and after each change, so a reconnect always catches up.
-export function subscribe(
-  onState: (state: TeamState) => void,
-  onConnection: (online: boolean) => void,
-  onVotes?: (votes: VoteView[]) => void,
-  onFund?: (people: FundPerson[]) => void,
-  onPet?: (pet: PetView) => void,
-): () => void {
+// The handlers come as one object, so a new feature adds a name instead of another position.
+export interface Listeners {
+  onState: (state: TeamState) => void;
+  onConnection: (online: boolean) => void;
+  onVotes?: (votes: VoteView[]) => void;
+  onFund?: (people: FundPerson[]) => void;
+  onPet?: (pet: PetView) => void;
+}
+
+export function subscribe({ onState, onConnection, onVotes, onFund, onPet }: Listeners): () => void {
   let source: EventSource;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let retryMs = RETRY_MIN_MS;

@@ -24,7 +24,7 @@ export function useTeamState(): {
   const [fund, setFund] = useState<FundPerson[] | null>(null);
   const [pet, setPet] = useState<PetView | null>(null);
   const [online, setOnline] = useState(true);
-  useEffect(() => subscribe(setState, setOnline, setVotes, setFund, setPet), []);
+  useEffect(() => subscribe({ onState: setState, onConnection: setOnline, onVotes: setVotes, onFund: setFund, onPet: setPet }), []);
   const state = useMemo(() => (raw && fund?.length ? { ...raw, users: withFund(raw.users, fund) } : raw), [raw, fund]);
   return { state, online, votes, fund, pet };
 }

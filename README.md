@@ -274,7 +274,7 @@ The API: `GET /api/fund` (anyone: each linked member's title, months, tier and w
 
 A cat lives in the first office on the map, on both the 2D and 3D maps. In 2D it sits by the plant in the room's bottom-right corner; in 3D it walks around the room like the team's characters do, steering round desks and now and then trotting over to someone. It naps when nobody is in that office. Otherwise its mood comes from how many people are there and how many have fed it today: content, happy, or overjoyed with hearts. After two or more quiet days in a row with nobody feeding it, it looks lonely until someone does. It never goes away.
 
-Click the cat to open its card. People who are logged in can select **Feed** once a day, and the cat hops on every open map. Three feeds make a **good day**. After 5 good days the kitten grows into a cat, and after 20 into a big cat; it never shrinks. Days follow the team's time zone (`TZ`).
+Click the cat to open its card. People who are logged in can select **Feed** once a day, and the cat hops on every open map. Three feeds make a **good day**. After 5 good days the kitten grows into a cat, and after 20 into a big cat; it never shrinks. Days follow the team's time zone (`TZ`) and start at midnight, not at the daily reset time (`RESET_AT`).
 
 The admin names the cat under **Office cat** on the Admin page (it starts as Miu). To let the team choose, start a vote on `/vote` and save the winner there. The cat is kept in `data/pet.json` on Node.js and under the `pet` key on Cloudflare, and goes into the admin's backup under `pet`.
 
