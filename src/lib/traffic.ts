@@ -5,7 +5,7 @@ import type { Point } from './wander.ts';
 export const CAR_SHAPES = ['compact', 'sedan', 'van', 'pickup'] as const;
 export const CAR_COLORS = ['#ff8fb3', '#8fc9ff', '#ffe27a', '#9fe89a', '#b7a6ff', '#ffad75'] as const;
 export type CarShape = (typeof CAR_SHAPES)[number];
-export const MAX_CARS = 6;
+export const MAX_CARS = 3;
 export const PAVEMENT_SHARE = 0.3;
 
 export interface Road {
@@ -80,7 +80,7 @@ export function headlightLevel(daylight: number): number {
 }
 
 export function createTraffic(): Traffic {
-  return { cars: [], time: 0, nextSpawn: [0, 2.5], nextId: 0 };
+  return { cars: [], time: 0, nextSpawn: [0, 6], nextId: 0 };
 }
 
 function makeCar(road: Road, lane: number, id: number, random: () => number): Car {
@@ -95,7 +95,8 @@ function makeCar(road: Road, lane: number, id: number, random: () => number): Ca
     length,
     width: road.carWidth,
     direction,
-    x: direction === 1 ? road.minX - length : road.maxX + length,
+    // Start nose-first at the entry edge, with the body still outside the street.
+    x: direction === 1 ? road.minX - length / 2 : road.maxX + length / 2,
     z: road.lanes[lane]!,
     speed: 4.5 + random() * 2,
   };
@@ -135,13 +136,17 @@ export function stepTraffic(
     }
     if (time >= nextSpawn[lane]!) {
       const entering = makeCar(road, lane, nextId, random);
-      const clear = queue.every(
-        (car) => direction * (car.x - entering.x) > (car.length + entering.length) / 2 + 3,
-      );
+      const clear =
+        queue.every((car) => direction * (car.x - entering.x) > (car.length + entering.length) / 2 + 3) &&
+        people.every(
+          (person) =>
+            Math.abs(person.z - entering.z) > entering.width / 2 + person.radius + 0.25 ||
+            Math.abs(person.x - entering.x) > entering.length / 2 + person.radius + 1,
+        );
       if (cars.length < MAX_CARS && clear) {
         cars.push(entering);
         nextId++;
-        nextSpawn[lane] = time + 4 + random() * 4;
+        nextSpawn[lane] = time + 10 + random() * 8;
       } else nextSpawn[lane] = time + 1;
     }
   }

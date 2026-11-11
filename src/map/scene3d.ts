@@ -610,7 +610,8 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   function addStreet(group: THREE.Group, z: Zone, c: Point) {
     const width = layout.width + 8;
     const origin = toWorld(z.x, z.y);
-    road = streetRoad({ x: origin.x, y: origin.z, w: z.w, h: z.h });
+    // Match the full visible road, which extends past the zone on both sides.
+    road = streetRoad({ x: -width / 2, y: origin.z, w: width, h: z.h });
     // Widen across the lane (z) only; front-to-back length (x) stays unchanged.
     road.carWidth *= 1.5;
     const pavement = road.curb - road.minZ;
