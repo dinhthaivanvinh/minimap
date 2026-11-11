@@ -29,7 +29,7 @@ You need [Node.js](https://nodejs.org) 24 or newer.
 
 4. Open http://localhost:8080/admin, add some usernames, then claim one at http://localhost:8080/me.
 
-Data is saved in `data/data.json`, the basketball arcade's records in `data/basketball.json`, team votes in `data/vote.json`, the team fund's settings in `data/fund.json`, and the office cat in `data/pet.json`. Delete those files while the server is stopped to start over.
+Data is saved in `data/data.json`, the basketball arcade's records in `data/basketball.json`, team votes in `data/vote.json`, the team fund's settings in `data/fund.json`, birthdays and start dates in `data/celebrate.json`, and the office cat in `data/pet.json`. Delete those files while the server is stopped to start over.
 
 ## Develop
 
@@ -105,7 +105,7 @@ The container restarts by itself after a crash or reboot. Data is kept in the Do
 
 **Back up the data**
 
-This copies the whole data folder: the team's `data.json`, the arcade's `basketball.json`, the votes' `vote.json`, the fund's `fund.json` and the cat's `pet.json`. **Download backup** on the Admin page also saves all five, in one file.
+This copies the whole data folder: the team's `data.json`, the arcade's `basketball.json`, the votes' `vote.json`, the fund's `fund.json`, the birthdays' `celebrate.json` and the cat's `pet.json`. **Download backup** on the Admin page also saves all six, in one file.
 
 ```bash
 docker compose cp minimap:/app/data ./backup
@@ -281,6 +281,16 @@ Click the cat to open its card. People who are logged in can select **Feed** onc
 The admin names the cat under **Office cat** on the Admin page (it starts as Miu). To let the team choose, start a vote on `/vote` and save the winner there. The cat is kept in `data/pet.json` on Node.js and under the `pet` key on Cloudflare, and goes into the admin's backup under `pet`.
 
 The API: `GET /api/pet` (anyone: name, today's feeds, good days, quiet days, stage), `POST /api/pet/feed` (with a login) and `PATCH /api/pet/admin` (`name`, with `x-admin-password`). Live updates come on `/api/events` as `event: pet`.
+
+## Birthdays and anniversaries
+
+Each person can set their birthday (month and day only, never the year) and their first day on the team in **Account settings**. The admin can set or fix anyone's under **Birthdays and anniversaries** on the Admin page. Both are optional.
+
+On someone's birthday, or on each anniversary of their first day (from one year on), their character wears a party hat and holds a balloon (red for a birthday, gold for an anniversary) on both maps, the arcade and every avatar. The side panel lists today's celebrations and the next three coming up within 30 days. Clicking the person opens their card, where teammates who are logged in can select **Send wishes 🎉** once each; confetti plays over the person on every open map, and the card lists who sent wishes. A 29 February birthday is celebrated on 28 February in other years.
+
+Days follow the team's time zone (`TZ`), so hats come and go at midnight there. Wishes only last for the day. The dates and today's wishes are kept in `data/celebrate.json` on Node.js and under the `celebrate` key on Cloudflare, and go into the admin's backup under `celebrate`. Deleting a member removes their dates and wishes.
+
+The API: `GET /api/celebrate` (anyone: today's and the next 30 days' celebrations, with today's wishes), with a login `GET/PATCH /api/celebrate/me` (`birthday` as `MM-DD`, `joined` as `YYYY-MM-DD`, empty to clear) and `POST /api/celebrate/wish` (`to`), and with `x-admin-password` `GET /api/celebrate/admin` and `PATCH /api/celebrate/admin` (`username`, `birthday`, `joined`). Live updates come on `/api/events` as `event: celebrate`.
 
 ## Basketball arcade
 

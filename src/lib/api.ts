@@ -1,4 +1,5 @@
 // Fetch and live-update helpers shared by all pages.
+import type { CelebrateView } from '../../shared/celebrate.ts';
 import type { FundPerson } from '../../shared/fund.ts';
 import type { PetView } from '../../shared/pet.ts';
 import type { TeamState } from '../../shared/types.ts';
@@ -47,10 +48,11 @@ export interface Listeners {
   onConnection: (online: boolean) => void;
   onVotes?: (votes: VoteView[]) => void;
   onFund?: (people: FundPerson[]) => void;
+  onCelebrate?: (view: CelebrateView) => void;
   onPet?: (pet: PetView) => void;
 }
 
-export function subscribe({ onState, onConnection, onVotes, onFund, onPet }: Listeners): () => void {
+export function subscribe({ onState, onConnection, onVotes, onFund, onCelebrate, onPet }: Listeners): () => void {
   let source: EventSource;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let retryMs = RETRY_MIN_MS;
@@ -74,6 +76,9 @@ export function subscribe({ onState, onConnection, onVotes, onFund, onPet }: Lis
     if (onVotes) source.addEventListener('vote', (event) => onVotes(JSON.parse((event as unknown as { data: string }).data) as VoteView[]));
     if (onFund) source.addEventListener('fund', (event) => onFund(JSON.parse((event as unknown as { data: string }).data) as FundPerson[]));
     if (onPet) source.addEventListener('pet', (event) => onPet(JSON.parse((event as unknown as { data: string }).data) as PetView));
+    if (onCelebrate) {
+      source.addEventListener('celebrate', (event) => onCelebrate(JSON.parse((event as unknown as { data: string }).data) as CelebrateView));
+    }
   }
 
   connect();

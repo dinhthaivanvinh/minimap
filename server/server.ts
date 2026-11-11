@@ -6,6 +6,7 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createBasketball, takeOldBasketball } from './basketball/core.ts';
+import { createCelebrate } from './celebrate/core.ts';
 import { createFund } from './fund/core.ts';
 import { createPet } from './pet/core.ts';
 import { FUND_EVERY_MS } from '../shared/fund.ts';
@@ -59,6 +60,7 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   const voteFile = path.join(path.dirname(dataFile), 'vote.json');
   const fundFile = path.join(path.dirname(dataFile), 'fund.json');
   const petFile = path.join(path.dirname(dataFile), 'pet.json');
+  const celebrateFile = path.join(path.dirname(dataFile), 'celebrate.json');
 
   const teamSaved = readFile(dataFile);
   const oldBasketball = takeOldBasketball(teamSaved);
@@ -116,6 +118,22 @@ data: ${JSON.stringify(view)}
 `;
   }
 
+  const celebrate = createCelebrate({
+    saved: readFile(celebrateFile),
+    save: (data) => writeFile(celebrateFile, data),
+    team: core.team,
+    onChange: (view) => sendAll(celebrateEvent(view)),
+    now: options.now,
+  });
+  core.attach(celebrate.feature);
+
+  function celebrateEvent(view: unknown): string {
+    return `event: celebrate
+data: ${JSON.stringify(view)}
+
+`;
+  }
+
   // The fund's looks and titles have their own event name too.
   function fundEvent(people: unknown): string {
     return `event: fund
@@ -133,7 +151,8 @@ data: ${JSON.stringify(people)}
   }
 
   async function answer(req: ApiRequest) {
-    return (await basketball.handle(req)) ?? (await votes.handle(req)) ?? (await fund.handle(req)) ?? (await pet.handle(req)) ?? (await core.handle(req));
+    return (await basketball.handle(req)) ?? (await votes.handle(req)) ?? (await fund.handle(req)) ?? (await celebrate.handle(req))
+      ?? (await pet.handle(req)) ?? (await core.handle(req));
   }
 
   function readJson(req: Req, maxBytes = MAX_BODY): Promise<JsonBody> {
@@ -172,6 +191,7 @@ data: ${JSON.stringify(people)}
     res.write(`data: ${JSON.stringify(core.publicState())}\n\n`);
     res.write(voteEvent(votes.views()));
     res.write(fundEvent(fund.people()));
+    res.write(celebrateEvent(celebrate.view()));
     res.write(petEvent(pet.view()));
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
@@ -254,6 +274,7 @@ data: ${JSON.stringify(people)}
   function runTimedChanges(): void {
     core.runResetIfDue();
     core.runScheduledIfDue();
+    celebrate.tick();
     void pet.tick();
   }
 
