@@ -165,14 +165,17 @@ test('escape strips fit small, crowded and portrait layouts', () => {
       }));
       const layout = computeLayout([], users, { portrait });
       const zone = layout.zones.find((zone) => zone.kind === 'street')!;
-      const r = streetRoad(zone);
-      for (const seat of layout.seats.values()) {
-        const radius = 1.35 * Math.max(0.9, Math.min(seat.cell / 7, 1.5));
-        for (const lane of r.lanes) {
-          const car = { ...carAt(seat.x), z: lane, width: r.carWidth };
-          const escape = trafficEscape({ x: seat.x, z: lane, radius }, r, [car])!;
-          assert.ok(escape.z >= r.minZ && escape.z <= r.maxZ);
-          assert.ok(r.lanes.every((z) => Math.abs(escape.z - z) >= r.carWidth / 2 + radius + 0.5));
+      for (const widthScale of [1, 1.2]) {
+        const base = streetRoad(zone);
+        const r = { ...base, carWidth: base.carWidth * widthScale };
+        for (const seat of layout.seats.values()) {
+          const radius = 1.35 * Math.max(0.9, Math.min(seat.cell / 7, 1.5));
+          for (const lane of r.lanes) {
+            const car = { ...carAt(seat.x), z: lane, width: r.carWidth };
+            const escape = trafficEscape({ x: seat.x, z: lane, radius }, r, [car])!;
+            assert.ok(escape.z >= r.minZ && escape.z <= r.maxZ);
+            assert.ok(r.lanes.every((z) => Math.abs(escape.z - z) >= r.carWidth / 2 + radius + 0.5));
+          }
         }
       }
     }
