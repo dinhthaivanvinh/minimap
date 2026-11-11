@@ -6,7 +6,6 @@ import type { TeamUser } from '../../shared/types.ts';
 import {
   CAR_COLORS,
   CAR_SHAPES,
-  MAX_CARS,
   createTraffic,
   headlightLevel,
   parkedTraffic,
@@ -129,7 +128,7 @@ test('random traffic stays capped, spaced, varied and removes cars after they le
     assert.deepEqual(traffic, previous, 'the previous snapshot stays intact');
     departed ||= traffic.cars.some((car) => !next.cars.some((other) => other.id === car.id));
     traffic = next;
-    assert.ok(traffic.cars.length <= MAX_CARS);
+    assert.ok(traffic.cars.length <= 3, 'at most three cars share the street');
     for (const car of traffic.cars) {
       seen.add(car.id);
       combinations.add(`${car.shape}:${car.color}`);
@@ -143,9 +142,45 @@ test('random traffic stays capped, spaced, varied and removes cars after they le
           assert.ok(Math.abs(other.x - car.x) >= (car.length + other.length) / 2 + 2 - 1e-6);
     }
   }
-  assert.ok(seen.size > 30);
+  assert.ok(seen.size > 20 && seen.size < 45, 'traffic keeps flowing at a quieter pace');
   assert.ok(combinations.size > 10);
   assert.ok(departed);
+});
+
+test('cars enter nose-first at the street edges for both renderer sizes and road bounds', () => {
+  for (const bounds of [rect, { x: -54, y: 0, w: 108, h: 12 }]) {
+    for (const scale of [1, 1.5])
+      for (const roll of [0, 0.3, 0.6, 0.9]) {
+        const r = streetRoad(bounds, scale);
+        const traffic = stepTraffic({ ...createTraffic(), nextSpawn: [0, 0] }, r, 0.1, [], () => roll);
+        assert.equal(traffic.cars.length, 2);
+        for (const car of traffic.cars) {
+          const nose = car.x + (car.direction * car.length) / 2;
+          assert.ok(Math.abs(nose - (car.direction === 1 ? r.minX : r.maxX)) < 1e-8);
+          assert.ok(car.direction === 1 ? car.x < r.minX : car.x > r.maxX);
+        }
+      }
+  }
+});
+
+test('quieter traffic staggers the first arrivals and leaves 10–18 seconds between lane spawns', () => {
+  for (const roll of [0, 0.99]) {
+    let traffic = createTraffic();
+    for (let i = 0; i < 59; i++) traffic = stepTraffic(traffic, road, 0.1, [], () => roll);
+    assert.equal(traffic.nextId, 1, 'the opposing lane waits six seconds');
+    assert.ok(traffic.nextSpawn[0] >= 10 && traffic.nextSpawn[0] < 18.2);
+    for (let i = 0; i < 3; i++) traffic = stepTraffic(traffic, road, 0.1, [], () => roll);
+    assert.equal(traffic.nextId, 2);
+    assert.ok(traffic.nextSpawn[1] - traffic.time >= 9.8 && traffic.nextSpawn[1] - traffic.time < 18);
+  }
+});
+
+test('entry waits for a pedestrian at the edge instead of spawning through their body', () => {
+  const person = { x: road.minX + 0.5, z: road.lanes[0], radius: 1.5 };
+  let traffic = stepTraffic(createTraffic(), road, 0.1, [person], seeded());
+  assert.equal(traffic.cars.length, 0);
+  for (let i = 0; i < 15; i++) traffic = stepTraffic(traffic, road, 0.1, [], seeded());
+  assert.equal(traffic.cars.length, 1);
 });
 
 test('cars yield to a slow pedestrian, queue safely, and resume once the lane is clear', () => {
