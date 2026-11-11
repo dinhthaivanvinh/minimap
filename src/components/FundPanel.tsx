@@ -1,7 +1,7 @@
-// The "Team fund" panel on /me: your title from the fund's sheet, what your character wears
+// The account editor’s "Team fund" panel: your title from the fund's sheet, what your character wears
 // because of it, and a switch to hide the look for people who paid ahead.
 import { useState } from 'react';
-import { canHide, type FundTier } from '../../shared/fund.ts';
+import { canHide, type FundTier, type FundPerson } from '../../shared/fund.ts';
 import type { TeamUser } from '../../shared/types.ts';
 import { api, errorText } from '../lib/api.ts';
 import { useMessage } from '../lib/hooks.ts';
@@ -16,7 +16,7 @@ function explain(tier: FundTier, months: number): string {
   return `You paid ${count} ahead, so your character dresses up. You can hide it if you like.`;
 }
 
-export function FundPanel({ user, token }: { user: TeamUser; token: string }) {
+export function FundPanel({ user, token, onSaved }: { user: TeamUser; token: string; onSaved?: (people: FundPerson[]) => void }) {
   const [message, showMessage] = useMessage(2500);
   const [saving, setSaving] = useState(false);
   const fund = user.fund;
@@ -25,7 +25,8 @@ export function FundPanel({ user, token }: { user: TeamUser; token: string }) {
   async function setHidden(hidden: boolean) {
     setSaving(true);
     try {
-      await api('PATCH', '/api/fund/me', { hidden }, { Authorization: `Bearer ${token}` });
+      const result = await api<{ people: FundPerson[] }>('PATCH', '/api/fund/me', { hidden }, { Authorization: `Bearer ${token}` });
+      onSaved?.(result.people);
       showMessage(hidden ? 'Fund look hidden' : 'Fund look shown');
     } catch (err) {
       showMessage(errorText(err), true);

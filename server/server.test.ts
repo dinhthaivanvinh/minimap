@@ -970,3 +970,32 @@ test('the session check validates tokens without changing presence, and rejects 
   await api('POST', '/api/admin/users/alex/release', {}, ADMIN);
   assert.equal((await api('GET', '/api/me', undefined, headers)).status, 401);
 });
+
+test('self-edit replies carry canonical public member data for immediate client updates', async (t) => {
+  const { api, addUser, claim, me, clock } = await setup(t);
+  await addUser('alex');
+  const token = await claim('alex');
+  await me(token, {
+    scheduled: { at: new Date(clock.now.getTime() + 1800000).toISOString(), status: 'Leaving' },
+  });
+  const res = await me(token, {
+    nickname: ' Alex ',
+    status: ' Focused ',
+    place: 'out',
+    look: { color: '#abcdef', wearing: ['hat'], strokes: [] },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.json.ok, true);
+  const saved = res.json.user;
+  assert.equal(saved.nickname, 'Alex');
+  assert.equal(saved.status, 'Focused');
+  assert.equal(saved.place, 'out');
+  assert.equal(saved.scheduled, null);
+  assert.equal(saved.look.color, '#abcdef');
+  assert.equal(saved.updatedAt, clock.now.toISOString());
+  assert.deepEqual(
+    saved,
+    (await api('GET', '/api/state')).json.users.find((u: TeamUser) => u.username === 'alex'),
+  );
+  for (const key of ['pinHash', 'pinVersion', 'token', 'secret']) assert.equal(key in saved, false);
+});

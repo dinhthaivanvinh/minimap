@@ -14,7 +14,7 @@ import {
   type CharacterDesign,
   type Stroke,
 } from '../shared/look.ts';
-import type { AuthResult, Clock, OfficeLocation, Place, ScheduledChange, SunTimes, TeamState, Weather } from '../shared/types.ts';
+import type { AuthResult, MeUpdateResult, TeamUser, Clock, OfficeLocation, Place, ScheduledChange, SunTimes, TeamState, Weather } from '../shared/types.ts';
 
 export type JsonBody = Record<string, unknown>;
 
@@ -415,23 +415,27 @@ export function createCore({
     store(data);
   }
 
+  function publicUser(u: StoredUser): TeamUser {
+    return {
+      username: u.username,
+      nickname: u.nickname,
+      place: u.place,
+      status: u.status,
+      updatedAt: u.updatedAt,
+      claimed: Boolean(u.pinHash),
+      // Characters saved before accessories existed have no "wearing" list.
+      look: u.look ? { color: u.look.color, wearing: u.look.wearing ?? [], strokes: u.look.strokes } : null,
+      scheduled: u.scheduled ?? null,
+    };
+  }
+
   function publicState(): TeamState {
     const { publicUrl, clocks, office, mapWeather } = data.settings;
     return {
       places: data.places,
       settings: { publicUrl, clocks, officeName: office?.name || '', mapWeather },
       weather,
-      users: data.users.map((u) => ({
-        username: u.username,
-        nickname: u.nickname,
-        place: u.place,
-        status: u.status,
-        updatedAt: u.updatedAt,
-        claimed: Boolean(u.pinHash),
-        // Characters saved before accessories existed have no "wearing" list.
-        look: u.look ? { color: u.look.color, wearing: u.look.wearing ?? [], strokes: u.look.strokes } : null,
-        scheduled: u.scheduled ?? null,
-      })),
+      users: data.users.map(publicUser),
     };
   }
 
@@ -841,7 +845,7 @@ export function createCore({
       if (next.place && next.place === pending?.place) next.scheduled = null;
       Object.assign(user, next, isWhereabouts ? { updatedAt: now().toISOString() } : {});
       commit();
-      return jsonResponse(200, { ok: true });
+      return jsonResponse(200, { ok: true, user: publicUser(user) } satisfies MeUpdateResult);
     }
 
     throw new ApiError(404, 'Not found.');
