@@ -12,6 +12,7 @@ import {
   parkedTraffic,
   stepAside,
   stepTraffic,
+  stepTrafficDodge,
   streetRoad,
   trafficEscape,
   type Car,
@@ -57,6 +58,48 @@ test('wider 3D footprints keep front-to-back length unchanged', () => {
     assert.equal(car.x, normal[index]!.x);
     assert.equal(car.z, normal[index]!.z);
   });
+});
+
+test('an idle pedestrian returns to their pre-dodge position once traffic clears', () => {
+  const home = { x: 40, z: road.lanes[0], radius: 1.5 };
+  let person = { ...home };
+  let dodge: import('./traffic.ts').TrafficDodge | null = null;
+  for (let i = 0; i < 30; i++) {
+    const result: NonNullable<ReturnType<typeof stepTrafficDodge>> = stepTrafficDodge(
+      person,
+      dodge,
+      road,
+      [carAt(30)],
+      0.05,
+    )!;
+    dodge = result.dodge;
+    person = { ...result.position, radius: home.radius };
+  }
+  assert.notEqual(person.z, home.z);
+  for (let i = 0; i < 40; i++) {
+    const result: ReturnType<typeof stepTrafficDodge> = stepTrafficDodge(person, dodge, road, [], 0.05);
+    if (!result) break;
+    dodge = result.dodge;
+    person = { ...result.position, radius: home.radius };
+  }
+  assert.deepEqual(person, home);
+  assert.equal(dodge, null);
+  assert.equal(stepTrafficDodge(person, dodge, road, [], 0.05), null);
+});
+
+test('new traffic interrupts the return step without losing the original position', () => {
+  const home = { x: 40, z: road.lanes[0], radius: 1.5 };
+  const away = stepTrafficDodge(home, null, road, [carAt(30)], 0.1)!;
+  const returning = stepTrafficDodge({ ...away.position, radius: home.radius }, away.dodge, road, [], 0.01)!;
+  const interrupted = stepTrafficDodge(
+    { ...returning.position, radius: home.radius },
+    returning.dodge,
+    road,
+    [carAt(29)],
+    0.1,
+  )!;
+  assert.deepEqual(interrupted.dodge!.from, { x: home.x, z: home.z });
+  assert.ok(Math.abs(interrupted.position.z - home.z) > Math.abs(returning.position.z - home.z));
 });
 
 test('larger 2D cars keep their lane positions and scale their traffic footprints', () => {

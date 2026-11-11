@@ -29,7 +29,61 @@ function lightTexture(beam = false) {
   return new THREE.CanvasTexture(canvas);
 }
 
-function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
+// The fleet owns geometry and textures; departing cars release only their own materials.
+function createResources() {
+  const geometries = new Map<string, THREE.BufferGeometry>();
+  const cached = (key: string, create: () => THREE.BufferGeometry) => {
+    let geometry = geometries.get(key);
+    if (!geometry) {
+      geometry = create();
+      geometries.set(key, geometry);
+    }
+    return geometry;
+  };
+  const halo = lightTexture();
+  const beam = lightTexture(true);
+  return {
+    halo,
+    beam,
+    box(w: number, h: number, d: number) {
+      return cached(`box:${w}:${h}:${d}`, () => new THREE.BoxGeometry(w, h, d));
+    },
+    cylinder(radius: number, depth: number, segments: number) {
+      return cached(
+        `wheel:${radius}:${depth}:${segments}`,
+        () => new THREE.CylinderGeometry(radius, radius, depth, segments),
+      );
+    },
+    beamGeometry() {
+      return cached('beam', () => {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          'position',
+          new THREE.Float32BufferAttribute(
+            [0, 0, -0.18, 6, 0, -1.3, 6, 0, 1.3, 0, 0, -0.18, 6, 0, 1.3, 0, 0, 0.18],
+            3,
+          ),
+        );
+        geometry.setAttribute(
+          'uv',
+          new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], 2),
+        );
+        return geometry;
+      });
+    },
+    clear() {
+      for (const geometry of geometries.values()) geometry.dispose();
+      geometries.clear();
+    },
+    dispose() {
+      this.clear();
+      halo.dispose();
+      beam.dispose();
+    },
+  };
+}
+
+function createCar(car: Car, clippingPlanes: THREE.Plane[], resources: ReturnType<typeof createResources>) {
   const group = new THREE.Group();
   const materials = new Map<string, THREE.MeshToonMaterial>();
   const mat = (color: string) => {
@@ -51,24 +105,24 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
   const ink = mat('#2a2657');
   const length = car.length;
   const width = car.width;
-  add(new THREE.BoxGeometry(length, 0.95, width), body, 0, 1.85, 0);
+  add(resources.box(length, 0.95, width), body, 0, 1.85, 0);
   const cabinLength =
     car.shape === 'compact' ? length * 0.5 : car.shape === 'pickup' ? length * 0.4 : length * 0.7;
   const cabinHeight = car.shape === 'van' ? 1.45 : 0.95;
   const cabinX = car.shape === 'pickup' ? length * 0.14 : -length * 0.06;
-  add(new THREE.BoxGeometry(cabinLength, cabinHeight, width * 0.85), glass, cabinX, 2.3 + cabinHeight / 2, 0);
-  add(new THREE.BoxGeometry(cabinLength + 0.16, 0.18, width * 0.96), body, cabinX, 2.35 + cabinHeight, 0);
+  add(resources.box(cabinLength, cabinHeight, width * 0.85), glass, cabinX, 2.3 + cabinHeight / 2, 0);
+  add(resources.box(cabinLength + 0.16, 0.18, width * 0.96), body, cabinX, 2.35 + cabinHeight, 0);
   // Window pillars make the large glass block read as a little cabin.
-  add(new THREE.BoxGeometry(0.18, cabinHeight, width * 0.87), body, cabinX, 2.3 + cabinHeight / 2, 0);
+  add(resources.box(0.18, cabinHeight, width * 0.87), body, cabinX, 2.3 + cabinHeight / 2, 0);
   if (car.shape === 'pickup')
-    add(new THREE.BoxGeometry(length * 0.35, 0.12, width * 0.75), ink, -length * 0.28, 2.35, 0);
+    add(resources.box(length * 0.35, 0.12, width * 0.75), ink, -length * 0.28, 2.35, 0);
   const wheels: THREE.Mesh[] = [];
   for (const x of [-length * 0.31, length * 0.31]) {
     for (const z of [-width * 0.52, width * 0.52]) {
-      const wheel = add(new THREE.CylinderGeometry(0.5, 0.5, 0.3, 10), ink, x, 1.5, z);
+      const wheel = add(resources.cylinder(0.5, 0.3, 10), ink, x, 1.5, z);
       wheel.rotation.x = Math.PI / 2;
       wheels.push(wheel);
-      const hub = add(new THREE.CylinderGeometry(0.22, 0.22, 0.32, 8), mat('#dfe3ff'), x, 1.5, z);
+      const hub = add(resources.cylinder(0.22, 0.32, 8), mat('#dfe3ff'), x, 1.5, z);
       hub.rotation.x = Math.PI / 2;
     }
   }
@@ -76,8 +130,8 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
   bulbs.emissive.set('#ffe6a0');
   const rearBulbs = mat('#ff657c');
   rearBulbs.emissive.set('#ff435e');
-  const haloMap = lightTexture();
-  const beamMap = lightTexture(true);
+  const haloMap = resources.halo;
+  const beamMap = resources.beam;
   const frontGlow = new THREE.SpriteMaterial({
     map: haloMap,
     color: '#ffe6a0',
@@ -105,8 +159,8 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
     blending: THREE.AdditiveBlending,
   });
   for (const z of [-width * 0.32, width * 0.32]) {
-    add(new THREE.BoxGeometry(0.12, 0.4, width * 0.23), bulbs, length / 2 + 0.03, 1.95, z);
-    add(new THREE.BoxGeometry(0.12, 0.3, width * 0.2), rearBulbs, -length / 2 - 0.03, 1.95, z);
+    add(resources.box(0.12, 0.4, width * 0.23), bulbs, length / 2 + 0.03, 1.95, z);
+    add(resources.box(0.12, 0.3, width * 0.2), rearBulbs, -length / 2 - 0.03, 1.95, z);
     for (const [x, material, size] of [
       [length / 2 + 0.12, frontGlow, 3.4],
       [-length / 2 - 0.12, rearGlow, 2.3],
@@ -116,15 +170,7 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
       glow.scale.setScalar(size);
       group.add(glow);
     }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(
-        [0, 0, -0.18, 6, 0, -1.3, 6, 0, 1.3, 0, 0, -0.18, 6, 0, 1.3, 0, 0, 0.18],
-        3,
-      ),
-    );
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], 2));
+    const geometry = resources.beamGeometry();
     add(geometry, beams, length / 2, 1.08, z);
   }
   return {
@@ -141,15 +187,10 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
       for (const wheel of wheels) wheel.rotation.y = -next.x * next.direction * 2;
     },
     dispose() {
-      group.traverse((node) => {
-        if (node instanceof THREE.Mesh) node.geometry.dispose();
-      });
       for (const material of materials.values()) material.dispose();
       beams.dispose();
       frontGlow.dispose();
       rearGlow.dispose();
-      haloMap.dispose();
-      beamMap.dispose();
       group.removeFromParent();
     },
   };
@@ -160,6 +201,12 @@ export function createTraffic3D() {
   // Clip entry and exit to the street so cars never float beyond the island.
   const edges = [new THREE.Plane(new THREE.Vector3(1, 0, 0)), new THREE.Plane(new THREE.Vector3(-1, 0, 0))];
   const models = new Map<number, ReturnType<typeof createCar>>();
+  const resources = createResources();
+  function clear() {
+    for (const model of models.values()) model.dispose();
+    models.clear();
+    resources.clear();
+  }
   return {
     group,
     update(cars: Car[], daylight: number, road: Road) {
@@ -174,16 +221,18 @@ export function createTraffic3D() {
       for (const car of cars) {
         let model = models.get(car.id);
         if (!model) {
-          model = createCar(car, edges);
+          model = createCar(car, edges, resources);
           models.set(car.id, model);
           group.add(model.group);
         }
         model.update(car, daylight);
       }
     },
-    clear() {
-      for (const model of models.values()) model.dispose();
-      models.clear();
+    clear,
+    dispose() {
+      clear();
+      resources.dispose();
+      group.removeFromParent();
     },
   };
 }

@@ -37,6 +37,26 @@ export interface Traffic {
 export interface Pedestrian extends Point {
   radius: number;
 }
+export interface TrafficDodge {
+  from: Point;
+  to: Point;
+}
+
+/** Keep the pre-dodge position until the pedestrian has stepped back, even without wandering. */
+export function stepTrafficDodge(
+  person: Pedestrian,
+  dodge: TrafficDodge | null,
+  road: Road,
+  cars: Car[],
+  seconds: number,
+): { position: Point; dodge: TrafficDodge | null } | null {
+  const from = dodge?.from ?? { x: person.x, z: person.z };
+  const escape = trafficEscape({ ...from, radius: person.radius }, road, cars);
+  if (!escape && !dodge) return null;
+  const position = stepAside(person, escape ?? from, seconds);
+  const returning = Math.hypot(position.x - from.x, position.z - from.z) > 0.01;
+  return { position, dodge: escape ? { from, to: escape } : returning ? dodge : null };
+}
 
 export function streetRoad(rect: Rect, carScale = 1): Road {
   const curb = rect.y + rect.h * PAVEMENT_SHARE;

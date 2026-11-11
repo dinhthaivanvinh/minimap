@@ -82,21 +82,18 @@ export function Traffic2D({ street, scale, plan, daylight, reduced }: Props) {
         .map((node) => {
           const home = { x: Number(node.dataset.streetX), z: Number(node.dataset.streetZ) };
           const radius = Number(node.dataset.streetRadius);
-          if (reduced) {
-            walkers.delete(node);
-            node.style.removeProperty('--street-x');
-            node.style.removeProperty('--street-z');
-            delete node.dataset.dodging;
-            return null;
-          }
           // Freeze the offset at pickup so the character stays under the pointer.
           if (node.dataset.streetHeld === 'true') return null;
           // A press below the drag threshold is still a pedestrian for cars to yield to.
           if (node.dataset.streetPressed === 'true') return { ...(walkers.get(node) ?? home), radius };
-          const desired = {
-            x: home.x + Math.sin(traffic.time * 0.6 + home.x) * Math.min(1, w * 0.01),
-            z: home.z,
-          };
+          const current = walkers.get(node) ?? home;
+          const paused = node.matches(':hover') || node.contains(document.activeElement);
+          const desired = paused
+            ? current
+            : {
+                x: home.x + Math.sin(traffic.time * 0.6 + home.x) * Math.min(1, w * 0.01),
+                z: home.z,
+              };
           const escape = trafficEscape({ ...desired, radius }, road, traffic.cars);
           const position = stepAside(walkers.get(node) ?? home, escape ?? desired, dt);
           walkers.set(node, position);
@@ -106,8 +103,10 @@ export function Traffic2D({ street, scale, plan, daylight, reduced }: Props) {
           return { ...position, radius };
         })
         .filter((person) => person !== null);
-      if (!reduced) traffic = stepTraffic(traffic, road, dt, positions);
-      const cars = reduced ? parkedTraffic(road) : traffic.cars;
+      traffic = stepTraffic(traffic, road, dt, positions);
+      draw(traffic.cars);
+    }
+    function draw(cars: Car[]) {
       const ids = new Set(cars.map((car) => car.id));
       for (const [id, node] of nodes)
         if (!ids.has(id)) {
@@ -137,7 +136,8 @@ export function Traffic2D({ street, scale, plan, daylight, reduced }: Props) {
         });
       }
     }
-    raf = requestAnimationFrame(frame);
+    if (reduced) draw(parkedTraffic(road));
+    else raf = requestAnimationFrame(frame);
     return () => {
       cancelAnimationFrame(raf);
       root.replaceChildren();
@@ -148,6 +148,12 @@ export function Traffic2D({ street, scale, plan, daylight, reduced }: Props) {
       }
     };
   }, [x, y, w, h, scale, reduced, plan]);
+  // Static traffic needs no animation loop, but its lamps still follow daylight changes.
+  useEffect(() => {
+    layer.current?.querySelectorAll<SVGElement>('.car-lights').forEach((glow) => {
+      glow.style.opacity = String(headlightLevel(daylight));
+    });
+  }, [daylight]);
   return (
     <div
       ref={layer}

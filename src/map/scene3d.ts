@@ -17,7 +17,7 @@ import { computeLayout, noticeBoardSpot, parkActivities, standingArea, type MapL
 import { box, clampTo, contains, grow, hopHeight, pickSpot, steer, type Box } from '../lib/wander.ts';
 import type { Reaction, ReactionKind } from '../lib/voteReactions.ts';
 import { parkTrees } from '../lib/parkTrees.ts';
-import { createTraffic, parkedTraffic, stepAside, stepTraffic, streetRoad, trafficEscape, type Road } from '../lib/traffic.ts';
+import { createTraffic, parkedTraffic, stepTraffic, stepTrafficDodge, streetRoad, type Road, type TrafficDodge } from '../lib/traffic.ts';
 import { createTraffic3D } from './traffic3d.ts';
 import { createPickerCabinet } from './pickerCabinet3d.ts';
 import { createArcadeCabinet } from './arcade3d.ts';
@@ -133,7 +133,7 @@ interface Character {
   placed: boolean;
   /** Picked up by the person dragging themselves to another room. */
   held: boolean;
-  trafficDodge: { from: Point; to: Point } | null;
+  trafficDodge: TrafficDodge | null;
   opacity: number;
   targetOpacity: number;
   scale: number;
@@ -1372,10 +1372,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
         c.labelElement.style.transform = `scale(${labelScale})`;
       }
 
-      if (c.held) {
+      if (c.held || hold?.character === c) {
         // Wriggles while picked up. Nothing else moves them until they're let go.
         inner.position.y = 0;
-        if (!reducedMotion) inner.rotation.z = Math.sin(time * 12) * 0.12;
+        if (c.held && !reducedMotion) inner.rotation.z = Math.sin(time * 12) * 0.12;
       } else {
         const dodging = dodgeTraffic(c, dt, time);
         if (!dodging && c.mode === 'idle' && time >= c.waitUntil && wandering && c.area && !reducedMotion) setOff(c, time);
@@ -1407,11 +1407,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   function dodgeTraffic(c: Character, dt: number, time: number): boolean {
     if (!road || reducedMotion) return false;
     const position = c.group.position;
-    const from = c.trafficDodge?.from ?? { x: position.x, z: position.z };
-    const escape = trafficEscape({ ...from, radius: bodyRadius(c) }, road, traffic.cars);
-    if (!escape) { c.trafficDodge = null; return false; }
-    c.trafficDodge ??= { from, to: escape };
-    const next = stepAside(position, c.trafficDodge.to, dt);
+    const result = stepTrafficDodge({ x: position.x, z: position.z, radius: bodyRadius(c) }, c.trafficDodge, road, traffic.cars, dt);
+    if (!result) return false;
+    c.trafficDodge = result.dodge;
+    const next = result.position;
     const facing = Math.atan2(next.x - position.x, next.z - position.z);
     if (Math.hypot(next.x - position.x, next.z - position.z) > 0.001)
       c.inner.rotation.y += shortestAngle(facing - c.inner.rotation.y) * Math.min(1, dt * 10);
@@ -1680,8 +1679,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     },
     destroy() {
       motion.removeEventListener('change', motionChanged);
-      trafficModels.clear();
-      trafficModels.group.removeFromParent();
+      trafficModels.dispose();
       root.removeEventListener('pointerdown', onHoldStart, { capture: true });
       root.removeEventListener('pointermove', onHoldMove);
       root.removeEventListener('pointerup', onHoldEnd);
