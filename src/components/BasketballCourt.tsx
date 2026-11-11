@@ -135,7 +135,7 @@ function Court2D(props: CourtProps & { viewWidth: number; nameScale: number; hid
   const recent = props.shot ? Math.max(0, props.elapsed - props.shot.at) : 2000;
   const release = props.reduced || recent > 650 ? 0 : Math.sin(Math.PI * Math.min(1, recent / 500));
   const basketCheer = props.shot?.hit && recent < 1400 ? 1 : 0;
-  const playerLook = lookFor(props.cast.player.username, props.cast.player.look, userFundTier(props.cast.player));
+  const playerLook = lookFor(props.cast.player.username, props.cast.player.look, userFundTier(props.cast.player), props.cast.player.celebration ?? null);
   return (
     <svg
       viewBox={`${320 - props.viewWidth / 2} 0 ${props.viewWidth} 520`}
@@ -240,7 +240,7 @@ function Court2D(props: CourtProps & { viewWidth: number; nameScale: number; hid
             : Math.max(0, Math.sin(props.elapsed / (basketCheer ? 95 : 260) + i * 1.9)) *
               (basketCheer ? 8 : 2);
           const y = [280, 385, 500][spot.row]! - bob;
-          const look = lookFor(user.username, user.look, userFundTier(user));
+          const look = lookFor(user.username, user.look, userFundTier(user), user.celebration ?? null);
           const banner = props.cast.banners[user.username];
           const lean = banner ? bannerAngle(banner) * 0.6 : 0;
           return (

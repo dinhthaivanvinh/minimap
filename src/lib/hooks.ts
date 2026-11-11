@@ -1,28 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { TeamState, Weather } from '../../shared/types.ts';
+import type { CelebrateView } from '../../shared/celebrate.ts';
 import type { FundPerson } from '../../shared/fund.ts';
 import type { VoteView } from '../../shared/vote.ts';
 import { ambience, DAY, defaultSun, PREVIEW_WEATHER, previewTime, type Ambience, type WeatherInput } from './ambience.ts';
 import { subscribe } from './api.ts';
+import { withCelebration } from './celebrateLook.ts';
 import { replaceSavedMember, type MemberUpdates } from './memberUpdates.ts';
 import { withFund } from './fundLook.ts';
 
 /**
- * The team's live state, and the team's votes (public views, without anyone's picks). Each
- * user carries their fund standing (`fund`), so every page draws the same fund looks.
+ * The team's live state, the team's votes (public views, without anyone's picks), and
+ * birthdays and anniversaries. Each user carries their fund standing (`fund`) and what they
+ * celebrate today (`celebration`), so every page draws the same looks.
  */
-export function useTeamState(): { state: TeamState | null; online: boolean; votes: VoteView[] | null; fund: FundPerson[] | null } & MemberUpdates {
+export function useTeamState(): {
+  state: TeamState | null;
+  online: boolean;
+  votes: VoteView[] | null;
+  fund: FundPerson[] | null;
+  celebrate: CelebrateView | null;
+} & MemberUpdates {
   const [raw, setState] = useState<TeamState | null>(null);
   const [votes, setVotes] = useState<VoteView[] | null>(null);
   const [fund, setFund] = useState<FundPerson[] | null>(null);
+  const [celebrate, setCelebrate] = useState<CelebrateView | null>(null);
   const [online, setOnline] = useState(true);
-  useEffect(() => subscribe(setState, setOnline, setVotes, setFund), []);
-  const state = useMemo(() => (raw && fund?.length ? { ...raw, users: withFund(raw.users, fund) } : raw), [raw, fund]);
+  useEffect(() => subscribe(setState, setOnline, setVotes, setFund, setCelebrate), []);
+  const state = useMemo(() => {
+    if (!raw || (!fund?.length && !celebrate)) return raw;
+    return { ...raw, users: withCelebration(withFund(raw.users, fund), celebrate) };
+  }, [raw, fund, celebrate]);
   const onUserSaved = useCallback<MemberUpdates['onUserSaved']>((user) => {
     setState(current => current ? { ...current, users: replaceSavedMember(current.users, user) } : current);
   }, []);
   const onFundSaved = useCallback<MemberUpdates['onFundSaved']>((people) => setFund(people), []);
-  return { state, online, votes, fund, onUserSaved, onFundSaved };
+  return { state, online, votes, fund, celebrate, onUserSaved, onFundSaved };
 }
 
 export function useElementSize(ref: RefObject<HTMLElement | null>): { width: number; height: number } {

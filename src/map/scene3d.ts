@@ -896,10 +896,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   const buildBody = createCharacterBuilder({ ramp, mat, mesh });
 
-  // A new fund standing redraws the body too.
-  const designKeyOf = (user: TeamUser) => JSON.stringify([user.look, userFundTier(user)]);
-  // The name tag sits above a fund rain cloud, so the cloud stays in sight.
-  const labelHeight = (user: TeamUser) => (fundArt(userFundTier(user)).cloud ? 4.3 : 3.3);
+  // A new fund standing, or a birthday starting or ending, redraws the body too.
+  const designKeyOf = (user: TeamUser) => JSON.stringify([user.look, userFundTier(user), user.celebration ?? null]);
+  // The name tag sits above a fund rain cloud or a party hat, so they stay in sight.
+  const labelHeight = (user: TeamUser) => (user.celebration ? 4.6 : fundArt(userFundTier(user)).cloud ? 4.3 : 3.3);
 
   function createCharacter(user: TeamUser, phase: number): Character {
     const group = new THREE.Group();

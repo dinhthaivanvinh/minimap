@@ -7,6 +7,7 @@ import { SheetNav, StatusLine } from '../components/SheetNav.tsx';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
 import { useMessage, useTeamState } from '../lib/hooks.ts';
 import { theme } from '../styles/theme.ts';
+import { CelebrateAdminPanel } from '../components/CelebrateAdminPanel.tsx';
 import { FundAdminPanel } from '../components/FundAdminPanel.tsx';
 import { Button, Chip, Chips, Field, FieldLabel, Input, Panel, PanelHint, Row, Sheet, StackPanel, Switch } from '../styles/ui.ts';
 
@@ -440,6 +441,7 @@ function AdminPanels({ call, run }: { call: AdminCall; run: Runner }) {
       <ClocksForm value={settings.clocks} call={call} run={run} />
       <OfficeForm officeName={settings.officeName} mapWeather={settings.mapWeather} call={call} run={run} />
       <FundAdminPanel users={state.users} call={call} run={run} />
+      <CelebrateAdminPanel users={state.users} call={call} run={run} />
       <BackupPanel call={call} run={run} />
     </div>
   );

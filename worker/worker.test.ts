@@ -305,3 +305,22 @@ test('fund links survive Durable Object eviction, and open maps get the fund as 
   const live = await events();
   assert.deepEqual(await live.nextEvent('fund'), []);
 });
+
+test('birthdays and wishes survive Durable Object eviction, and open maps get them as their own event', async (t) => {
+  const { api, join, evict, events } = await setup(t);
+  const lan = await join('lan');
+  const bob = await join('bob');
+  // Today in UTC, the time zone these tests give the Worker.
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal((await api('PATCH', '/api/celebrate/me', { birthday: today.slice(5) }, { Authorization: `Bearer ${lan}` })).status, 200);
+  assert.equal((await api('POST', '/api/celebrate/wish', { to: 'lan' }, { Authorization: `Bearer ${bob}` })).status, 200);
+  await evict();
+  const view = (await api('GET', '/api/celebrate')).json;
+  assert.equal(view.today, today);
+  assert.deepEqual(view.celebrations[0].wishes, ['bob']);
+  // Kept under its own key, and still in the admin's backup.
+  const backup = (await api('GET', '/api/admin/data', undefined, ADMIN)).json;
+  assert.deepEqual(backup.celebrate.people, [['lan', { birthday: today.slice(5), joined: null }]]);
+  const live = await events();
+  assert.equal((await live.nextEvent('celebrate')).celebrations[0].username, 'lan');
+});

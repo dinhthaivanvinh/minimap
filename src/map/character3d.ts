@@ -1,6 +1,7 @@
 // Builds the 3D Mochi characters, so the office map and the picker's claw machine look the same.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import type { CelebrationKind } from '../../shared/celebrate.ts';
 import type { Accessory, Stroke } from '../../shared/look.ts';
 import type { TeamUser } from '../../shared/types.ts';
 import {
@@ -12,6 +13,7 @@ import {
   pointPairs,
   surfacePoint,
 } from '../lib/drawing.ts';
+import { BALLOON, PARTY_DOTS, PARTY_HAT } from '../lib/celebrateLook.ts';
 import { CLOUD, fundArt, GOLD, GOLD_DARK, RAIN, userFundTier, type FundArt } from '../lib/fundLook.ts';
 import { lookFor } from '../lib/look.ts';
 import { MUSTACHE_SMILE_DROP, wornStrokes } from '../lib/wornItems.ts';
@@ -125,6 +127,28 @@ export function createCharacterBuilder({ ramp, mat, mesh }: CharacterTools): (in
     inner.add(mesh(new THREE.SphereGeometry(0.11, 8, 6), 0xe24b4a, { y: 2.6, z: 0.66, shadow: false }));
   }
 
+  // A birthday or anniversary, matching the 2D art: a party hat with a pompom, and a balloon on a
+  // string. Both are a little larger than in 2D, so they still read when the 3D map is zoomed out.
+  function addParty(inner: THREE.Group, kind: CelebrationKind) {
+    const hex = (color: string) => parseInt(color.slice(1), 16);
+    // The cone's base sits on the head at y = 2.35, and its tip is at 3.95.
+    inner.add(mesh(new THREE.ConeGeometry(0.72, 1.6, 16), hex(PARTY_HAT), { y: 3.15 }));
+    inner.add(mesh(new THREE.SphereGeometry(0.22, 10, 8), hex(PARTY_DOTS), { y: 3.98, shadow: false }));
+    // Dots on the front of the cone's surface.
+    for (const [x, y, z] of [[-0.25, 2.65, 0.53], [0.18, 3.05, 0.36], [0.12, 2.5, 0.64]] as const) {
+      inner.add(mesh(new THREE.SphereGeometry(0.09, 6, 4), hex(PARTY_DOTS), { x, y, z, shadow: false }));
+    }
+    const { fill, shade } = BALLOON[kind];
+    const balloon = mesh(new THREE.SphereGeometry(0.58, 16, 12), hex(fill), { x: 1.85, y: 3.9, z: 0.2 });
+    balloon.scale.y = 1.2;
+    inner.add(balloon);
+    inner.add(mesh(new THREE.ConeGeometry(0.11, 0.18, 6), hex(shade), { x: 1.85, y: 3.15, z: 0.2, shadow: false }));
+    // The string runs from the knot (1.85, 3.1) down to the side of the body (1.35, 1.0).
+    const string = mesh(new THREE.CylinderGeometry(0.02, 0.02, 2.16, 4), INK, { x: 1.6, y: 2.05, z: 0.2, shadow: false });
+    string.rotation.z = -Math.atan2(0.5, 2.1);
+    inner.add(string);
+  }
+
   // Things that float around people's heads: a rain cloud with a fly for those far behind,
   // sparkles for the rich.
   function addFundProps(inner: THREE.Group, fund: FundArt) {
@@ -146,7 +170,7 @@ export function createCharacterBuilder({ ramp, mat, mesh }: CharacterTools): (in
   }
 
   function buildBody(inner: THREE.Group, user: TeamUser): THREE.Material {
-    const look = lookFor(user.username, user.look, userFundTier(user));
+    const look = lookFor(user.username, user.look, userFundTier(user), user.celebration ?? null);
     const fund = fundArt(look.fund);
     const bodyMaterial = new THREE.MeshToonMaterial({ color: look.color, gradientMap: ramp });
     const body = mesh(new THREE.SphereGeometry(BODY_RADIUS, 24, 18), bodyMaterial, { y: BODY_CENTER_Y });
@@ -176,8 +200,10 @@ export function createCharacterBuilder({ ramp, mat, mesh }: CharacterTools): (in
     }
     inner.add(smile);
 
-    // The fund's headwear wins over the person's hat, and either takes the place of the automatic accessory.
-    if (fund.headwear === 'tophat') addTopHat(inner);
+    // A party hat wins on the day. Otherwise the fund's headwear wins over the person's hat, and
+    // any of them takes the place of the automatic accessory.
+    if (look.party) addParty(inner, look.party);
+    else if (fund.headwear === 'tophat') addTopHat(inner);
     else if (fund.headwear === 'crown') addCrown(inner);
     else if (look.wearing.includes('hat')) addHat(inner);
     else addAccessory(inner, look.accessory, bodyMaterial);

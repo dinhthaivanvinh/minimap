@@ -1,7 +1,9 @@
-// The home page's side panel: two clocks, office weather, the QR code, and a countdown in a vote's last hour.
+// The home page's side panel: two clocks, office weather, the QR code, a countdown in a vote's
+// last hour, and today's and coming birthdays and anniversaries.
 import { useMemo, useRef } from 'react';
 import qrcode from 'qrcode-generator';
 import styled from 'styled-components';
+import { celebrationText, MAX_UPCOMING, whenText, type CelebrateView } from '../../shared/celebrate.ts';
 import type { Clock, TeamState, Weather } from '../../shared/types.ts';
 import type { VoteView } from '../../shared/vote.ts';
 import { useNow } from '../lib/hooks.ts';
@@ -289,14 +291,50 @@ function VoteCountdown({ votes }: { votes: VoteView[] }) {
   return card && <Countdown href={voteLink(card.id)}>{card.text}</Countdown>;
 }
 
-export function InfoPanel({ state, votes }: { state: TeamState; votes: VoteView[] }) {
+const Parties = styled.ul`
+  margin: 10px 0 0;
+  padding: 6px 10px;
+  border: ${theme.thinLine};
+  border-radius: 12px;
+  background: #ffe1ea;
+  list-style: none;
+  line-height: 1.35;
+
+  li { overflow-wrap: anywhere; }
+  span { color: ${theme.inkSoft}; font-weight: 700; }
+`;
+
+// Today's birthdays and anniversaries, then the next few coming up.
+function Celebrations({ state, celebrate }: { state: TeamState; celebrate: CelebrateView | null }) {
+  const list = celebrate?.celebrations ?? [];
+  const shown = [...list.filter((c) => c.days === 0), ...list.filter((c) => c.days > 0).slice(0, MAX_UPCOMING)];
+  if (!shown.length) return null;
+  const nickname = (name: string) => state.users.find((u) => u.username === name)?.nickname || name;
+  return (
+    <Parties aria-label="Birthdays and anniversaries">
+      {shown.map((c) => (
+        <li key={`${c.username}-${c.kind}`} style={{ fontWeight: c.days === 0 ? 800 : 600 }}>
+          {c.kind === 'birthday' ? '🎂' : '🎉'} <span>{whenText(c.days)}:</span> {celebrationText(c, nickname(c.username))}
+        </li>
+      ))}
+    </Parties>
+  );
+}
+
+interface InfoPanelProps {
+  state: TeamState;
+  votes: VoteView[];
+  celebrate: CelebrateView | null;
+}
+
+export function InfoPanel({ state, votes, celebrate }: InfoPanelProps) {
   const { settings, weather } = state;
   const dialogRef = useRef<HTMLDialogElement>(null);
   const url = teamAddress(settings.publicUrl);
   const hasOffice = Boolean(settings.officeName);
 
   return (
-    <Info aria-label="Time, weather and QR code">
+    <Info aria-label="Time, weather, QR code and celebrations">
       <Clocks clocks={settings.clocks} />
 
       {(hasOffice || url) && (
@@ -332,6 +370,7 @@ export function InfoPanel({ state, votes }: { state: TeamState; votes: VoteView[
       )}
 
       <VoteCountdown votes={votes} />
+      <Celebrations state={state} celebrate={celebrate} />
 
       <QrDialog
         ref={dialogRef}

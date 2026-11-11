@@ -35,6 +35,7 @@ const CharacterEditor = lazy(() =>
   import('./CharacterEditor.tsx').then((m) => ({ default: m.CharacterEditor })),
 );
 const FundPanel = lazy(() => import('./FundPanel.tsx').then((m) => ({ default: m.FundPanel })));
+const CelebratePanel = lazy(() => import('./CelebratePanel.tsx').then((m) => ({ default: m.CelebratePanel })));
 
 const OFFICE_ICONS = ['🏢', '🏬'];
 
@@ -472,6 +473,8 @@ function Editor({ user, state, token, onLogOut, account, embedded, onUserSaved, 
               message={lookMessage}
               onSave={(look) => void patchMe({ look }, 'Character saved', showLookMessage)}
             />
+
+            <CelebratePanel token={token} />
 
             <FundPanel user={user} token={token} onSaved={onFundSaved} />
           </Suspense>

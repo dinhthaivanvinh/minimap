@@ -1,4 +1,5 @@
 // A character starts from its username, so it stays the same until someone decorates it.
+import type { CelebrationKind } from '../../shared/celebrate.ts';
 import type { FundTier } from '../../shared/fund.ts';
 import { ACCESSORIES, type Accessory, type CharacterDesign } from '../../shared/look.ts';
 
@@ -10,6 +11,8 @@ export interface Look extends CharacterDesign {
   phase: number;
   /** The fund look to wear over everything else, or null for none (see fundLook.ts). */
   fund: FundTier | null;
+  /** A birthday or work anniversary today: a party hat and a balloon (see celebrateLook.ts). */
+  party: CelebrationKind | null;
 }
 
 function hash(text: string): number {
@@ -25,13 +28,14 @@ export function defaultDesign(username: string): CharacterDesign {
   return { color: DEFAULT_COLORS[hash(username) % DEFAULT_COLORS.length] ?? DEFAULT_COLORS[0], wearing: [], strokes: [] };
 }
 
-export function lookFor(username: string, design?: CharacterDesign | null, fund: FundTier | null = null): Look {
+export function lookFor(username: string, design?: CharacterDesign | null, fund: FundTier | null = null, party: CelebrationKind | null = null): Look {
   const h = hash(username);
   return {
     ...(design ?? defaultDesign(username)),
     accessory: ACCESSORIES[(h >>> 8) % ACCESSORIES.length] ?? ACCESSORIES[0],
     phase: (h >>> 16) % 7,
     fund,
+    party,
   };
 }
 

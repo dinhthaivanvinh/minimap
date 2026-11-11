@@ -1,7 +1,9 @@
 import { useId, type ReactNode } from 'react';
 import styled from 'styled-components';
+import type { CelebrationKind } from '../../shared/celebrate.ts';
 import type { Accessory } from '../../shared/look.ts';
 import type { TeamUser } from '../../shared/types.ts';
+import { BALLOON, PARTY_DOTS, PARTY_HAT } from '../lib/celebrateLook.ts';
 import { strokePath } from '../lib/drawing.ts';
 import { CLOUD, fundArt, GOLD, GOLD_DARK, RAIN, userFundTier } from '../lib/fundLook.ts';
 import { lookFor, type Look } from '../lib/look.ts';
@@ -105,17 +107,43 @@ const SPARKLES = (
   <path d="M55 14l1.4 3 3 1.4-3 1.4-1.4 3-1.4-3-3-1.4 3-1.4ZM8 20l1 2 2 1-2 1-1 2-1-2-2-1 2-1Z" fill={GOLD} stroke={GOLD_DARK} strokeWidth="0.6" />
 );
 
+// A birthday or anniversary: a striped party hat with a pompom, and a balloon on a string.
+const PARTY_HAT_ART = (
+  <>
+    <path d="M22 16 32-4l10 20Z" fill={PARTY_HAT} stroke={INK} strokeWidth="2.5" strokeLinejoin="round" />
+    <circle cx="29" cy="9" r="1.6" fill={PARTY_DOTS} />
+    <circle cx="35" cy="4" r="1.4" fill={PARTY_DOTS} />
+    <circle cx="33" cy="12" r="1.4" fill="#ffe27a" />
+    <circle cx="32" cy="-5" r="3" fill={PARTY_DOTS} stroke={INK} strokeWidth="1.5" />
+  </>
+);
+
+function Balloon({ kind }: { kind: CelebrationKind }) {
+  const { fill, shade } = BALLOON[kind];
+  return (
+    <>
+      <path d="M53 42c4-8-3-14 2-22s3-6 3-8" fill="none" stroke={INK} strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M58 12l-1.6 2.4h3.2Z" fill={shade} />
+      <ellipse cx="58" cy="4" rx="6" ry="7.5" fill={fill} stroke={INK} strokeWidth="1.8" />
+      <ellipse cx="55.8" cy="1" rx="1.4" ry="2.4" fill="#fff" opacity=".6" transform="rotate(-20 55.8 1)" />
+    </>
+  );
+}
+
 const MOUTHS = { smile: 'q4 4 8 0', frown: 'm0 4q4-4 8 0', flat: 'm1 2h6' } as const;
 
 const BODY_PATH = 'M32 13c15 0 24 13 24 27 0 12-10 18-24 18S8 52 8 40c0-14 9-27 24-27Z';
 
 /** The character's shapes, for placing inside an SVG. */
-export function MochiArt({ look }: { look: Pick<Look, 'color' | 'accessory' | 'wearing' | 'strokes'> & Partial<Pick<Look, 'fund'>> }) {
+export function MochiArt({ look }: { look: Pick<Look, 'color' | 'accessory' | 'wearing' | 'strokes'> & Partial<Pick<Look, 'fund' | 'party'>> }) {
   const { color, accessory, wearing, strokes } = look;
   const fund = fundArt(look.fund ?? null);
-  // The fund's headwear wins over the person's hat, and either takes the place of the automatic accessory.
-  const hasHat = !fund.headwear && wearing.includes('hat');
-  const art = hasHat || fund.headwear ? null : ACCESSORY_ART[accessory];
+  // A party hat wins on the day. Otherwise the fund's headwear wins over the person's hat, and
+  // any of them takes the place of the automatic accessory.
+  const party = look.party ?? null;
+  const headwear = party ? null : fund.headwear;
+  const hasHat = !party && !headwear && wearing.includes('hat');
+  const art = party || hasHat || headwear ? null : ACCESSORY_ART[accessory];
   const onBody = [...strokes, ...fund.strokes];
   const behind = BEHIND_HEAD.has(accessory);
   const clipId = useId();
@@ -167,19 +195,21 @@ export function MochiArt({ look }: { look: Pick<Look, 'color' | 'accessory' | 'w
       ))}
       {!behind && art}
       {hasHat && HAT}
-      {fund.headwear === 'tophat' && TOP_HAT}
-      {fund.headwear === 'crown' && CROWN}
+      {headwear === 'tophat' && TOP_HAT}
+      {headwear === 'crown' && CROWN}
+      {party && PARTY_HAT_ART}
       {fund.cloud && RAIN_CLOUD}
       {fund.fly && FLY}
       {fund.sparkles && SPARKLES}
+      {party && <Balloon kind={party} />}
     </g>
   );
 }
 
-export function Mochi({ user }: { user: Pick<TeamUser, 'username' | 'look' | 'fund'> }) {
+export function Mochi({ user }: { user: Pick<TeamUser, 'username' | 'look' | 'fund' | 'celebration'> }) {
   return (
     <MochiSvg viewBox="0 0 64 62" aria-hidden="true">
-      <MochiArt look={lookFor(user.username, user.look, userFundTier(user))} />
+      <MochiArt look={lookFor(user.username, user.look, userFundTier(user), user.celebration ?? null)} />
     </MochiSvg>
   );
 }
