@@ -17,6 +17,8 @@ import { computeLayout, noticeBoardSpot, parkActivities, standingArea, type MapL
 import { box, clampTo, contains, grow, hopHeight, pickSpot, steer, type Box } from '../lib/wander.ts';
 import type { Reaction, ReactionKind } from '../lib/voteReactions.ts';
 import { parkTrees } from '../lib/parkTrees.ts';
+import { createTraffic, parkedTraffic, stepAside, stepTraffic, streetRoad, trafficEscape, type Road } from '../lib/traffic.ts';
+import { createTraffic3D } from './traffic3d.ts';
 import { createPickerCabinet } from './pickerCabinet3d.ts';
 import { createArcadeCabinet } from './arcade3d.ts';
 import { createBlimp } from './blimp3d.ts';
@@ -131,6 +133,7 @@ interface Character {
   placed: boolean;
   /** Picked up by the person dragging themselves to another room. */
   held: boolean;
+  trafficDodge: { from: Point; to: Point } | null;
   opacity: number;
   targetOpacity: number;
   scale: number;
@@ -246,8 +249,6 @@ const STUCK_SECONDS = 3;
 const WALL_H = 5;
 const INK = 0x2a2657;
 
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-
 // ---- Shared materials and helpers ---------------------------------------
 
 function toonRamp() {
@@ -274,6 +275,8 @@ function checkerTexture(a: string, b: string) {
 }
 
 export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGone, onArcade, onPicker, onNoticeBoard, onMove }: SceneOptions): Scene3D {
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  let reducedMotion = motion.matches;
   const ramp = toonRamp();
   const materials = new Map<number, THREE.MeshToonMaterial>();
   const mat = (color: number): THREE.MeshToonMaterial => {
@@ -301,9 +304,31 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   // ---- Scene ------------------------------------------------------------
 
   const scene = new THREE.Scene();
+  const trafficModels = createTraffic3D();
+  scene.add(trafficModels.group);
+  let traffic = createTraffic();
+  let road: Road | null = null;
+  let trafficDaylight = 1;
+  function motionChanged() {
+    reducedMotion = motion.matches;
+    traffic = createTraffic();
+    trafficModels.clear();
+    for (const c of characters.values()) {
+      c.trafficDodge = null;
+      if (reducedMotion && !c.held) {
+        c.group.position.copy(c.seat);
+        c.goal.copy(c.seat);
+        c.mode = 'idle';
+        c.inner.position.y = 0;
+        c.inner.rotation.set(0, 0, 0);
+        c.inner.scale.setScalar(1);
+      }
+    }
+  }
   const camera = new THREE.PerspectiveCamera(32, 1, 1, 600);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.localClippingEnabled = true;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -581,23 +606,12 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     addNightLight(group, x, 6.6, z + 0.6, { color: 0xffd27a, strength: 2.8, distance: 17 });
   }
 
-  function addCar(group: THREE.Group, x: number, z: number) {
-    block(x, z, 3.9, 1.8);
-    group.add(mesh(new THREE.BoxGeometry(7.5, 1.5, 3.2), 0xff8fb3, { x, y: 2, z }));
-    group.add(mesh(new THREE.BoxGeometry(4, 1.3, 2.8), 0xdfe3ff, { x: x - 0.3, y: 3.3, z }));
-    for (const wheelX of [x - 2.4, x + 2.4]) {
-      for (const wheelZ of [z - 1.65, z + 1.65]) {
-        const wheel = mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.5, 14), INK, { x: wheelX, y: 1.5, z: wheelZ });
-        wheel.rotation.x = Math.PI / 2;
-        group.add(wheel);
-      }
-    }
-  }
-
   // Runs off both sides of the island: a pavement, then the road and its markings.
   function addStreet(group: THREE.Group, z: Zone, c: Point) {
     const width = layout.width + 8;
-    const pavement = z.h * 0.3;
+    const origin = toWorld(z.x, z.y);
+    road = streetRoad({ x: origin.x, y: origin.z, w: z.w, h: z.h });
+    const pavement = road.curb - road.minZ;
     const roadDepth = z.h - pavement;
     const pavementZ = c.z - z.h / 2 + pavement / 2;
     const roadZ = c.z + pavement / 2;
@@ -625,7 +639,6 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
     addLampPost(group, -width * 0.32, pavementZ);
     addLampPost(group, width * 0.24, pavementZ);
-    addCar(group, width * 0.4, roadZ + 1);
   }
 
   const BUILDERS: Record<ZoneKind, (group: THREE.Group, z: Zone, c: Point) => void> = { office: addOffice, wfh: addWfh, off: addOff, lobby: addLobby, street: addStreet };
@@ -635,6 +648,10 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   }
 
   function buildWorld() {
+    trafficModels.clear();
+    traffic = createTraffic();
+    road = null;
+    for (const c of characters.values()) c.trafficDodge = null;
     disposeGroup(world);
     nightLights = [];
     snowCaps = [];
@@ -932,6 +949,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       closerAt: 0,
       placed: false,
       held: false,
+      trafficDodge: null,
       opacity: 1,
       targetOpacity: 1,
       scale: 1,
@@ -1174,6 +1192,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) < DRAG_START_PX) return;
       hold.moved = true;
       character.held = true;
+      character.trafficDodge = null;
       root.setPointerCapture(e.pointerId);
       tween = null;
     }
@@ -1272,6 +1291,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       character.zoneKind = seat.zone.kind;
       character.scale = deskSize(seat.cell);
       character.cell = seat.cell;
+      if (changedRoom || seatMoved || reflow) character.trafficDodge = null;
       character.area = seat.cell >= CROWDED_CELL ? wanderArea(seat.zone, character.scale) : null;
       character.targetOpacity = isDimmed(user) ? 0.22 : 1;
       // Someone being dragged stays under the pointer, and heads to their spot when let go.
@@ -1329,6 +1349,14 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     animateVoteMarks(time);
     animateBursts(dt, time);
 
+    if (road) {
+      const people = [...characters.values()].filter(c => !c.held).map(c => ({
+        x: c.group.position.x, z: c.group.position.z, radius: bodyRadius(c),
+      }));
+      if (!reducedMotion) traffic = stepTraffic(traffic, road, dt, people);
+      trafficModels.update(reducedMotion ? parkedTraffic(road) : traffic.cars, trafficDaylight, road);
+    }
+
     for (const c of characters.values()) {
       const { group, inner } = c;
       const size = c.scale;
@@ -1347,9 +1375,13 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
         inner.position.y = 0;
         if (!reducedMotion) inner.rotation.z = Math.sin(time * 12) * 0.12;
       } else {
-        if (c.mode === 'idle' && time >= c.waitUntil && wandering && c.area && !reducedMotion) setOff(c, time);
+        const dodging = dodgeTraffic(c, dt, time);
+        if (!dodging && c.mode === 'idle' && time >= c.waitUntil && wandering && c.area && !reducedMotion) setOff(c, time);
 
-        if (c.mode === 'idle') {
+        if (dodging) {
+          inner.position.y = Math.abs(Math.sin(time * 11 + c.phase)) * 0.35;
+          inner.scale.setScalar(1);
+        } else if (c.mode === 'idle') {
           // Standing still: turn to face the camera and breathe.
           inner.position.y = 0;
           inner.rotation.y += shortestAngle(-inner.rotation.y) * Math.min(1, dt * 4);
@@ -1367,6 +1399,25 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
         setOpacity(c, c.opacity + (c.targetOpacity - c.opacity) * Math.min(1, dt * 8));
       }
     }
+  }
+
+  // Sidesteps also work for idle people and crowded streets where wandering is off.
+  function dodgeTraffic(c: Character, dt: number, time: number): boolean {
+    if (!road || reducedMotion) return false;
+    const position = c.group.position;
+    const from = c.trafficDodge?.from ?? { x: position.x, z: position.z };
+    const escape = trafficEscape({ ...from, radius: bodyRadius(c) }, road, traffic.cars);
+    if (!escape) { c.trafficDodge = null; return false; }
+    c.trafficDodge ??= { from, to: escape };
+    const next = stepAside(position, c.trafficDodge.to, dt);
+    const facing = Math.atan2(next.x - position.x, next.z - position.z);
+    if (Math.hypot(next.x - position.x, next.z - position.z) > 0.001)
+      c.inner.rotation.y += shortestAngle(facing - c.inner.rotation.y) * Math.min(1, dt * 10);
+    position.x = next.x;
+    position.z = next.z;
+    // A dodge isn't a failed wander; don't trigger the stuck timer while waiting.
+    c.closerAt = time;
+    return true;
   }
 
   // ---- Wandering ----------------------------------------------------------
@@ -1522,6 +1573,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
   const observer = new ResizeObserver(resize);
   observer.observe(root);
+  motion.addEventListener('change', motionChanged);
   resize();
   raf = requestAnimationFrame(loop);
 
@@ -1530,6 +1582,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
     applyPreset: (id) => applyPreset(id),
     setAmbience({ daylight, warmth, phase, lamps, weather: now }) {
       weather = now;
+      trafficDaylight = daylight;
       showWeatherDetails();
       sky.color.set(mixColor(LIGHT.nightSky, LIGHT.sky, daylight));
       sky.groundColor.set(mixColor(LIGHT.nightGround, LIGHT.ground, daylight));
@@ -1624,6 +1677,9 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
       markMover();
     },
     destroy() {
+      motion.removeEventListener('change', motionChanged);
+      trafficModels.clear();
+      trafficModels.group.removeFromParent();
       root.removeEventListener('pointerdown', onHoldStart, { capture: true });
       root.removeEventListener('pointermove', onHoldMove);
       root.removeEventListener('pointerup', onHoldEnd);
