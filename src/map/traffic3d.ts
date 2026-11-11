@@ -2,6 +2,33 @@
 import * as THREE from 'three';
 import { headlightLevel, type Car, type Road } from '../lib/traffic.ts';
 
+// Soft edges like the street lamps, plus a fading texture inside the triangular road beams.
+function lightTexture(beam = false) {
+  const canvas = document.createElement('canvas');
+  canvas.width = beam ? 128 : 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  const gradient = beam
+    ? ctx.createLinearGradient(0, 0, 128, 0)
+    : ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gradient.addColorStop(0, '#fff');
+  gradient.addColorStop(0.35, 'rgba(255,255,255,.4)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, 64);
+  if (beam) {
+    const edge = ctx.createLinearGradient(0, 0, 0, 64);
+    edge.addColorStop(0, 'rgba(255,255,255,0)');
+    edge.addColorStop(0.3, '#fff');
+    edge.addColorStop(0.7, '#fff');
+    edge.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = edge;
+    ctx.fillRect(0, 0, 128, 64);
+  }
+  return new THREE.CanvasTexture(canvas);
+}
+
 function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
   const group = new THREE.Group();
   const materials = new Map<string, THREE.MeshToonMaterial>();
@@ -47,7 +74,28 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
   }
   const bulbs = mat('#fff0bd');
   bulbs.emissive.set('#ffe6a0');
+  const rearBulbs = mat('#ff657c');
+  rearBulbs.emissive.set('#ff435e');
+  const haloMap = lightTexture();
+  const beamMap = lightTexture(true);
+  const frontGlow = new THREE.SpriteMaterial({
+    map: haloMap,
+    color: '#ffe6a0',
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const rearGlow = new THREE.SpriteMaterial({
+    map: haloMap,
+    color: '#ff657c',
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
   const beams = new THREE.MeshBasicMaterial({
+    map: beamMap,
     clippingPlanes,
     color: '#ffeab1',
     transparent: true,
@@ -58,7 +106,16 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
   });
   for (const z of [-width * 0.32, width * 0.32]) {
     add(new THREE.BoxGeometry(0.12, 0.4, width * 0.23), bulbs, length / 2 + 0.03, 1.95, z);
-    add(new THREE.BoxGeometry(0.12, 0.3, width * 0.2), mat('#ff657c'), -length / 2 - 0.03, 1.95, z);
+    add(new THREE.BoxGeometry(0.12, 0.3, width * 0.2), rearBulbs, -length / 2 - 0.03, 1.95, z);
+    for (const [x, material, size] of [
+      [length / 2 + 0.12, frontGlow, 3.4],
+      [-length / 2 - 0.12, rearGlow, 2.3],
+    ] as const) {
+      const glow = new THREE.Sprite(material);
+      glow.position.set(x, 1.95, z);
+      glow.scale.setScalar(size);
+      group.add(glow);
+    }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute(
       'position',
@@ -67,6 +124,7 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
         3,
       ),
     );
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], 2));
     add(geometry, beams, length / 2, 1.08, z);
   }
   return {
@@ -74,7 +132,10 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
     update(next: Car, daylight: number) {
       const light = headlightLevel(daylight);
       bulbs.emissiveIntensity = light * 1.5;
-      beams.opacity = light * 0.18;
+      rearBulbs.emissiveIntensity = light * 1.2;
+      frontGlow.opacity = light * 0.7;
+      rearGlow.opacity = light * 0.6;
+      beams.opacity = light * 0.5;
       group.position.set(next.x, 0, next.z);
       group.rotation.y = next.direction === 1 ? 0 : Math.PI;
       for (const wheel of wheels) wheel.rotation.y = -next.x * next.direction * 2;
@@ -85,6 +146,10 @@ function createCar(car: Car, clippingPlanes: THREE.Plane[]) {
       });
       for (const material of materials.values()) material.dispose();
       beams.dispose();
+      frontGlow.dispose();
+      rearGlow.dispose();
+      haloMap.dispose();
+      beamMap.dispose();
       group.removeFromParent();
     },
   };

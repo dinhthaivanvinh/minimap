@@ -14,6 +14,7 @@ import {
 import type { Point } from '../lib/wander.ts';
 
 function carArt(car: Car): string {
+  const lightId = `traffic-light-${car.id}`;
   const tall = car.shape === 'van';
   const pickup = car.shape === 'pickup';
   const compact = car.shape === 'compact';
@@ -23,7 +24,13 @@ function carArt(car: Car): string {
       ? 'M20 24 29 11h28l13 13Z'
       : `M16 24 24 ${tall ? 3 : 10}h38l12 ${tall ? 21 : 14}Z`;
   return `<svg viewBox="0 -4 150 62" width="100%" height="100%" preserveAspectRatio="none" overflow="visible">
-    <g class="headlights" fill="#ffeab1"><path d="M82 23 143 8v39L82 31Z" opacity=".23"/><path d="M82 27 131 17v24L82 35Z" opacity=".3"/></g>
+    <defs>
+      <radialGradient id="${lightId}-front"><stop stop-color="#fff4c8" stop-opacity=".95"/><stop offset=".3" stop-color="#ffe27a" stop-opacity=".55"/><stop offset="1" stop-color="#ffe27a" stop-opacity="0"/></radialGradient>
+      <radialGradient id="${lightId}-rear"><stop stop-color="#ffb0a7" stop-opacity=".9"/><stop offset=".25" stop-color="#ff657c" stop-opacity=".6"/><stop offset="1" stop-color="#ff657c" stop-opacity="0"/></radialGradient>
+      <linearGradient id="${lightId}-beam"><stop stop-color="#fff0b5" stop-opacity=".5"/><stop offset=".55" stop-color="#ffeab1" stop-opacity=".2"/><stop offset="1" stop-color="#ffeab1" stop-opacity="0"/></linearGradient>
+      <filter id="${lightId}-soft" x="-25%" y="-50%" width="150%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter>
+    </defs>
+    <g class="headlights car-lights" fill="url(#${lightId}-beam)" filter="url(#${lightId}-soft)"><path d="M82 23 143 8v39L82 31Z"/><path d="M82 27 131 17v24L82 35Z" opacity=".45"/></g>
     <g stroke="#2a2657" stroke-width="3" stroke-linejoin="round">
       <path d="${roof}" fill="${car.color}"/>
       <path d="${pickup ? 'M51 12h15l7 12H46Z' : tall ? 'M28 7h30l8 17H20Z' : 'M31 13h23l12 11H25Z'}" fill="#dfefff"/>
@@ -33,6 +40,10 @@ function carArt(car: Car): string {
       <circle cx="22" cy="41" r="8" fill="#2a2657"/><circle cx="67" cy="41" r="8" fill="#2a2657"/>
       <circle cx="22" cy="41" r="3" fill="#dfe3ff"/><circle cx="67" cy="41" r="3" fill="#dfe3ff"/>
       <path d="M81 28v7" stroke="#ffeab1" stroke-width="5"/><path d="M6 29v6" stroke="#ff657c"/>
+    </g>
+    <g class="car-lights">
+      <ellipse cx="83" cy="31" rx="17" ry="19" fill="url(#${lightId}-front)"/>
+      <ellipse cx="5" cy="32" rx="12" ry="15" fill="url(#${lightId}-rear)"/>
     </g></svg>`;
 }
 
@@ -121,7 +132,9 @@ export function Traffic2D({ street, scale, plan, daylight, reduced }: Props) {
         node.style.left = `${(car.x - x - (car.direction * car.length) / 2) * scale}px`;
         node.style.top = `${(car.z - y) * scale}px`;
         node.style.transform = `translateY(-65%) scaleX(${car.direction})`;
-        node.querySelector<SVGElement>('.headlights')!.style.opacity = String(lights.current);
+        node.querySelectorAll<SVGElement>('.car-lights').forEach((glow) => {
+          glow.style.opacity = String(lights.current);
+        });
       }
     }
     raf = requestAnimationFrame(frame);

@@ -125,7 +125,7 @@ Paths are from the project root. Function names are given instead of line number
 | 3D map | `src/map/Map3D.tsx` (React around the scene, 2D fallback), `src/map/scene3d.ts` (`createScene3D`: rooms, lights, weather, camera) |
 | 3D characters (map, claw machine, arcade) | `src/map/character3d.ts` |
 | 3D wandering | `src/lib/wander.ts` |
-| Street traffic, right-side lanes, spawning, yielding, pedestrian escape strips and daylight headlights | `src/lib/traffic.ts`, `traffic.test.ts`; 2D `src/map/Traffic2D.tsx` and `Map2D.tsx`; 3D `src/map/traffic3d.ts` and `scene3d.ts` (`dodgeTraffic`); reduced-motion cars use `parkedTraffic` |
+| Street traffic, right-side lanes, spawning, yielding, pedestrian escape strips and daylight head/rear lights | `src/lib/traffic.ts`, `traffic.test.ts`; 2D `src/map/Traffic2D.tsx` and `Map2D.tsx`; 3D `src/map/traffic3d.ts` and `scene3d.ts` (`dodgeTraffic`); reduced-motion cars use `parkedTraffic` |
 | Person badge and detail card | `src/components/Badge.tsx`, `src/components/DetailCard.tsx` |
 | Map props and focus requests (and the votes, vote marks, reactions and the mover the maps get) | `src/map/types.ts` |
 | Drag yourself to another room (the logged-in person only): which room is under a point, the place to send, the move shown before the server agrees | `src/lib/dragMove.ts` (`zoneAt`, `dropPlace`, `moverFor`, `withMove`, `createPress`: a press becomes a drag); `MonitorPage.tsx` (`moveMe` sends `PATCH /api/me`, pending move, `MoveNote`); 2D: `Map2D.tsx` (`useDrag`, which listens on the window so a quick flick isn't lost, the room's `$dropTarget`); 3D: `scene3d.ts` section "Dragging yourself to another room" (`setMover`, `onHoldStart`, `letGo`), `Map3D.tsx` (`[data-drop-target]`, `[data-mover]`) |
