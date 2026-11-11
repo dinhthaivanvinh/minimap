@@ -151,3 +151,46 @@ test('dates live in their own file, go into the backup, and deleted people are f
   assert.equal((await api('PUT', '/api/admin/data', backup, ADMIN)).status, 200);
   assert.deepEqual((await view()).celebrations[0]?.wishes, ['bob']);
 });
+
+test('two quick edits of different fields for one person both stay', async () => {
+  const { createCelebrate } = await import('./core.ts');
+  let release = () => {};
+  let saves = 0;
+  const celebrate = createCelebrate({
+    saved: null,
+    save: async () => {
+      // The first save waits, so the next edits queue up behind it.
+      if (++saves === 1) await new Promise<void>((done) => (release = done));
+    },
+    team: {
+      player: () => ({ username: 'lan', pinVersion: 1 }),
+      members: () => ['lan'],
+      sign: () => '',
+      requireAdmin: () => {},
+    },
+    now: () => new Date('2026-11-10T12:00:00Z'),
+    timeZone: 'UTC',
+  });
+  const patch = (body: Record<string, unknown>, url: string) =>
+    celebrate.handle({ method: 'PATCH', url: new URL(`http://x${url}`), header: () => undefined, readJson: async () => body });
+  const first = patch({ birthday: '01-02' }, '/api/celebrate/me');
+  await new Promise((done) => setTimeout(done, 10));
+  const second = patch({ username: 'lan', joined: '2024-03-01' }, '/api/celebrate/admin');
+  const third = patch({ birthday: '05-06' }, '/api/celebrate/me');
+  await new Promise((done) => setTimeout(done, 10));
+  release();
+  await Promise.all([first, second]);
+  assert.deepEqual((await third)?.body, { birthday: '05-06', joined: '2024-03-01' });
+});
+
+test('a damaged data file keeps what makes sense and still starts', async (t) => {
+  const { celebrateFile, restart, view, join, api, as } = await setup(t);
+  await join('lan');
+  fs.writeFileSync(
+    celebrateFile,
+    JSON.stringify({ people: ['oops', ['lan', { birthday: '11-10', joined: 'never' }], [1, {}]], wishes: { day: 3, to: [['lan', 'x'], 'bad'] } }),
+  );
+  await restart();
+  assert.deepEqual((await api('GET', '/api/celebrate/me', undefined, as('lan'))).json, { birthday: '11-10', joined: null });
+  assert.equal((await view()).celebrations[0]?.username, 'lan');
+});

@@ -11,6 +11,9 @@ import { StatusLine } from './SheetNav.tsx';
 export function CelebratePanel({ token }: { token: string }) {
   const [birthday, setBirthday] = useState('');
   const [joined, setJoined] = useState('');
+  // The dates as the server last gave them. Only fields changed since then are sent, so a
+  // date the admin set meanwhile isn't cleared by an untouched empty field here.
+  const [shown, setShown] = useState({ birthday: '', joined: '' });
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, showMessage] = useMessage(2500);
@@ -19,20 +22,27 @@ export function CelebratePanel({ token }: { token: string }) {
   useEffect(() => {
     api<CelebrateDates>('GET', '/api/celebrate/me', undefined, { Authorization: `Bearer ${token}` })
       .then((dates) => {
-        setBirthday(dates.birthday ?? '');
-        setJoined(dates.joined ?? '');
+        show(dates);
         setLoaded(true);
       })
       .catch((err) => showMessage(errorText(err), true));
   }, [token, showMessage]);
 
+  function show(dates: CelebrateDates) {
+    const next = { birthday: dates.birthday ?? '', joined: dates.joined ?? '' };
+    setShown(next);
+    setBirthday(next.birthday);
+    setJoined(next.joined);
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
     try {
-      const dates = await api<CelebrateDates>('PATCH', '/api/celebrate/me', { birthday: birthdayToSend(birthday), joined }, auth);
-      setBirthday(dates.birthday ?? '');
-      setJoined(dates.joined ?? '');
+      const changed: Partial<Record<keyof CelebrateDates, string>> = {};
+      if (birthday !== shown.birthday) changed.birthday = birthdayToSend(birthday);
+      if (joined !== shown.joined) changed.joined = joined;
+      show(await api<CelebrateDates>('PATCH', '/api/celebrate/me', changed, auth));
       showMessage('Dates saved');
     } catch (err) {
       showMessage(errorText(err), true);

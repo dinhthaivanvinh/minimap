@@ -94,13 +94,28 @@ function checkWishes(value: unknown, usernames: ReadonlySet<string>): { day: str
   return { day, to: new Map(to.map(([name, from]) => [name, new Set(from)])) };
 }
 
+// Takes what was stored, keeping only entries that make sense, so a damaged file or storage
+// value can't stop the server from starting.
+function fromSaved(saved: Partial<CelebrateData> | null): { people: Map<string, CelebrateDates>; wishDay: string; wishes: Map<string, Set<string>> } {
+  const people = new Map<string, CelebrateDates>();
+  for (const pair of Array.isArray(saved?.people) ? saved.people : []) {
+    if (!Array.isArray(pair) || typeof pair[0] !== 'string' || !isObject(pair[1])) continue;
+    const { birthday, joined } = pair[1];
+    const dates = { birthday: isMonthDay(birthday) ? birthday : null, joined: isDate(joined) ? joined : null };
+    if (dates.birthday || dates.joined) people.set(pair[0], dates);
+  }
+  const wishes = new Map<string, Set<string>>();
+  for (const pair of Array.isArray(saved?.wishes?.to) ? saved.wishes.to : []) {
+    if (!Array.isArray(pair) || typeof pair[0] !== 'string' || !Array.isArray(pair[1])) continue;
+    wishes.set(pair[0], new Set(pair[1].filter((from: unknown) => typeof from === 'string')));
+  }
+  const wishDay = typeof saved?.wishes?.day === 'string' ? saved.wishes.day : '';
+  return { people, wishDay, wishes };
+}
+
 export function createCelebrate({ saved, save: store, team, onChange = () => {}, now = () => new Date(), timeZone }: CelebrateOptions) {
   // Per-person data lives in Maps, so a username such as __proto__ is just a key.
-  let people = new Map<string, CelebrateDates>(Array.isArray(saved?.people) ? saved.people : []);
-  let wishDay = typeof saved?.wishes?.day === 'string' ? saved.wishes.day : '';
-  let wishes = new Map<string, Set<string>>(
-    Array.isArray(saved?.wishes?.to) ? saved.wishes.to.map(([name, from]) => [name, new Set(from)]) : [],
-  );
+  let { people, wishDay, wishes } = fromSaved(saved);
   let shownDay = '';
   let writing: Promise<unknown> = Promise.resolve();
 
@@ -161,18 +176,19 @@ export function createCelebrate({ saved, save: store, team, onChange = () => {},
   }
 
   // Sets one person's dates from a request body. A key that is left out stays as it was.
+  // Run it inside change(), so it starts from the dates as they are once earlier saves are done:
+  // otherwise two quick edits of different fields both start from the old dates, and the last
+  // one puts back the other field's old value. Someone with no dates left is dropped, so the
+  // data stays small.
   function setDates(username: string, body: Record<string, unknown>): CelebrateDates {
     const current = people.get(username) ?? NO_DATES;
-    return {
+    const dates = {
       birthday: 'birthday' in body ? cleanBirthday(body.birthday) : current.birthday,
       joined: 'joined' in body ? cleanJoined(body.joined, today()) : current.joined,
     };
-  }
-
-  // Someone with no dates left is dropped, so the data stays small.
-  function keep(username: string, dates: CelebrateDates): void {
     if (dates.birthday || dates.joined) people.set(username, dates);
     else people.delete(username);
+    return dates;
   }
 
   async function route(req: ApiRequest): Promise<ApiResponse> {
@@ -187,8 +203,8 @@ export function createCelebrate({ saved, save: store, team, onChange = () => {},
 
     if (action === 'PATCH /api/celebrate/me') {
       const { username } = team.player(req);
-      const dates = setDates(username, await req.readJson());
-      await change(() => keep(username, dates));
+      const body = await req.readJson();
+      const dates = await change(() => setDates(username, body));
       return jsonResponse(200, dates);
     }
 
@@ -201,8 +217,7 @@ export function createCelebrate({ saved, save: store, team, onChange = () => {},
       team.requireAdmin(req);
       const body = await req.readJson();
       const username = member(body.username);
-      const dates = setDates(username, body);
-      await change(() => keep(username, dates));
+      await change(() => setDates(username, body));
       return jsonResponse(200, { people: [...people] });
     }
 
