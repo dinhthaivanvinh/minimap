@@ -51,7 +51,8 @@ export function Traffic2D({ street, scale, plan, daylight, reduced }: Props) {
   const { x, y, w, h } = street;
   useEffect(() => {
     const root = layer.current!;
-    const road = streetRoad({ x, y, w, h });
+    // Larger flat icons fill the road while matching their collision footprints.
+    const road = streetRoad({ x, y, w, h }, 1.5);
     let traffic = createTraffic();
     const nodes = new Map<number, HTMLElement>();
     const walkers = new Map<HTMLElement, Point>();

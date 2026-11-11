@@ -48,6 +48,21 @@ test('right-side lanes put eastbound cars south and westbound cars north of the 
   }
 });
 
+test('larger 2D cars keep their lane positions and scale their traffic footprints', () => {
+  const larger = streetRoad(rect, 1.5);
+  assert.deepEqual(larger.lanes, road.lanes);
+  const normal = parkedTraffic(road);
+  const cars = parkedTraffic(larger);
+  cars.forEach((car, index) => {
+    assert.equal(car.length, normal[index]!.length * 1.5);
+    assert.equal(car.width, normal[index]!.width * 1.5);
+    assert.ok(car.z - car.width / 2 > larger.curb);
+    assert.ok(car.z + car.width / 2 < larger.maxZ);
+    const escape = trafficEscape({ x: car.x, z: car.z, radius: 1.5 }, larger, [car])!;
+    assert.ok(larger.lanes.every((lane) => Math.abs(escape.z - lane) >= car.width / 2 + 2));
+  });
+});
+
 test('random traffic stays capped, spaced, varied and removes cars after they leave', () => {
   const random = seeded();
   let traffic = createTraffic();
@@ -183,32 +198,37 @@ test('a crowded street keeps pedestrian bodies clear while traffic continues to 
     updatedAt: null,
   }));
   const layout = computeLayout([], users);
-  const r = streetRoad(layout.zones.find((zone) => zone.kind === 'street')!);
-  const homes = [...layout.seats.values()].map((seat) => ({
-    x: seat.x,
-    z: seat.y,
-    radius: Math.min(1.5, seat.cell * 0.16),
-  }));
-  let people = structuredClone(homes);
-  let traffic = createTraffic();
-  const random = seeded();
-  let departed = false;
-  for (let frame = 0; frame < 1200; frame++) {
-    people = people.map((person, index) => ({
-      ...stepAside(person, trafficEscape(homes[index]!, r, traffic.cars) ?? homes[index]!, 0.05),
-      radius: person.radius,
+  for (const carScale of [1, 1.5]) {
+    const r = streetRoad(
+      layout.zones.find((zone) => zone.kind === 'street')!,
+      carScale,
+    );
+    const homes = [...layout.seats.values()].map((seat) => ({
+      x: seat.x,
+      z: seat.y,
+      radius: Math.min(1.5, seat.cell * 0.16),
     }));
-    const next = stepTraffic(traffic, r, 0.05, people, random);
-    departed ||= traffic.cars.some((car) => !next.cars.some((other) => other.id === car.id));
-    traffic = next;
-    for (const car of traffic.cars)
-      for (const person of people)
-        assert.ok(
-          Math.abs(car.x - person.x) >= car.length / 2 + person.radius - 1e-6 ||
-            Math.abs(car.z - person.z) >= car.width / 2 + person.radius - 1e-6,
-        );
+    let people = structuredClone(homes);
+    let traffic = createTraffic();
+    const random = seeded();
+    let departed = false;
+    for (let frame = 0; frame < 1200; frame++) {
+      people = people.map((person, index) => ({
+        ...stepAside(person, trafficEscape(homes[index]!, r, traffic.cars) ?? homes[index]!, 0.05),
+        radius: person.radius,
+      }));
+      const next = stepTraffic(traffic, r, 0.05, people, random);
+      departed ||= traffic.cars.some((car) => !next.cars.some((other) => other.id === car.id));
+      traffic = next;
+      for (const car of traffic.cars)
+        for (const person of people)
+          assert.ok(
+            Math.abs(car.x - person.x) >= car.length / 2 + person.radius - 1e-6 ||
+              Math.abs(car.z - person.z) >= car.width / 2 + person.radius - 1e-6,
+          );
+    }
+    assert.ok(departed, 'pedestrian avoidance must not gridlock the street');
   }
-  assert.ok(departed, 'pedestrian avoidance must not gridlock the street');
 });
 
 test('headlights are off in daylight and fade on at dusk until fully lit at night', () => {

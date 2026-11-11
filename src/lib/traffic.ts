@@ -17,6 +17,7 @@ export interface Road {
   middle: number;
   lanes: [number, number];
   carWidth: number;
+  carScale: number;
 }
 export interface Car extends Point {
   id: number;
@@ -37,7 +38,7 @@ export interface Pedestrian extends Point {
   radius: number;
 }
 
-export function streetRoad(rect: Rect): Road {
+export function streetRoad(rect: Rect, carScale = 1): Road {
   const curb = rect.y + rect.h * PAVEMENT_SHARE;
   const depth = rect.h * (1 - PAVEMENT_SHARE);
   return {
@@ -49,7 +50,8 @@ export function streetRoad(rect: Rect): Road {
     middle: curb + depth / 2,
     // Facing east, right is south (+z); facing west, right is north (-z).
     lanes: [curb + depth * 0.75, curb + depth * 0.25],
-    carWidth: Math.min(2.2, depth * 0.22),
+    carWidth: Math.min(2.2, depth * 0.22) * carScale,
+    carScale,
   };
 }
 
@@ -64,7 +66,7 @@ export function createTraffic(): Traffic {
 function makeCar(road: Road, lane: number, id: number, random: () => number): Car {
   const shape = CAR_SHAPES[Math.min(CAR_SHAPES.length - 1, Math.floor(random() * CAR_SHAPES.length))]!;
   const color = CAR_COLORS[Math.min(CAR_COLORS.length - 1, Math.floor(random() * CAR_COLORS.length))]!;
-  const length = { compact: 5.2, sedan: 6.6, van: 7.2, pickup: 7 }[shape];
+  const length = { compact: 5.2, sedan: 6.6, van: 7.2, pickup: 7 }[shape] * road.carScale;
   const direction = lane === 0 ? 1 : -1;
   return {
     id,
