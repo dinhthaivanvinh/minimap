@@ -84,3 +84,5 @@ export function useSession(state: TeamState | null) {
     retry: useCallback(() => setAttempt((n) => n + 1), []),
   };
 }
+
+export type Session = ReturnType<typeof useSession>;

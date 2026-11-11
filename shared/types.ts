@@ -37,6 +37,12 @@ export interface TeamUser {
   fund?: Omit<FundPerson, 'username'>;
 }
 
+/** A successful self-edit includes canonical public values for immediate UI updates. */
+export interface MeUpdateResult {
+  ok: true;
+  user: TeamUser;
+}
+
 export interface Clock {
   label: string;
   timeZone: string;

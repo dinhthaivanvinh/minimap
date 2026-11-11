@@ -1,7 +1,7 @@
 // Monitor page: filters, the people list, and switching between 2D and 3D.
 import type { AssemblyCast } from '../components/TeamAssemble.tsx';
 import { officeAssembly } from '../lib/assembly.ts';
-import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import styled, { css } from 'styled-components';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
 import { latestResult, waitingVoters, type VoteView } from '../../shared/vote.ts';
@@ -25,6 +25,7 @@ import { Button, Count, Segmented, Wordmark } from '../styles/ui.ts';
 const Map3D = lazy(() => import('../map/Map3D.tsx'));
 // The celebration and arcade load only when their map buttons are pressed.
 const TeamAssemble = lazy(() => import('../components/TeamAssemble.tsx').then((m) => ({ default: m.TeamAssemble })));
+const MemberDialog = lazy(() => import('../components/MemberDialog.tsx').then(m => ({default:m.MemberDialog})));
 const RandomPicker = lazy(() => import('../components/RandomPicker.tsx').then(m => ({ default: m.RandomPicker })));
 const Basketball = lazy(() => import('../components/Basketball.tsx').then((m) => ({ default: m.Basketball })));
 
@@ -375,10 +376,18 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }
 
 export function MonitorPage() {
-  const { state: liveState, online, votes } = useTeamState();
+  const { state: liveState, online, votes, onUserSaved, onFundSaved } = useTeamState();
   // Someone logged in on this browser can drag their own character to another room.
   const session = useSession(liveState);
   const login = session.auth;
+  const [memberDialog, setMemberDialog] = useState<{account: boolean; trigger: HTMLElement} | null>(null);
+  const closeMemberDialog = useCallback(() => setMemberDialog(null), []);
+  function openMemberDialog(event: ReactMouseEvent<HTMLElement>, account: boolean) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setSelection(null);
+    setMemberDialog({account, trigger: event.currentTarget});
+  }
   const [move, setMove] = useState<(PendingMove & { saved: boolean }) | null>(null);
   const [moveError, setMoveError] = useState('');
   // The map shows a dragged move straight away, while the server saves it.
@@ -597,11 +606,11 @@ export function MonitorPage() {
         </Segmented>
         <TopBarSpacer />
         {session.auth ? <>
-          <Button as="a" $primary href="/me">Update status</Button>
-          <Button as="a" href="/account" style={{maxWidth: 'min(220px, 100%)', whiteSpace: 'normal', overflowWrap: 'anywhere'}} aria-label={`Account settings for ${session.auth.username}`}>@{session.auth.username}</Button>
+          <Button as="a" $primary href="/me" data-member-dialog-trigger aria-haspopup="dialog" onClick={event => openMemberDialog(event, false)}>Update status</Button>
+          <Button as="a" href="/account" data-member-dialog-trigger aria-haspopup="dialog" onClick={event => openMemberDialog(event, true)} style={{maxWidth: 'min(220px, 100%)', whiteSpace: 'normal', overflowWrap: 'anywhere'}} aria-label={`Account settings for ${session.auth.username}`}>@{session.auth.username}</Button>
         </> : session.pending ? <span role="status">Checking account…</span> :
           session.error ? <Button onClick={session.retry}>Retry account check</Button> :
-          <Button as="a" $primary href="/me">Log in</Button>}
+          <Button as="a" $primary href="/me" data-member-dialog-trigger aria-haspopup="dialog" onClick={event => openMemberDialog(event, false)}>Log in</Button>}
 
       </TopBar>
 
@@ -639,6 +648,14 @@ export function MonitorPage() {
           </People>
         </Side>
       </Stage>
+
+      {memberDialog && (
+        <Guard what="the member editor" onFail={closeMemberDialog}>
+          <Suspense fallback={null}>
+            <MemberDialog {...memberDialog} state={liveState} session={session} onUserSaved={onUserSaved} onFundSaved={onFundSaved} onClose={closeMemberDialog}/>
+          </Suspense>
+        </Guard>
+      )}
 
       {assemblyCast && (
         <Guard what="the team assembly" onFail={closeAssembly}>

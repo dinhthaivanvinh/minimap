@@ -1,13 +1,13 @@
 import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AdminPage } from './pages/AdminPage.tsx';
-import { MePage } from './pages/MePage.tsx';
 import { MonitorPage } from './pages/MonitorPage.tsx';
 import { GlobalStyle } from './styles/GlobalStyle.ts';
 
 // Voting is its own page, so the map doesn't download it.
 const VotePage = lazy(() => import('./pages/VotePage.tsx').then((m) => ({ default: m.VotePage })));
 
+const MePage = lazy(() => import('./pages/MePage.tsx').then(m => ({default:m.MePage})));
 const AccountPage = lazy(() => import('./pages/AccountPage.tsx').then(m => ({ default: m.AccountPage })));
 
 function Page() {
@@ -15,7 +15,7 @@ function Page() {
     case '/account':
       return <Suspense fallback={null}><AccountPage /></Suspense>;
     case '/me':
-      return <MePage />;
+      return <Suspense fallback={null}><MePage /></Suspense>;
     case '/admin':
       return <AdminPage />;
     case '/vote':

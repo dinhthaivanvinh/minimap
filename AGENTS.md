@@ -142,15 +142,16 @@ Paths are from the project root. Function names are given instead of line number
 ### User pages (`/me`, `/account`)
 | Feature | Code |
 |---|---|
-| Pick a username, enter a PIN | `src/pages/MePage.tsx`: `PickPanel`, `PinPanel` |
-| Status, place and scheduling on `/me`; nickname, character, fund preferences and logout on `/account` | `MePage.tsx`: shared `Editor` and login gate, lazy `AccountPage.tsx`; server `PATCH /api/me` in `core.ts` (`cleanStatus`) |
+| Pick a username, enter a PIN | `src/components/MemberEditor.tsx`: `PickPanel`, `PinPanel` |
+| Status, place and scheduling on `/me`; nickname, character, fund preferences and logout on `/account`; home dialogs | `MemberEditor.tsx`: shared forms and login gate; lazy `MemberDialog.tsx` in `MonitorPage.tsx`; standalone `MePage.tsx` and `AccountPage.tsx`; `PATCH /api/me` in `core.ts` returns `MeUpdateResult` with public member values |
 | Character color, drawing, worn items | `src/components/CharacterEditor.tsx`, `src/lib/drawing.ts`, `src/lib/wornItems.ts`, `src/lib/look.ts`; server `cleanLook` |
+| Applying confirmed edits immediately | `src/lib/memberUpdates.ts` (`replaceSavedMember`) and tests; `useTeamState` callbacks in `hooks.ts`; `FundPanel.tsx` applies its API response |
 | Mochi character art (2D) | `src/components/Mochi.tsx` |
 
 ### Scheduled changes ("Leaving early")
 | Feature | Code |
 |---|---|
-| Schedule, edit or cancel a move to Out of Office | `MePage.tsx`: `SchedulePanel`; field `scheduled` on `PATCH /api/me` |
+| Schedule, edit or cancel a move to Out of Office | `MemberEditor.tsx`: `SchedulePanel`; field `scheduled` on `PATCH /api/me` |
 | Server rules | `core.ts`: `cleanSchedule` (must be before the next reset), `runScheduledIfDue`, `nextScheduledAt`, `savedSchedule` (backups), `SCHEDULED_PLACE` |
 | Running on time | `server.ts` `runTimedChanges` (every 30 s); `worker/index.ts` `alarm` + `syncAlarm` |
 | Showing it | `src/lib/status.ts` (`shownStatus`, `scheduledText`, `nextInstant`, `clockTime`, `timeInputValue`); used by `Badge.tsx`, `DetailCard.tsx`, `MonitorPage.tsx` |
@@ -211,7 +212,7 @@ Paths are from the project root. Function names are given instead of line number
 | Live updates | `onChange` → `event: fund` on `/api/events`, also sent when a stream opens; `useTeamState` adds it to users with `withFund` |
 | What each tier wears (lines on the body, mouth, headwear, cloud, fly, sparkles) | `src/lib/fundLook.ts` (`fundArt`, `userFundTier`, `withFund`); `Look.fund` in `src/lib/look.ts` |
 | Drawing it | 2D: `src/components/Mochi.tsx` (`TOP_HAT`, `CROWN`, `RAIN_CLOUD`, `FLY`, `SPARKLES`, `MOUTHS`); 3D: `src/map/character3d.ts` (`addTopHat`, `addCrown`, `addFundProps`); `scene3d.ts` `designKeyOf` (redraw on change), `labelHeight` (name above the cloud); arcade `BasketballCourt.tsx` |
-| Admin panel, account panel, title on the card | `src/components/FundAdminPanel.tsx` (on `AdminPage.tsx`), `src/components/FundPanel.tsx` (on `MePage.tsx`), `CardFund` in `DetailCard.tsx` |
+| Admin panel, account panel, title on the card | `src/components/FundAdminPanel.tsx` (on `AdminPage.tsx`), `src/components/FundPanel.tsx` (in `MemberEditor.tsx`), `CardFund` in `DetailCard.tsx` |
 | Tests | `shared/fund.test.ts`, `server/fund/fund.test.ts` (a pretend sheet through `fetchImpl`), `src/lib/fundLook.test.ts`, the fund test in `worker/worker.test.ts` |
 
 ### Random member picker (claw machine)
