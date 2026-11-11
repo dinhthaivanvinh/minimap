@@ -26,6 +26,7 @@ export interface TeamUser {
   nickname: string;
   place: string | null;
   status: string;
+  /** When they, or their scheduled change, last set their place or status, as an ISO instant. The morning reset leaves it alone. */
   updatedAt: string | null;
   claimed: boolean;
   /** Null means the default character chosen from the username. */
@@ -38,6 +39,12 @@ export interface TeamUser {
   fund?: Omit<FundPerson, 'username'>;
   /** What they celebrate today. Added by the browser from the `celebrate` event, never sent here. */
   celebration?: CelebrationKind;
+}
+
+/** A successful self-edit includes canonical public values for immediate UI updates. */
+export interface MeUpdateResult {
+  ok: true;
+  user: TeamUser;
 }
 
 export interface Clock {

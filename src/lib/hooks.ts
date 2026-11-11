@@ -6,6 +6,7 @@ import type { VoteView } from '../../shared/vote.ts';
 import { ambience, DAY, defaultSun, PREVIEW_WEATHER, previewTime, type Ambience, type WeatherInput } from './ambience.ts';
 import { subscribe } from './api.ts';
 import { withCelebration } from './celebrateLook.ts';
+import { replaceSavedMember, type MemberUpdates } from './memberUpdates.ts';
 import { withFund } from './fundLook.ts';
 
 /**
@@ -19,7 +20,7 @@ export function useTeamState(): {
   votes: VoteView[] | null;
   fund: FundPerson[] | null;
   celebrate: CelebrateView | null;
-} {
+} & MemberUpdates {
   const [raw, setState] = useState<TeamState | null>(null);
   const [votes, setVotes] = useState<VoteView[] | null>(null);
   const [fund, setFund] = useState<FundPerson[] | null>(null);
@@ -30,7 +31,11 @@ export function useTeamState(): {
     if (!raw || (!fund?.length && !celebrate)) return raw;
     return { ...raw, users: withCelebration(withFund(raw.users, fund), celebrate) };
   }, [raw, fund, celebrate]);
-  return { state, online, votes, fund, celebrate };
+  const onUserSaved = useCallback<MemberUpdates['onUserSaved']>((user) => {
+    setState(current => current ? { ...current, users: replaceSavedMember(current.users, user) } : current);
+  }, []);
+  const onFundSaved = useCallback<MemberUpdates['onFundSaved']>((people) => setFund(people), []);
+  return { state, online, votes, fund, celebrate, onUserSaved, onFundSaved };
 }
 
 export function useElementSize(ref: RefObject<HTMLElement | null>): { width: number; height: number } {

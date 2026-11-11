@@ -125,10 +125,12 @@ Paths are from the project root. Function names are given instead of line number
 | 3D map | `src/map/Map3D.tsx` (React around the scene, 2D fallback), `src/map/scene3d.ts` (`createScene3D`: rooms, lights, weather, camera) |
 | 3D characters (map, claw machine, arcade) | `src/map/character3d.ts` |
 | 3D wandering | `src/lib/wander.ts` |
+| Street traffic, right-side lanes, spawning, yielding, pedestrian escape strips and daylight head/rear lights | `src/lib/traffic.ts`, `traffic.test.ts`; 2D `src/map/Traffic2D.tsx` and `Map2D.tsx`; 3D `src/map/traffic3d.ts` and `scene3d.ts` (`dodgeTraffic`); reduced-motion cars use `parkedTraffic` |
 | Person badge and detail card | `src/components/Badge.tsx`, `src/components/DetailCard.tsx` |
 | Map props and focus requests (and the votes, vote marks, reactions and the mover the maps get) | `src/map/types.ts` |
 | Drag yourself to another room (the logged-in person only): which room is under a point, the place to send, the move shown before the server agrees | `src/lib/dragMove.ts` (`zoneAt`, `dropPlace`, `moverFor`, `withMove`, `createPress`: a press becomes a drag); `MonitorPage.tsx` (`moveMe` sends `PATCH /api/me`, pending move, `MoveNote`); 2D: `Map2D.tsx` (`useDrag`, which listens on the window so a quick flick isn't lost, the room's `$dropTarget`); 3D: `scene3d.ts` section "Dragging yourself to another room" (`setMover`, `onHoldStart`, `letGo`), `Map3D.tsx` (`[data-drop-target]`, `[data-mover]`) |
 | Side panel: clocks, weather, QR code, a vote's last-hour countdown | `src/components/InfoPanel.tsx` (`VoteCountdown`) |
+| Recent updates card: the latest place and status changes, each for 5 minutes. Built in the browser from each user's `updatedAt`, so the server keeps no feed | `src/lib/recentUpdates.ts` (`diffUpdates` between two live states in a row, `seedUpdates` for a page that has just opened or was cut off for a while, `mergeUpdates`, `visibleUpdates`, `closeTime`, `updateText`, `agoText`), `src/components/RecentUpdates.tsx` (its live region stays in the page while the card is hidden); `MonitorPage.tsx` (`lastLive`, `missedStates`, `closeRecent` with key `minimap.recentClosed`, `RecentCard` for where it sits: clear of the notes, the 3D map's `CameraHint` and its `[data-vote-result]` link); `core.ts`: `updatedAt` moves only with a place or status (`isWhereabouts` in `PATCH /api/me`, `runScheduledIfDue`), never in `runResetIfDue` |
 
 ### Time of day and weather
 | Feature | Code |
@@ -142,15 +144,16 @@ Paths are from the project root. Function names are given instead of line number
 ### User pages (`/me`, `/account`)
 | Feature | Code |
 |---|---|
-| Pick a username, enter a PIN | `src/pages/MePage.tsx`: `PickPanel`, `PinPanel` |
-| Status, place and scheduling on `/me`; nickname, character, fund preferences and logout on `/account` | `MePage.tsx`: shared `Editor` and login gate, lazy `AccountPage.tsx`; server `PATCH /api/me` in `core.ts` (`cleanStatus`) |
+| Pick a username, enter a PIN | `src/components/MemberEditor.tsx`: `PickPanel`, `PinPanel` |
+| Status, place and scheduling on `/me`; nickname, character, fund preferences and logout on `/account`; home dialogs | `MemberEditor.tsx`: shared forms and login gate; lazy `MemberDialog.tsx` in `MonitorPage.tsx`; standalone `MePage.tsx` and `AccountPage.tsx`; `PATCH /api/me` in `core.ts` returns `MeUpdateResult` with public member values |
 | Character color, drawing, worn items | `src/components/CharacterEditor.tsx`, `src/lib/drawing.ts`, `src/lib/wornItems.ts`, `src/lib/look.ts`; server `cleanLook` |
+| Applying confirmed edits immediately | `src/lib/memberUpdates.ts` (`replaceSavedMember`) and tests; `useTeamState` callbacks in `hooks.ts`; `FundPanel.tsx` applies its API response |
 | Mochi character art (2D) | `src/components/Mochi.tsx` |
 
 ### Scheduled changes ("Leaving early")
 | Feature | Code |
 |---|---|
-| Schedule, edit or cancel a move to Out of Office | `MePage.tsx`: `SchedulePanel`; field `scheduled` on `PATCH /api/me` |
+| Schedule, edit or cancel a move to Out of Office | `MemberEditor.tsx`: `SchedulePanel`; field `scheduled` on `PATCH /api/me` |
 | Server rules | `core.ts`: `cleanSchedule` (must be before the next reset), `runScheduledIfDue`, `nextScheduledAt`, `savedSchedule` (backups), `SCHEDULED_PLACE` |
 | Running on time | `server.ts` `runTimedChanges` (every 30 s); `worker/index.ts` `alarm` + `syncAlarm` |
 | Showing it | `src/lib/status.ts` (`shownStatus`, `scheduledText`, `nextInstant`, `clockTime`, `timeInputValue`); used by `Badge.tsx`, `DetailCard.tsx`, `MonitorPage.tsx` |
@@ -211,7 +214,7 @@ Paths are from the project root. Function names are given instead of line number
 | Live updates | `onChange` → `event: fund` on `/api/events`, also sent when a stream opens; `useTeamState` adds it to users with `withFund` |
 | What each tier wears (lines on the body, mouth, headwear, cloud, fly, sparkles) | `src/lib/fundLook.ts` (`fundArt`, `userFundTier`, `withFund`); `Look.fund` in `src/lib/look.ts` |
 | Drawing it | 2D: `src/components/Mochi.tsx` (`TOP_HAT`, `CROWN`, `RAIN_CLOUD`, `FLY`, `SPARKLES`, `MOUTHS`); 3D: `src/map/character3d.ts` (`addTopHat`, `addCrown`, `addFundProps`); `scene3d.ts` `designKeyOf` (redraw on change), `labelHeight` (name above the cloud); arcade `BasketballCourt.tsx` |
-| Admin panel, account panel, title on the card | `src/components/FundAdminPanel.tsx` (on `AdminPage.tsx`), `src/components/FundPanel.tsx` (on `MePage.tsx`), `CardFund` in `DetailCard.tsx` |
+| Admin panel, account panel, title on the card | `src/components/FundAdminPanel.tsx` (on `AdminPage.tsx`), `src/components/FundPanel.tsx` (in `MemberEditor.tsx`), `CardFund` in `DetailCard.tsx` |
 | Tests | `shared/fund.test.ts`, `server/fund/fund.test.ts` (a pretend sheet through `fetchImpl`), `src/lib/fundLook.test.ts`, the fund test in `worker/worker.test.ts` |
 
 ### Birthdays and anniversaries
@@ -224,7 +227,7 @@ Paths are from the project root. Function names are given instead of line number
 | Live updates | `onChange` → `event: celebrate` on `/api/events`, also sent when a stream opens; `useTeamState` adds `celebration` to users with `withCelebration` |
 | Party hat and balloon | `src/lib/celebrateLook.ts` (`withCelebration`, `wishReactions`, `BALLOON`); `Look.party` in `src/lib/look.ts`; 2D `Mochi.tsx` (`PARTY_HAT_ART`, `Balloon`); 3D `character3d.ts` (`addParty`); `scene3d.ts` `designKeyOf`, `labelHeight`; arcade `BasketballCourt.tsx` |
 | Side panel, card, confetti | `Celebrations` in `src/components/InfoPanel.tsx`; `src/components/CardParty.tsx` (on `DetailCard.tsx`, Send wishes); confetti planned in `MonitorPage.tsx` with `wishReactions` |
-| Account and admin panels | `src/components/CelebratePanel.tsx` (on `MePage.tsx` account view), `src/components/BirthdayInput.tsx` (shared), `src/components/CelebrateAdminPanel.tsx` (on `AdminPage.tsx`) |
+| Account and admin panels | `src/components/CelebratePanel.tsx` (in `MemberEditor.tsx`, account view), `src/components/BirthdayInput.tsx` (shared), `src/components/CelebrateAdminPanel.tsx` (on `AdminPage.tsx`) |
 | Tests | `shared/celebrate.test.ts`, `server/celebrate/celebrate.test.ts`, `src/lib/celebrateLook.test.ts`, the birthdays test in `worker/worker.test.ts` |
 
 ### Random member picker (claw machine)

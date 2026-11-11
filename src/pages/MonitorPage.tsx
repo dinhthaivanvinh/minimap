@@ -1,7 +1,7 @@
 // Monitor page: filters, the people list, and switching between 2D and 3D.
 import type { AssemblyCast } from '../components/TeamAssemble.tsx';
 import { officeAssembly } from '../lib/assembly.ts';
-import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import styled, { css } from 'styled-components';
 import type { CelebrateView } from '../../shared/celebrate.ts';
 import type { TeamState, TeamUser } from '../../shared/types.ts';
@@ -9,11 +9,13 @@ import { latestResult, waitingVoters, type VoteView } from '../../shared/vote.ts
 import { DetailCard } from '../components/DetailCard.tsx';
 import { InfoPanel } from '../components/InfoPanel.tsx';
 import { Mochi } from '../components/Mochi.tsx';
+import { RecentUpdates } from '../components/RecentUpdates.tsx';
 import { storeSession, useSession } from '../lib/session.ts';
 import { api, ApiFailure, errorText } from '../lib/api.ts';
 import { wishReactions } from '../lib/celebrateLook.ts';
 import { moverFor, withMove, type PendingMove } from '../lib/dragMove.ts';
 import { useAmbience, useNow, useReducedMotion, useTeamState } from '../lib/hooks.ts';
+import { closeTime, diffUpdates, mergeUpdates, seedUpdates, visibleUpdates, type RecentUpdate } from '../lib/recentUpdates.ts';
 import { reactions as planReactions, type VoteSnapshot } from '../lib/voteReactions.ts';
 import { shownStatus } from '../lib/status.ts';
 import { supportsWebGL } from '../lib/webgl.ts';
@@ -27,6 +29,7 @@ import { Button, Count, Segmented, Wordmark } from '../styles/ui.ts';
 const Map3D = lazy(() => import('../map/Map3D.tsx'));
 // The celebration and arcade load only when their map buttons are pressed.
 const TeamAssemble = lazy(() => import('../components/TeamAssemble.tsx').then((m) => ({ default: m.TeamAssemble })));
+const MemberDialog = lazy(() => import('../components/MemberDialog.tsx').then(m => ({default:m.MemberDialog})));
 const RandomPicker = lazy(() => import('../components/RandomPicker.tsx').then(m => ({ default: m.RandomPicker })));
 const Basketball = lazy(() => import('../components/Basketball.tsx').then((m) => ({ default: m.Basketball })));
 
@@ -34,6 +37,7 @@ const MODE_KEY = 'minimap.mode';
 const NO_VOTES: VoteView[] = [];
 const WEATHER_KEY = 'minimap.weather';
 const VOTE_MARKS_KEY = 'minimap.voteMarks';
+const RECENT_CLOSED_KEY = 'minimap.recentClosed';
 // After the server saves a drag, the map waits this long for the live update before it trusts the server again.
 const MOVE_SETTLE_MS = 5000;
 const MOVE_NOTE_MS = 6000;
@@ -159,6 +163,41 @@ const EmptyNote = styled.p`
   border-radius: 16px;
   background: ${theme.paper};
   text-align: center;
+`;
+
+// The Recent updates card floats over the map's bottom left corner, so the people list
+// keeps its full height and nothing on the page moves when the card shows or hides. That
+// corner is clear of the notes at the top centre and the bottom centre. On a map too
+// narrow for both, a note goes on top of the card.
+const RecentCard = styled(RecentUpdates)<{ $is3d: boolean; $offline: boolean }>`
+  position: absolute;
+  left: 12px;
+  bottom: var(--recent-bottom, 12px);
+  z-index: 25;
+  width: min(290px, calc(100% - 24px));
+
+  /* In 3D, the hint about dragging and zooming runs along the bottom of that corner, so the
+     card sits above it. On a narrow map the hint takes two lines for someone who is logged
+     in. The card steps up again while the keyboard is on the map's link to the latest vote
+     result, which shows just above the hint. */
+  ${({ $is3d }) => $is3d && css`
+    --recent-bottom: 40px;
+    @media (max-width: 940px) { --recent-bottom: 60px; }
+    ${MapArea}:has([data-vote-result]:focus) > & { --recent-bottom: 82px; }
+  `}
+
+  /* A phone shows it across the top of the map, so the "Not checked in" room at the bottom stays clear. */
+  ${media.phone} {
+    top: 8px;
+    right: 8px;
+    bottom: auto;
+    left: 8px;
+    width: auto;
+
+    /* Below the 3D map's camera buttons, and below the reconnecting note, which takes two lines here. */
+    ${({ $is3d }) => $is3d && css`top: 52px;`}
+    ${({ $offline }) => $offline && css`top: 86px;`}
+  }
 `;
 
 const Side = styled.div`
@@ -377,10 +416,18 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }
 
 export function MonitorPage() {
-  const { state: liveState, online, votes, celebrate } = useTeamState();
+  const { state: liveState, online, votes, celebrate, onUserSaved, onFundSaved } = useTeamState();
   // Someone logged in on this browser can drag their own character to another room.
   const session = useSession(liveState);
   const login = session.auth;
+  const [memberDialog, setMemberDialog] = useState<{account: boolean; trigger: HTMLElement} | null>(null);
+  const closeMemberDialog = useCallback(() => setMemberDialog(null), []);
+  function openMemberDialog(event: ReactMouseEvent<HTMLElement>, account: boolean) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setSelection(null);
+    setMemberDialog({account, trigger: event.currentTarget});
+  }
   const [move, setMove] = useState<(PendingMove & { saved: boolean }) | null>(null);
   const [moveError, setMoveError] = useState('');
   // The map shows a dragged move straight away, while the server saves it.
@@ -441,6 +488,37 @@ export function MonitorPage() {
     lastParty.current = celebrate;
     if (list.length && !reduced) setReactions({ id: Date.now(), list });
   }, [celebrate, reduced]);
+
+  // Recent updates: who changed their place or status in the last few minutes. Each state
+  // from the server is compared with the one before it. A drag shown early (`state`) isn't
+  // an update until the server says so, or it would make two rows.
+  const lastLive = useRef<TeamState | null>(null);
+  const [updates, setUpdates] = useState<RecentUpdate[]>([]);
+  const [recentClosed, setRecentClosed] = useState(() => Number(readSaved(RECENT_CLOSED_KEY)) || 0);
+  // While live updates are cut off, states are missed, so the next one can't be compared with the last one seen.
+  const missedStates = useRef(false);
+  useEffect(() => {
+    if (!online) missedStates.current = true;
+  }, [online]);
+  useEffect(() => {
+    if (!liveState) return;
+    const prev = lastLive.current;
+    const missed = missedStates.current;
+    lastLive.current = liveState;
+    missedStates.current = false;
+    const seen = new Date();
+    // The first state, and the first after a gap, have no "before": they show who was updated lately, and where they are now.
+    const added = prev && !missed ? diffUpdates(prev, liveState) : seedUpdates(liveState, seen, prev);
+    if (added.length) setUpdates((list) => mergeUpdates(list, added, seen));
+  }, [liveState]);
+  const recent = useMemo(() => visibleUpdates(updates, now, recentClosed), [updates, now, recentClosed]);
+
+  // Hides the rows that are showing. The time is saved, so a reload doesn't bring them back.
+  function closeRecent() {
+    const closed = closeTime(recent);
+    save(RECENT_CLOSED_KEY, String(closed));
+    setRecentClosed(closed);
+  }
 
   useEffect(() => {
     document.title = 'Team Minimap';
@@ -607,16 +685,29 @@ export function MonitorPage() {
         </Segmented>
         <TopBarSpacer />
         {session.auth ? <>
-          <Button as="a" $primary href="/me">Update status</Button>
-          <Button as="a" href="/account" style={{maxWidth: 'min(220px, 100%)', whiteSpace: 'normal', overflowWrap: 'anywhere'}} aria-label={`Account settings for ${session.auth.username}`}>@{session.auth.username}</Button>
+          <Button as="a" $primary href="/me" data-member-dialog-trigger aria-haspopup="dialog" onClick={event => openMemberDialog(event, false)}>Update status</Button>
+          <Button as="a" href="/account" data-member-dialog-trigger aria-haspopup="dialog" onClick={event => openMemberDialog(event, true)} style={{maxWidth: 'min(220px, 100%)', whiteSpace: 'normal', overflowWrap: 'anywhere'}} aria-label={`Account settings for ${session.auth.username}`}>@{session.auth.username}</Button>
         </> : session.pending ? <span role="status">Checking account…</span> :
           session.error ? <Button onClick={session.retry}>Retry account check</Button> :
-          <Button as="a" $primary href="/me">Log in</Button>}
+          <Button as="a" $primary href="/me" data-member-dialog-trigger aria-haspopup="dialog" onClick={event => openMemberDialog(event, false)}>Log in</Button>}
 
       </TopBar>
 
       <Stage>
         <MapArea $is3d={mode === '3d'}>
+          {/* Before the map, so the keyboard and screen readers reach the news ahead of everyone on the map. */}
+          {state && (
+            <RecentCard
+              $is3d={mode === '3d'}
+              $offline={!online}
+              rows={recent}
+              users={users}
+              places={state.places}
+              now={now}
+              onClose={closeRecent}
+              onPick={pickFromList}
+            />
+          )}
           <MapHost>
             {mapProps && mode === '2d' && <Map2D {...mapProps} />}
             {mapProps && mode === '3d' && (
@@ -649,6 +740,14 @@ export function MonitorPage() {
           </People>
         </Side>
       </Stage>
+
+      {memberDialog && (
+        <Guard what="the member editor" onFail={closeMemberDialog}>
+          <Suspense fallback={null}>
+            <MemberDialog {...memberDialog} state={liveState} session={session} onUserSaved={onUserSaved} onFundSaved={onFundSaved} onClose={closeMemberDialog}/>
+          </Suspense>
+        </Guard>
+      )}
 
       {assemblyCast && (
         <Guard what="the team assembly" onFail={closeAssembly}>
