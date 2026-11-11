@@ -831,8 +831,8 @@ export function createCore({
         next.place = place;
       }
       if ('status' in body) next.status = cleanStatus(body.status);
-      // "Updated at" tells teammates when someone's whereabouts changed, not their outfit.
-      const isWhereabouts = Object.keys(next).length > 0;
+      // "Updated at" tells teammates when someone's whereabouts changed, not their name or outfit.
+      const isWhereabouts = 'place' in next || 'status' in next;
       if ('look' in body) next.look = cleanLook(body.look);
       // A schedule only changes someone's whereabouts when it fires.
       if ('scheduled' in body) next.scheduled = cleanSchedule(body.scheduled);
