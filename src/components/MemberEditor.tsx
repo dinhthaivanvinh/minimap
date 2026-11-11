@@ -148,23 +148,12 @@ const PendingMessage = styled.p`
 
 // ---- Choosing a username ------------------------------------------------
 
-function PickPanel({
-  users,
-  note,
-  onPick,
-}: {
-  users: TeamUser[];
-  note: string;
-  onPick: (username: string) => void;
-}) {
+function PickPanel({ users, note, onPick }: { users: TeamUser[]; note: string; onPick: (username: string) => void }) {
   const sorted = [...users].sort((a, b) => a.username.localeCompare(b.username));
   return (
     <Panel>
       <h2>Who are you?</h2>
-      <PanelHint>
-        {note ||
-          (users.length ? 'Pick your username.' : 'There are no usernames yet. Ask your admin to add yours.')}
-      </PanelHint>
+      <PanelHint>{note || (users.length ? 'Pick your username.' : 'There are no usernames yet. Ask your admin to add yours.')}</PanelHint>
       <Chips>
         {sorted.map((user) => (
           <Chip key={user.username} type="button" onClick={() => onPick(user.username)}>
@@ -176,27 +165,14 @@ function PickPanel({
   );
 }
 
-function PinPanel({
-  user,
-  onDone,
-  onBack,
-}: {
-  user: TeamUser;
-  onDone: (auth: AuthResult) => void;
-  onBack: () => void;
-}) {
+function PinPanel({ user, onDone, onBack }: { user: TeamUser; onDone: (auth: AuthResult) => void; onBack: () => void }) {
   const [pin, setPin] = useState('');
   const [message, showMessage] = useMessage();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     try {
-      onDone(
-        await api<AuthResult>('POST', user.claimed ? '/api/login' : '/api/claim', {
-          username: user.username,
-          pin,
-        }),
-      );
+      onDone(await api<AuthResult>('POST', user.claimed ? '/api/login' : '/api/claim', { username: user.username, pin }));
     } catch (err) {
       showMessage(errorText(err), true);
     }
@@ -225,12 +201,8 @@ function PinPanel({
         />
       </Field>
       <Row>
-        <Button $primary type="submit">
-          {user.claimed ? 'Log in' : 'Claim username'}
-        </Button>
-        <Button type="button" onClick={onBack}>
-          Back
-        </Button>
+        <Button $primary type="submit">{user.claimed ? 'Log in' : 'Claim username'}</Button>
+        <Button type="button" onClick={onBack}>Back</Button>
       </Row>
       <StatusLine message={message} />
     </StackPanel>
@@ -283,9 +255,7 @@ function SchedulePanel({ user, message, onSave }: SchedulePanelProps) {
           >
             Edit
           </Button>
-          <Button type="button" onClick={() => void onSave(null, 'Scheduled change cancelled')}>
-            Cancel
-          </Button>
+          <Button type="button" onClick={() => void onSave(null, 'Scheduled change cancelled')}>Cancel</Button>
         </Row>
         <StatusLine message={message} />
       </StackPanel>
@@ -302,22 +272,11 @@ function SchedulePanel({ user, message, onSave }: SchedulePanelProps) {
       </Field>
       <Field>
         <FieldLabel>Status message (optional)</FieldLabel>
-        <Input
-          maxLength={140}
-          placeholder="Dentist appointment"
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-        />
+        <Input maxLength={140} placeholder="Dentist appointment" value={note} onChange={(event) => setNote(event.target.value)} />
       </Field>
       <Row>
-        <Button $primary type="submit">
-          {editing ? 'Save' : 'Schedule'}
-        </Button>
-        {editing && (
-          <Button type="button" onClick={() => setEditing(false)}>
-            Back
-          </Button>
-        )}
+        <Button $primary type="submit">{editing ? 'Save' : 'Schedule'}</Button>
+        {editing && <Button type="button" onClick={() => setEditing(false)}>Back</Button>}
       </Row>
       <StatusLine message={message} />
     </StackPanel>
@@ -348,19 +307,26 @@ function Editor({ user, state, token, onLogOut, account, embedded, onUserSaved, 
   const [scheduleMessage, showScheduleMessage] = useMessage(2500);
   const [nickname, setNickname] = useState(user.nickname);
   const [status, setStatus] = useState(user.status);
-  const nicknameRef = useRef<HTMLInputElement>(null);
-  const statusRef = useRef<HTMLInputElement>(null);
+  const lastNickname = useRef(user.nickname);
+  const lastStatus = useRef(user.status);
 
-  // Live updates must not overwrite what someone is typing.
+  // Keep unsaved typing even when the person tabs away during a pending save.
   useEffect(() => {
-    if (document.activeElement !== nicknameRef.current) setNickname(user.nickname);
+    const before = lastNickname.current;
+    lastNickname.current = user.nickname;
+    setNickname(current => current === before ? user.nickname : current);
   }, [user.nickname]);
   useEffect(() => {
-    if (document.activeElement !== statusRef.current) setStatus(user.status);
+    const before = lastStatus.current;
+    lastStatus.current = user.status;
+    setStatus(current => current === before ? user.status : current);
   }, [user.status]);
 
   async function patchMe(body: MeChange, done: string, show = showMessage): Promise<boolean> {
-    if (busy.current) return false;
+    if (busy.current) {
+      show('Your changes are still saving. Please try again in a moment.', true);
+      return false;
+    }
     busy.current = true;
     setSaving(true);
     try {
@@ -368,6 +334,9 @@ function Editor({ user, state, token, onLogOut, account, embedded, onUserSaved, 
         Authorization: `Bearer ${token}`,
       });
       onUserSaved(result.user);
+      // Canonical values replace the submitted draft, but not newer typing.
+      if (body.nickname !== undefined) setNickname(current => current === body.nickname ? result.user.nickname : current);
+      if (body.status !== undefined) setStatus(current => current === body.status ? result.user.status : current);
       show(done);
       return true;
     } catch (err) {
@@ -408,7 +377,7 @@ function Editor({ user, state, token, onLogOut, account, embedded, onUserSaved, 
   }
 
   return (
-    <fieldset disabled={saving} aria-busy={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+    <div aria-busy={saving}>
       <Hero>
         <HeroAvatar>
           <Mochi user={user} />
@@ -450,13 +419,10 @@ function Editor({ user, state, token, onLogOut, account, embedded, onUserSaved, 
               as="form"
               onSubmit={(event) => {
                 event.preventDefault();
-                void patchMe({ status }, status.trim() ? 'Status set' : 'Status cleared').then(() =>
-                  statusRef.current?.blur(),
-                );
+                void patchMe({ status }, status.trim() ? 'Status set' : 'Status cleared');
               }}
             >
               <Input
-                ref={statusRef}
                 maxLength={140}
                 placeholder="What's your status?"
                 aria-label="Status"
@@ -483,13 +449,12 @@ function Editor({ user, state, token, onLogOut, account, embedded, onUserSaved, 
             as="form"
             onSubmit={(event) => {
               event.preventDefault();
-              void patchMe({ nickname }, 'Nickname saved').then(() => nicknameRef.current?.blur());
+              void patchMe({ nickname }, 'Nickname saved');
             }}
           >
             <h2>Nickname</h2>
             <FormRow>
               <Input
-                ref={nicknameRef}
                 maxLength={24}
                 required
                 aria-label="Nickname"
@@ -513,7 +478,7 @@ function Editor({ user, state, token, onLogOut, account, embedded, onUserSaved, 
         </>
       )}
       {!account && <StatusLine message={message} />}
-    </fieldset>
+    </div>
   );
 }
 
