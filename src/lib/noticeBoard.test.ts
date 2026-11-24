@@ -1,8 +1,10 @@
 // Tests for what the map's notice board shows.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { PointsView } from '../../shared/points.ts';
+import type { TeamUser } from '../../shared/types.ts';
 import type { VoteView } from '../../shared/vote.ts';
-import { boardNotes, countdown, shortTitle, voteLink } from './noticeBoard.ts';
+import { boardNotes, countdown, leadersLabel, shortTitle, topLeaders, voteLink } from './noticeBoard.ts';
 
 const NOW = new Date('2026-11-06T12:00:00Z');
 const vote = (id: string, minutes: number, title = id): VoteView => ({
@@ -29,7 +31,7 @@ test('the board shows up to 4 open votes, ending soonest first, and counts the r
     ['a', '5 h', false],
   ]);
   assert.equal(board.more, 1);
-  assert.deepEqual(boardNotes([vote('gone', -5)], NOW), { notes: [], more: 0 }, 'an empty board');
+  assert.deepEqual(boardNotes([vote('gone', -5)], NOW), { notes: [], more: 0, leaders: null }, 'an empty board');
 });
 
 test('long names are cut to fit a note, and notes link to their vote', () => {
@@ -45,4 +47,38 @@ test('the wall TV counts down the vote ending soonest, only in its last hour', (
   assert.deepEqual(countdown([vote('a', 50), lunch, vote('gone', -1)], NOW), { id: 'lunch', text: 'Team lunch closes in 42 min, 2 people left' });
   assert.equal(countdown([{ ...lunch, voted: ['ann', 'bob'] }], NOW)?.text, 'Team lunch closes in 42 min, 1 person left');
   assert.equal(countdown([{ ...lunch, voted: lunch.voters }], NOW)?.text, 'Team lunch closes in 42 min, everyone has voted');
+});
+
+test('the points note takes one note’s place, and shows the top 3 with claimed points by nickname', () => {
+  const leaders = [{ name: 'Lan', points: 50 }];
+  const board = boardNotes([vote('a', 300), vote('b', 30), vote('c', 61), vote('d', 60)], NOW, leaders);
+  assert.equal(board.notes.length, 3);
+  assert.equal(board.more, 1);
+  assert.deepEqual(board.leaders, leaders);
+  assert.equal(boardNotes([], NOW).leaders, null);
+
+  const view = {
+    board: [
+      { username: 'lan', balance: 50, toClaim: 10 },
+      { username: 'mai', balance: 30, toClaim: 0 },
+      { username: 'bob', balance: 0, toClaim: 5 },
+      { username: 'kim', balance: 1, toClaim: 0 },
+      { username: 'zed', balance: 0, toClaim: 0 },
+    ],
+  } as PointsView;
+  const users = [
+    { username: 'lan', nickname: 'Lan the Magnificent' },
+    { username: 'mai', nickname: 'Mai' },
+  ] as TeamUser[];
+  assert.deepEqual(topLeaders(view, users), [
+    { name: 'Lan the M…', points: 50 },
+    { name: 'Mai', points: 30 },
+    { name: 'kim', points: 1 },
+  ]);
+  assert.equal(topLeaders(null, users), null);
+});
+
+test('the points note reads its leaders out, or says nobody has points yet', () => {
+  assert.equal(leadersLabel([{ name: 'Mai', points: 30 }, { name: 'bob', points: 5 }]), 'Top points: Mai 30, bob 5');
+  assert.equal(leadersLabel([]), 'Reward points: nobody has points yet');
 });

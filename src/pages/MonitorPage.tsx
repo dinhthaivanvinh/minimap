@@ -17,6 +17,7 @@ import { api, ApiFailure, errorText } from '../lib/api.ts';
 import { wishReactions } from '../lib/celebrateLook.ts';
 import { moverFor, withMove, type PendingMove } from '../lib/dragMove.ts';
 import { newFeed, petShown } from '../lib/petLook.ts';
+import { topLeaders } from '../lib/noticeBoard.ts';
 import { useAmbience, useNow, useReducedMotion, useTeamState } from '../lib/hooks.ts';
 import { closeTime, diffUpdates, mergeUpdates, seedUpdates, visibleUpdates, type RecentUpdate } from '../lib/recentUpdates.ts';
 import { reactions as planReactions, type VoteSnapshot } from '../lib/voteReactions.ts';
@@ -419,7 +420,7 @@ function PeopleList({ state, people, filter, selected, onPick }: {
 }
 
 export function MonitorPage() {
-  const { state: liveState, online, votes, celebrate, pet: petView, onUserSaved, onFundSaved } = useTeamState();
+  const { state: liveState, online, votes, celebrate, pet: petView, points, onUserSaved, onFundSaved } = useTeamState();
   // Someone logged in on this browser can drag their own character to another room.
   const session = useSession(liveState);
   const login = session.auth;
@@ -592,6 +593,9 @@ export function MonitorPage() {
     lastPet.current = petView;
   }, [petView]);
   const pet = useMemo(() => (state ? petShown(petView, state, cheer) : null), [petView, state, cheer]);
+  // The notice board's points note. Compared as text, so a new board with the same leaders doesn't redraw the 3D board.
+  const leadersText = JSON.stringify(state ? topLeaders(points, state.users) : null);
+  const leaders = useMemo(() => JSON.parse(leadersText) as ReturnType<typeof topLeaders>, [leadersText]);
   const [petAnchor, setPetAnchor] = useState<HTMLElement | null>(null);
   const closePet = useCallback(() => setPetAnchor(null), []);
   const openPet = useCallback((trigger: HTMLElement) => {
@@ -652,7 +656,7 @@ export function MonitorPage() {
     if (state && selection && !selectedUser) closeCard();
   }, [state, selection, selectedUser, closeCard]);
 
-  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, pet, onPet: openPet, onAssemble: openAssembly, onPicker: openPicker, look, votes: allVotes, voteMarks, reactions, mover, onMove: moveMe };
+  const mapProps = state && { state, isDimmed, selected: selection?.username ?? null, focus, onSelect: select, onArcade: openArcade, pet, onPet: openPet, onAssemble: openAssembly, onPicker: openPicker, look, votes: allVotes, leaders, voteMarks, reactions, mover, onMove: moveMe };
 
   return (
     <Page>
@@ -798,6 +802,7 @@ export function MonitorPage() {
           votes={allVotes}
           users={state.users}
           celebrate={celebrate}
+          points={points}
           login={login ?? null}
           anchor={selection.anchor}
           onClose={closeCard}

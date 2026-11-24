@@ -109,7 +109,7 @@ async function openEvents(signal: AbortSignal, url: URL) {
 
 test('every page serves the React app, built files come from the assets, and the rest is 404', async (t) => {
   const { api } = await setup(t);
-  for (const page of ['/', '/me', '/account', '/admin', '/vote']) {
+  for (const page of ['/', '/me', '/account', '/admin', '/vote', '/points']) {
     const res = await api('GET', page);
     assert.equal(res.status, 200, page);
     assert.equal(res.text, PAGE, page);
@@ -319,6 +319,30 @@ test('the office cat survives Durable Object eviction, and open maps get it as i
   assert.equal(backup.pet.name, 'Tofu');
   const live = await events();
   assert.equal((await live.nextEvent('pet')).name, 'Tofu');
+});
+
+test('reward points, settings and stays survive Durable Object eviction, and maps get a points event', async (t) => {
+  const { api, join, me, evict, events } = await setup(t);
+  const lan = await join('lan');
+  const admin = (await api('GET', '/api/points/admin', undefined, ADMIN)).json;
+  const settings = { ...admin.settings, claimWindows: [{ from: '18:30', to: '19:00' }] };
+  assert.equal((await api('PATCH', '/api/points/admin', settings, ADMIN)).status, 200);
+  assert.equal((await api('POST', '/api/points/admin/adjust', { username: 'lan', amount: 25, reason: 'Welcome' }, ADMIN)).status, 200);
+  assert.equal((await me(lan, { place: 'main' })).status, 200);
+  await evict();
+
+  const mine = (await api('GET', '/api/points/me', undefined, { Authorization: `Bearer ${lan}` })).json;
+  assert.deepEqual([mine.inOffice, mine.toClaim], [true, 0]);
+  // Nothing earned yet in the seconds this test takes, so there is nothing to claim.
+  assert.equal((await api('POST', '/api/points/claim', {}, { Authorization: `Bearer ${lan}` })).status, 409);
+  const view = (await api('GET', '/api/points')).json;
+  assert.equal(view.board[0].balance, 25);
+  assert.deepEqual(view.settings.claimWindows, settings.claimWindows);
+  assert.equal(typeof view.resetAt, 'string'); // The Worker's RESET_AT.
+  const backup = (await api('GET', '/api/admin/data', undefined, ADMIN)).json;
+  assert.deepEqual(backup.points.settings.claimWindows, settings.claimWindows);
+  const live = await events();
+  assert.equal((await live.nextEvent('points')).board[0].username, 'lan');
 });
 
 test('birthdays and wishes survive Durable Object eviction, and open maps get them as their own event', async (t) => {

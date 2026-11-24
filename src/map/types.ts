@@ -2,6 +2,7 @@ import type { TeamState, TeamUser } from '../../shared/types.ts';
 import type { LatestResult, VoteView } from '../../shared/vote.ts';
 import type { SelectHandler } from '../components/Badge.tsx';
 import type { Ambience } from '../lib/ambience.ts';
+import type { Leader } from '../lib/noticeBoard.ts';
 import type { PetShown } from '../lib/petLook.ts';
 import type { Reaction } from '../lib/voteReactions.ts';
 
@@ -42,6 +43,8 @@ export interface MapProps {
   look: Ambience;
   /** The team's votes, as anyone may see them. The notice board shows the open ones. */
   votes: VoteView[];
+  /** The reward points leaders for the notice board's points note, or null before they load. */
+  leaders: Leader[] | null;
   /** Markers over people who haven't voted, and the latest result's banner. Null when turned off. */
   voteMarks: VoteMarks | null;
   /** Characters hop when they vote, and cheer, clap or get confetti when a vote closes. */

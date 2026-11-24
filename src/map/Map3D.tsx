@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import styled, { css } from 'styled-components';
 import { mapSummary, resultText, type VoteView } from '../../shared/vote.ts';
 import { moodText } from '../../shared/pet.ts';
-import { voteLink } from '../lib/noticeBoard.ts';
+import { leadersLabel, voteLink } from '../lib/noticeBoard.ts';
 import { Badge, BadgeName } from '../components/Badge.tsx';
 import { PICKER_LABELS } from '../lib/pickerAppearance.ts';
 import { useElementSize, useReducedMotion } from '../lib/hooks.ts';
@@ -185,6 +185,12 @@ const ResultLink = styled.a`
   }
 `;
 
+/** The notice board's links for keyboards and screen readers, side by side under the board. */
+const BoardLinks = styled.div`
+  display: flex;
+  gap: 6px;
+`;
+
 function boardLabel(votes: VoteView[]): string {
   const open = mapSummary(votes, new Date()).length;
   return `Notice board: ${open || 'no'} open ${open === 1 ? 'vote' : 'votes'}. Open team votes`;
@@ -208,6 +214,7 @@ export default function Map3D({
   onAssemble,
   look,
   votes,
+  leaders,
   voteMarks,
   reactions,
   mover,
@@ -291,6 +298,10 @@ export default function Map3D({
   useEffect(() => {
     sceneRef.current?.setVotes(votes);
   }, [votes]);
+
+  useEffect(() => {
+    sceneRef.current?.setLeaders(leaders);
+  }, [leaders]);
 
   useEffect(() => {
     sceneRef.current?.setVoteMarks(voteMarks);
@@ -384,9 +395,16 @@ export default function Map3D({
         <ArcadePlay data-picker-play disabled={!state.users.length} aria-label={!state.users.length ? 'Random picker unavailable: no team members' : 'Open random picker'} aria-haspopup="dialog" onClick={event => onPicker(event.currentTarget)} style={{background: theme.bubblegum}}>{PICKER_LABELS.start}</ArcadePlay>, pickerSlot)}
       {boardSlot &&
         createPortal(
-          <NoticeBoardLink href="/vote" data-notice-board="3d" aria-label={boardLabel(votes)}>
-            Votes
-          </NoticeBoardLink>,
+          <BoardLinks>
+            <NoticeBoardLink href="/vote" data-notice-board="3d" aria-label={boardLabel(votes)}>
+              Votes
+            </NoticeBoardLink>
+            {leaders && (
+              <NoticeBoardLink href="/points" data-points-note aria-label={leadersLabel(leaders)}>
+                Points
+              </NoticeBoardLink>
+            )}
+          </BoardLinks>,
           boardSlot,
         )}
 

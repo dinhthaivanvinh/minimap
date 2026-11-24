@@ -9,7 +9,7 @@ A small React + TypeScript app that shows where the team works today, on a 2D an
 - **Node.js** (`server/server.ts`): data is kept in a JSON file, `data/data.json`. Used locally and in Docker.
 - **Cloudflare Workers** (`worker/index.ts`): the same data is kept as one value (key `data`) in the `Minimap` Durable Object named `team`. Only `main` is deployed.
 
-Features with their own data live in their own folder (`server/basketball/`, `server/vote/`, `server/fund/`, `server/celebrate/`, `server/pet/`) and keep their own file (`data/basketball.json`, `data/vote.json`, `data/fund.json`, `data/celebrate.json`, `data/pet.json`) or storage key (`basketball`, `vote`, `fund`, `celebrate`, `pet`).
+Features with their own data live in their own folder (`server/basketball/`, `server/vote/`, `server/fund/`, `server/celebrate/`, `server/pet/`, `server/points/`) and keep their own file (`data/basketball.json`, `data/vote.json`, `data/fund.json`, `data/celebrate.json`, `data/pet.json`, `data/points.json`) or storage key (`basketball`, `vote`, `fund`, `celebrate`, `pet`, `points`).
 
 `core.ts` never knows where data comes from or goes to. The host hands it `saved`, `save()` and `onChange()`, and does the same for each feature. A feature's `save()` may return a promise: on Cloudflare it resolves once the write is stored.
 
@@ -52,7 +52,7 @@ Layout for a feature called `<feature>`:
 
 How to connect it (see how `basketball` is wired):
 - In **both** `server/server.ts` and `worker/index.ts`, create the feature after the core with `team: core.team`, call `core.attach(feature.feature)`, and try its `handle` first: `(await feature.handle(req)) ?? (await core.handle(req))`. Give it its own `save`.
-- To know who is calling, use `team.player(req)` (throws a 401), `team.members()`, `team.sign(purpose, text)` and `team.requireAdmin(req)` (`Team` in `core.ts`). Never copy the PIN, token or lock logic. If a feature needs more from the team, add it to `Team`.
+- To know who is calling, use `team.player(req)` (throws a 401), `team.members()`, `team.sign(purpose, text)` and `team.requireAdmin(req)` (`Team` in `core.ts`). `team.places()` and `team.whereabouts()` read where people are, and `team.resetAt()` is the morning reset time. Never copy the PIN, token or lock logic. If a feature needs more from the team, add it to `Team`.
 - `core.attach` takes a `TeamFeature` (`core.ts`), which does two jobs:
   - **Backups:** the feature's data goes into the admin's one backup file under its `key`. `checkBackup` checks it against the people in that backup (throw `backupError`) before anything changes, then returns a restore function.
   - **Deleted people:** `forget(usernames)` drops what the feature keeps about them.
@@ -94,15 +94,15 @@ Paths are from the project root. Function names are given instead of line number
 | Feature | Code |
 |---|---|
 | Team API routes, data shape (`Data`), validation, `ApiError` | `server/core.ts`: `createCore` → `route()`; the routes are `if (route === 'METHOD /api/...')` blocks; `handle()` and `errorResponse` turn errors into JSON |
-| What features may use from the team | `core.ts`: `Team` (`core.team`: `player`, `members`, `sign`, `requireAdmin`), `TeamFeature` (`core.attach`), `backupError`, `safeEqual` |
-| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `sendAll`, `voteEvent`, `fundEvent`, `celebrateEvent`, `petEvent`, `serveStatic`, `runTimedChanges`, `start`) |
-| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data`, `basketball`, `vote`, `fund`, `celebrate` and `pet`, `alarm`, `syncAlarm`, `runTimedChanges`, `refreshFundIfDue`, SSE, ping), `voteEvent`, `fundEvent`, `celebrateEvent`, `petEvent` |
+| What features may use from the team | `core.ts`: `Team` (`core.team`: `player`, `members`, `sign`, `requireAdmin`, `places`, `whereabouts`, `resetAt`), `TeamFeature` (`core.attach`), `backupError`, `safeEqual` |
+| Node server: static files, data files, SSE, timers | `server/server.ts`: `createApp` (`readFile` / `writeFile`, `answer`, `openEvents`, `sendAll`, `voteEvent`, `fundEvent`, `celebrateEvent`, `petEvent`, `pointsEvent`, `teamChanged`, `serveStatic`, `runTimedChanges`, `start`) |
+| Cloudflare Worker + Durable Object | `worker/index.ts`: default `fetch` (routing, `PAGES`), class `Minimap` (storage keys `data`, `basketball`, `vote`, `fund`, `celebrate`, `pet` and `points`, `alarm`, `syncAlarm`, `runTimedChanges`, `refreshFundIfDue`, SSE, ping), `voteEvent`, `fundEvent`, `celebrateEvent`, `petEvent`, `pointsEvent` |
 | Cloudflare settings (vars, bindings, build) | `wrangler.jsonc` |
-| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json`, `basketball.json`, `vote.json`, `fund.json`, `celebrate.json` and `pet.json`), `.dockerignore` |
+| Docker | `Dockerfile`, `docker-compose.yml` (data volume `minimap-data` → `/app/data`, holding `data.json`, `basketball.json`, `vote.json`, `fund.json`, `celebrate.json`, `pet.json` and `points.json`), `.dockerignore` |
 | Types sent to the browser | `shared/types.ts` (`TeamState`, `TeamUser` (its `fund` and `celebration` are added by the browser, never sent), `ScheduledChange`, `Weather`, ...) |
 | Character design limits (server and editor) | `shared/look.ts` |
 | Frontend entry and page switch | `src/main.tsx` |
-| Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, which also takes features' named events such as `vote`, `fund`, `celebrate` and `pet`, `errorText`), `src/lib/hooks.ts` (`useTeamState` gives the state, with each user's fund standing and today's celebration added, the votes, the fund, the celebrations and the office cat, `useNow`, `useAmbience`, ...) |
+| Fetch, live updates, errors in the browser | `src/lib/api.ts` (`api`, `subscribe`, which also takes features' named events such as `vote`, `fund`, `celebrate`, `pet` and `points`, `errorText`), `src/lib/hooks.ts` (`useTeamState` gives the state, with each user's fund standing and today's celebration added, the votes, the fund, the celebrations, the office cat and the points board, `useNow`, `useAmbience`, ...) |
 | Styles and shared controls | `src/styles/theme.ts`, `src/styles/ui.ts`, `src/styles/GlobalStyle.ts` |
 | 3D support and lost-context fallback | `src/lib/webgl.ts` (`supportsWebGL`), `src/lib/contextLoss.ts` (`watchContextLoss`, 10 s wait) |
 | CI (read-only token, safe for pull requests from forks) | `.github/workflows/check.yml` |
@@ -126,7 +126,7 @@ Paths are from the project root. Function names are given instead of line number
 | 3D characters (map, claw machine, arcade) | `src/map/character3d.ts` |
 | 3D wandering | `src/lib/wander.ts` |
 | Street traffic, right-side lanes, spawning, yielding, pedestrian escape strips and daylight head/rear lights | `src/lib/traffic.ts`, `traffic.test.ts`; 2D `src/map/Traffic2D.tsx` and `Map2D.tsx`; 3D `src/map/traffic3d.ts` and `scene3d.ts` (`dodgeTraffic`); reduced-motion cars use `parkedTraffic` |
-| Person badge and detail card | `src/components/Badge.tsx`, `src/components/DetailCard.tsx` |
+| Person badge and detail card (with `CardParty` and `CardPoints`) | `src/components/Badge.tsx`, `src/components/DetailCard.tsx` |
 | Map props and focus requests (and the votes, vote marks, reactions and the mover the maps get) | `src/map/types.ts` |
 | Drag yourself to another room (the logged-in person only): which room is under a point, the place to send, the move shown before the server agrees | `src/lib/dragMove.ts` (`zoneAt`, `dropPlace`, `moverFor`, `withMove`, `createPress`: a press becomes a drag); `MonitorPage.tsx` (`moveMe` sends `PATCH /api/me`, pending move, `MoveNote`); 2D: `Map2D.tsx` (`useDrag`, which listens on the window so a quick flick isn't lost, the room's `$dropTarget`); 3D: `scene3d.ts` section "Dragging yourself to another room" (`setMover`, `onHoldStart`, `letGo`), `Map3D.tsx` (`[data-drop-target]`, `[data-mover]`) |
 | Side panel: clocks, weather, QR code, a vote's last-hour countdown | `src/components/InfoPanel.tsx` (`VoteCountdown`) |
@@ -198,7 +198,7 @@ Paths are from the project root. Function names are given instead of line number
 | The saved login and admin password the page reads | `src/lib/savedLogin.ts` (`savedLogin`, `savedAdminPassword`) |
 | Share a vote's link (team address first, share sheet, then clipboard, then shown to copy by hand); a missing linked vote | `src/lib/voteShare.ts` (`shareLink`, `shareVote`), `share` in `VoteCard.tsx`; `missing` in `VotePage.tsx` |
 | Times in words, quick end picks | `src/lib/voteTime.ts` (`endsText`, `timeLeft`, `quickEnds`, `localInputValue`) |
-| Notice board (both maps) | `src/lib/noticeBoard.ts` (`boardNotes`, `countdown`, `voteLink`), `src/map/NoticeBoard2D.tsx` (also `NoticeBoardLink`, the 3D board's keyboard link), `src/map/noticeBoard3d.ts` (canvas texture, `linkAt` for raycast); in `scene3d.ts`: `drawBoard` |
+| Notice board (both maps), with the reward points note | `src/lib/noticeBoard.ts` (`boardNotes`, `topLeaders`, `countdown`, `voteLink`), `src/map/NoticeBoard2D.tsx` (also `NoticeBoardLink`, the 3D board's keyboard link), `src/map/noticeBoard3d.ts` (canvas texture, `linkAt` for raycast); in `scene3d.ts`: `drawBoard` |
 | Results banner and "hasn't voted" marks | `MonitorPage.tsx` builds `VoteMarks` (switch `minimap.voteMarks`); 2D: `src/map/ResultBanner2D.tsx`, `src/components/BallotMark.tsx` (on `Badge`); 3D: `src/map/blimp3d.ts`, `scene3d.ts` `setVoteMarks`, `markBallot`, `animateVoteMarks`; `DetailCard.tsx` lists pending votes |
 | Character reactions | `src/lib/voteReactions.ts` (`reactions`), planned in `MonitorPage.tsx`; 2D: `Map2D.tsx` `usePlaying`; 3D: `scene3d.ts` `react`, `animateReaction`, `confettiAt`, with `hopHeight` from `wander.ts` |
 | Ballot drop | `src/components/BallotDrop.tsx` (CSS and SVG, no three.js) |
@@ -229,6 +229,22 @@ Paths are from the project root. Function names are given instead of line number
 | Drawing it | 2D: `src/map/OfficeCat2D.tsx` (`SittingCat`, `SleepingCat`, `CatArt`); 3D: `src/map/cat3d.ts` (`createOfficeCat`: sit, walk and sleep poses), placed, clicked and walked round the main office in `scene3d.ts` (section "The office cat": `nextCatSpot`, `animateCat`, using `wander.ts`; `setPet`), name-tag button in `Map3D.tsx` (`[data-office-cat]`) |
 | Card and admin panel | `src/components/PetCard.tsx` (Feed button; reuses `Card` and `place` from `DetailCard.tsx`), with the turning 3D cat in lazy `src/components/PetCat3D.tsx` (2D `CatArt` while loading or without WebGL), `src/components/PetAdminPanel.tsx` (on `AdminPage.tsx`) |
 | Tests | `shared/pet.test.ts`, `server/pet/pet.test.ts`, `src/lib/petLook.test.ts`, the cat test in `src/lib/layout.test.ts`, the cat test in `worker/worker.test.ts` |
+
+### Reward points
+| Feature | Code |
+|---|---|
+| Rules shared by browser and server (settings and their checks, earning offices, office-hours minutes by day, the points day (from one `RESET_AT` to the next) and its claim windows, closing a day with what was claimed, lost and fined, the zero floor, words) | `shared/points.ts` (`cleanSettings`, `earningOffices`, `officeMinutes`, `wallClock`, `pointsDay`, `claimWindow`, `unclaimed`, `closeDay`, `pointsFor`, `addPoints`, `workdaysText`, `windowsText`, `DEFAULT_SETTINGS`) |
+| API: the board, my day, claim, admin settings and hand changes | `server/points/core.ts`: `createPoints` → `route()` with `GET /api/points`, `GET /api/points/me`, `POST /api/points/claim`, `GET/PATCH /api/points/admin`, `POST /api/points/admin/adjust`; `step` (closes the day at the morning reset, starts and ends stays, notes check-ins), `settle`, `change` (queue, save, undo; takes the time and the team when asked), `observe` / `tick`. No office network check: behind the company VPN everyone shares one public address |
+| How it learns who moved | The core tells no feature, so both hosts call `observe()` from the core's `onChange` and `tick()` from `runTimedChanges` |
+| Stored data | `PointsData` (`settings`, `balances`, open `day` with its `roster`, `checkedIn`, `minutes`, and `claimed`, open `stays`, `history` of 60 days, `adjustments`): `data/points.json` on Node, key `points` on Cloudflare. No alarm: running stays are counted when shown, and a day closes on the first look after the morning reset |
+| Backup part, deleted people | `server/points/core.ts`: `feature` (`parse`, `forget`) |
+| Live updates | `onChange` → `event: points` on `/api/events`, also sent when a stream opens and whenever the board moves (on each tick); `useTeamState` gives it as `points` |
+| Page `/points`: your points, Claim (with `ClaimDialog`: go Off or keep working), board, rules, your days, hand changes | `src/pages/PointsPage.tsx` (lazy in `main.tsx`) |
+| Claiming in the browser (the claim, then Off when asked; the words for when Claim works), shared by the page and the card | `src/lib/pointsClaim.ts` (`claimPoints`, `claimWindowText`); `POST /api/points/claim` answers with `claimed` (`PointsClaim`) |
+| Points on a person's card: balance and points to claim for everyone, Claim on your own card | `src/components/CardPoints.tsx` (on `DetailCard.tsx`, given `points` from `MonitorPage.tsx`) |
+| Notice board note | `topLeaders` in `src/lib/noticeBoard.ts`, built in `MonitorPage.tsx` and passed as `leaders` in `MapProps`; 2D `NoticeBoard2D.tsx`; 3D `noticeBoard3d.ts` and `scene3d.ts` `setLeaders` |
+| Admin panel | `src/components/PointsAdminPanel.tsx` (on `AdminPage.tsx`) |
+| Tests | `shared/points.test.ts`, `server/points/points.test.ts`, `src/lib/pointsClaim.test.ts`, the points note in `src/lib/noticeBoard.test.ts`, the points test in `worker/worker.test.ts` |
 
 ### Birthdays and anniversaries
 | Feature | Code |
@@ -261,7 +277,7 @@ Paths are from the project root. Function names are given instead of line number
 | What | Where |
 |---|---|
 | Test runner (fails when no tests run) | `scripts/run-tests.ts`, its own test `scripts/run-tests.test.ts` |
-| API tests (through a real Node server) | `server/server.test.ts` (`setup()` makes a temp data file), `server/basketball/basketball.test.ts`, `server/vote/vote.test.ts`, `server/celebrate/celebrate.test.ts`, `server/pet/pet.test.ts` |
+| API tests (through a real Node server) | `server/server.test.ts` (`setup()` makes a temp data file), `server/basketball/basketball.test.ts`, `server/vote/vote.test.ts`, `server/celebrate/celebrate.test.ts`, `server/pet/pet.test.ts`, `server/points/points.test.ts` |
 | Worker tests (real workerd) | `worker/worker.test.ts` |
 | Pure logic tests | `src/lib/*.test.ts`, `shared/*.test.ts` |
 | 20 pretend users | `scripts/sample-team.ts` (`npm run test-members`) |

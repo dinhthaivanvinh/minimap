@@ -11,7 +11,7 @@ import { CLEAR, mixColor, type Ambience, type Conditions } from '../lib/ambience
 import { watchContextLoss } from '../lib/contextLoss.ts';
 import { fundArt, userFundTier } from '../lib/fundLook.ts';
 import { BODY_RADIUS } from '../lib/drawing.ts';
-import { boardNotes, voteLink } from '../lib/noticeBoard.ts';
+import { boardNotes, voteLink, type Leader } from '../lib/noticeBoard.ts';
 import { DRAG_START_PX, dropPlace, zoneAt } from '../lib/dragMove.ts';
 import { computeLayout, noticeBoardSpot, parkActivities, petSpot, standingArea, type MapLayout, type Zone, type ZoneKind } from '../lib/layout.ts';
 import { box, clampTo, contains, grow, hopHeight, pickSpot, steer, type Box } from '../lib/wander.ts';
@@ -67,6 +67,8 @@ export interface Scene3D {
   setAmbience(look: Ambience): void;
   /** The team's votes, for the notice board. */
   setVotes(votes: VoteView[]): void;
+  /** The reward points leaders, for the notice board's points note. */
+  setLeaders(leaders: Leader[] | null): void;
   /** Ballots over people who haven't voted, and the blimp with the latest result. Null hides them. */
   setVoteMarks(marks: VoteMarks | null): void;
   /** Plays characters' reactions to votes once (lib/voteReactions.ts). */
@@ -387,6 +389,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   let catLabelScale = 0;
   let places: Place[] = [];
   let votes: VoteView[] = [];
+  let leaders: Leader[] | null = null;
   let boardDrawnAt = 0;
   let boardPulsing = false;
   let voteMarks: VoteMarks | null = null;
@@ -892,7 +895,7 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
   function drawBoard(time: number) {
     if (!noticeBoard) return;
     const pulse = reducedMotion ? 0 : (Math.sin(time * 3.5) + 1) / 2;
-    const board = boardNotes(votes, new Date());
+    const board = boardNotes(votes, new Date(), leaders);
     noticeBoard.draw(board, pulse);
     boardDrawnAt = time;
     boardPulsing = !reducedMotion && board.notes.some((n) => n.urgent);
@@ -1808,6 +1811,11 @@ export function createScene3D(root: HTMLElement, { onPick, onCamera, onContextGo
 
     setVotes(next) {
       votes = next;
+      drawBoard(performance.now() / 1000);
+    },
+
+    setLeaders(next) {
+      leaders = next;
       drawBoard(performance.now() / 1000);
     },
 

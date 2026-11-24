@@ -3,6 +3,7 @@ import type { TeamState, Weather } from '../../shared/types.ts';
 import type { CelebrateView } from '../../shared/celebrate.ts';
 import type { FundPerson } from '../../shared/fund.ts';
 import type { PetView } from '../../shared/pet.ts';
+import type { PointsView } from '../../shared/points.ts';
 import type { VoteView } from '../../shared/vote.ts';
 import { ambience, DAY, defaultSun, PREVIEW_WEATHER, previewTime, type Ambience, type WeatherInput } from './ambience.ts';
 import { subscribe } from './api.ts';
@@ -12,7 +13,7 @@ import { withFund } from './fundLook.ts';
 
 /**
  * The team's live state, the team's votes (public views, without anyone's picks), birthdays
- * and anniversaries, and the office cat. Each user carries their fund standing (`fund`) and what they
+ * and anniversaries, the office cat and the reward points board. Each user carries their fund standing (`fund`) and what they
  * celebrate today (`celebration`), so every page draws the same looks.
  */
 export function useTeamState(): {
@@ -22,12 +23,14 @@ export function useTeamState(): {
   fund: FundPerson[] | null;
   celebrate: CelebrateView | null;
   pet: PetView | null;
+  points: PointsView | null;
 } & MemberUpdates {
   const [raw, setState] = useState<TeamState | null>(null);
   const [votes, setVotes] = useState<VoteView[] | null>(null);
   const [fund, setFund] = useState<FundPerson[] | null>(null);
   const [celebrate, setCelebrate] = useState<CelebrateView | null>(null);
   const [pet, setPet] = useState<PetView | null>(null);
+  const [points, setPoints] = useState<PointsView | null>(null);
   const [online, setOnline] = useState(true);
   useEffect(() => subscribe({
     onState: setState,
@@ -36,6 +39,7 @@ export function useTeamState(): {
     onFund: setFund,
     onCelebrate: setCelebrate,
     onPet: setPet,
+    onPoints: setPoints,
   }), []);
   const state = useMemo(() => {
     if (!raw || (!fund?.length && !celebrate)) return raw;
@@ -45,7 +49,7 @@ export function useTeamState(): {
     setState(current => current ? { ...current, users: replaceSavedMember(current.users, user) } : current);
   }, []);
   const onFundSaved = useCallback<MemberUpdates['onFundSaved']>((people) => setFund(people), []);
-  return { state, online, votes, fund, celebrate, pet, onUserSaved, onFundSaved };
+  return { state, online, votes, fund, celebrate, pet, points, onUserSaved, onFundSaved };
 }
 
 export function useElementSize(ref: RefObject<HTMLElement | null>): { width: number; height: number } {

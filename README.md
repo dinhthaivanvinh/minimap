@@ -8,6 +8,7 @@ A cute 2D and 3D map showing where your team is working today. It's a React and 
 | Update status | `/me` | Log in or claim a username, then set place, status and scheduled changes |
 | Account settings | `/account` | Manage nickname, character appearance, fund preferences and logout |
 | Admin | `/admin` | The admin creates usernames, sets the team address, clocks and office location, and links people to the team fund's sheet |
+| Reward points | `/points` | Everyone sees the team's points board, the rules and the admin's changes. Logged-in members see their own points and claim what they earned today |
 | Team votes | `/vote` | Everyone sees open votes and results. Logged-in members start votes and vote. `/vote?id=<id>` opens one vote, and each vote's **Share** button sends or copies that link |
 
 ## Run on your own computer (no Docker)
@@ -29,7 +30,7 @@ You need [Node.js](https://nodejs.org) 24 or newer.
 
 4. Open http://localhost:8080/admin, add some usernames, then claim one at http://localhost:8080/me.
 
-Data is saved in `data/data.json`, the basketball arcade's records in `data/basketball.json`, team votes in `data/vote.json`, the team fund's settings in `data/fund.json`, birthdays and start dates in `data/celebrate.json`, and the office cat in `data/pet.json`. Delete those files while the server is stopped to start over.
+Data is saved in `data/data.json`, the basketball arcade's records in `data/basketball.json`, team votes in `data/vote.json`, the team fund's settings in `data/fund.json`, birthdays and start dates in `data/celebrate.json`, the office cat in `data/pet.json`, and reward points in `data/points.json`. Delete those files while the server is stopped to start over.
 
 ## Develop
 
@@ -165,7 +166,7 @@ On the Admin page, under **Backup**:
 - **Download backup** saves everything, PINs included, to a file. Keep backups private: with one, anyone could work out every PIN.
 - **Restore from a file** replaces all usernames, PINs and settings with a backup's. It also accepts the `data.json` from the office server, which is how you move to Cloudflare.
 
-A restore brings over usernames, nicknames, PINs, characters, scheduled changes, offices, clocks, the weather location, arcade records, team votes and the team fund's settings, and people stay logged in. If the backup is from before the last morning reset, places, statuses and scheduled changes are cleared, as on any morning. Otherwise, scheduled changes that are overdue apply straight away. Backups can be up to 2 MB.
+A restore brings over usernames, nicknames, PINs, characters, scheduled changes, offices, clocks, the weather location, arcade records, team votes, the team fund's settings, the office cat and reward points, and people stay logged in. If the backup is from before the last morning reset, places, statuses and scheduled changes are cleared, as on any morning. Otherwise, scheduled changes that are overdue apply straight away. Backups can be up to 2 MB.
 
 ## Random member picker
 
@@ -205,7 +206,7 @@ Set these in `.env`, then restart.
 | `ADMIN_PASSWORD` | none, required | Password for the Admin page |
 | `PORT` | `8080` | Port to open |
 | `RESET_AT` | `05:00` | Time each day when everyone's place, status and scheduled changes clear |
-| `TZ` | `Asia/Ho_Chi_Minh` in Docker, the computer's own otherwise | Time zone for `RESET_AT` |
+| `TZ` | `Asia/Ho_Chi_Minh` in Docker, the computer's own otherwise | Time zone for `RESET_AT` and reward points' office hours and claim windows |
 
 Avoid `$` in `ADMIN_PASSWORD` when using Docker, because Docker Compose treats it as a variable.
 
@@ -281,6 +282,22 @@ Click the cat to open its card. People who are logged in can select **Feed** onc
 The admin names the cat under **Office cat** on the Admin page (it starts as Miu). To let the team choose, start a vote on `/vote` and save the winner there. The cat is kept in `data/pet.json` on Node.js and under the `pet` key on Cloudflare, and goes into the admin's backup under `pet`.
 
 The API: `GET /api/pet` (anyone: name, today's feeds, good days, quiet days, stage), `POST /api/pet/feed` (with a login) and `PATCH /api/pet/admin` (`name`, with `x-admin-password`). Live updates come on `/api/events` as `event: pet`.
+
+## Reward points
+
+People earn points for time spent in an earning office, like pay by the hour. By default the first office on the map (Main Office) earns **10 points an hour** from **07:00 to 19:00, Monday to Friday**, up to **8 hours a day**. Time counts from when someone checks in to that office until they move somewhere else or the morning reset clears their place.
+
+**Claiming.** Earned points don't reach the balance by themselves: people press **Claim** on `/points`. Claim works from **12:00 to 14:00** and from **17:00 to 23:59**, as often as people like, and takes everything earned so far. Time in the office keeps earning after a claim, so the 8-hour cap still decides the most anyone can get in a day. When someone in the office claims, a box asks whether they're done for today: **Claim and go Off** also sets them to Off, which stops their time counting; **Claim, still working** leaves them where they are. Whatever is still unclaimed at the morning reset (the server's `RESET_AT`, 05:00 by default) is lost, and a new day starts. The board shows each person's balance with what they have waiting to claim. Each person's card on the map shows the same, and on your own card you can claim right there, without opening `/points`.
+
+On a workday, someone who never checks in loses **20 points**. Work from home, Out of Office and Off all count as checking in. Nobody loses points on a day when nobody checks in at all (a holiday, say), or on the day they joined or the day points were turned on. Points never go below zero.
+
+The admin changes all of this under **Reward points** on the Admin page: the rate, the daily cap, the penalty, office hours, workdays, which offices earn (one or more) and the claim windows (1 to 4). Office hours and claim windows must start at or after the morning reset. Setting both the rate and the penalty to 0 turns points off. The admin can also add or take away points by hand, with a reason everyone sees on `/points`.
+
+Points trust where people say they are: there is no office network check. On Cloudflare the server only sees each person's public address, and when everyone, in the office or at home, goes out through the company VPN, that address is the same for all of them.
+
+The board's top three (by balance) are on a note on the park's notice board (2D and 3D), which opens `/points`. Points are kept in `data/points.json` on Node.js and under the `points` key on Cloudflare, and go into the admin's backup under `points`. A deleted person's points go with them.
+
+The API: `GET /api/points` (anyone: the board with balances and points waiting to be claimed, the rules, the morning reset time, the last 7 days and the latest hand changes), `GET /api/points/me` (with a login: whether you're in an earning office, today's minutes, what you can claim, whether Claim is open, and the open or next claim window), `POST /api/points/claim` (with a login), `GET/PATCH /api/points/admin` and `POST /api/points/admin/adjust` (`username`, `amount`, `reason`), both with `x-admin-password`. Live updates come on `/api/events` as `event: points`.
 
 ## Birthdays and anniversaries
 

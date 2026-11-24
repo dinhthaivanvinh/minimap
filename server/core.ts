@@ -68,6 +68,12 @@ export interface Team {
   sign(purpose: string, text: string): string;
   /** Checks the x-admin-password header, with the same lockout as the admin page. Throws a 401 or 429. */
   requireAdmin(req: ApiRequest): void;
+  /** The ids of the offices on the map, the main office first. */
+  places(): string[];
+  /** The morning reset, HH:MM on the team's clock (RESET_AT). */
+  resetAt(): string;
+  /** Where each person is now, and when they last set their place or status (an ISO instant, or null). */
+  whereabouts(): { username: string; place: string | null; updatedAt: string | null }[];
 }
 
 /** A feature that keeps its own data but still belongs in the admin's one backup file. */
@@ -676,6 +682,9 @@ export function createCore({
     members: () => data.users.map((u) => u.username),
     sign: (purpose, text) => crypto.createHmac('sha256', data.secret).update(`${purpose}:${text}`).digest('hex'),
     requireAdmin,
+    places: () => data.places.map((p) => p.id),
+    resetAt: () => resetAt,
+    whereabouts: () => data.users.map((u) => ({ username: u.username, place: u.place, updatedAt: u.updatedAt })),
   };
 
   // Adds a feature's data to backups and restores, and tells it when people are deleted.
