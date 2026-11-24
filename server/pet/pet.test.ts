@@ -129,6 +129,7 @@ test('two feeds from one person queued behind a slow save count once', async () 
       sign: () => '',
       requireAdmin: () => {},
       places: () => [],
+      resetAt: () => '05:00',
       whereabouts: () => [],
     },
     now: () => new Date('2026-11-10T12:00:00Z'),

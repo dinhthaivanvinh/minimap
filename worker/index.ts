@@ -237,11 +237,7 @@ export class Minimap extends DurableObject<Env> {
       url,
       header: (name) => request.headers.get(name) ?? undefined,
       readJson: (maxBytes) => readJson(request, maxBytes),
-      // Set by Cloudflare itself, so a caller can't fake it.
-      ip: request.headers.get('cf-connecting-ip') ?? undefined,
     };
-    // Points need the address someone moved from, before the move reaches the core.
-    this.points!.notice(req);
     const { status, body, headers } =
       (await this.basketball.handle(req)) ?? (await this.votes.handle(req)) ?? (await this.fund.handle(req)) ?? (await this.celebrate.handle(req))
       ?? (await this.pet.handle(req)) ?? (await this.points!.handle(req)) ?? (await this.core.handle(req));

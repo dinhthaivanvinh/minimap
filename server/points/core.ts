@@ -1,29 +1,37 @@
-// Reward points' API: everyone sees the board, logged-in people see their own stay in the office
-// and can ask for the office network to be checked again, and the admin sets the rules, the
-// office addresses and makes changes by hand. It keeps its own data (data/points.json on
-// Node.js, the `points` key on Cloudflare).
+// Reward points' API: everyone sees the board, logged-in people see their own day and claim what
+// they have earned, and the admin sets the rules and makes changes by hand. It keeps its own data
+// (data/points.json on Node.js, the `points` key on Cloudflare).
 //
 // The core never tells a feature who moved, so the hosts call observe() whenever the team's
 // state changes and tick() with their other timed changes. Each compares where people are with
 // the stays it keeps. A stay in an earning office starts when someone arrives and is counted
 // when they leave, or when the day closes. Time still running is added when the board is shown,
 // so nothing has to be saved every minute, and a sleeping Durable Object catches up when it wakes.
+//
+// Earned points wait until the person claims them. Claim works during the claim windows, as
+// often as people like, and takes everything earned so far; time in the office keeps earning
+// after it. Points still waiting at the morning reset (the server's RESET_AT) are lost when the
+// day closes.
+//
+// There is no office network check. On Cloudflare the server only sees each person's public
+// address, and with everyone, in the office or at home, going out through the company VPN, that
+// address is the same for all of them, so it can't tell the office from home.
 
 import {
   addPoints,
+  claimWindow,
   cleanSettings,
   closeDay,
   DEFAULT_SETTINGS,
   earningOffices,
   HISTORY_DAYS,
-  ipAllowed,
   MAX_ADJUST,
   MAX_ADJUSTMENTS,
   MAX_REASON,
+  minuteOf,
   officeMinutes,
-  plainIp,
-  pointsFor,
-  wallClock,
+  pointsDay,
+  unclaimed,
   type Adjustment,
   type DayLine,
   type DayRecord,
@@ -45,8 +53,6 @@ import {
 interface Stay {
   /** From when it is still to be counted, as an ISO instant. */
   since: string;
-  /** Seen on the office network, or there is no check. Only these stays earn. */
-  verified: boolean;
 }
 
 /** How it is stored: lists of pairs, as a username such as `__proto__` breaks a plain object. */
@@ -60,6 +66,8 @@ export interface PointsData {
   checkedIn: string[];
   /** Minutes of finished stays in the open day. */
   minutes: [string, number][];
+  /** Points claimed in the open day, already in the balances. */
+  claimed: [string, number][];
   stays: [string, Stay][];
   /** Closed days, newest first. */
   history: DayRecord[];
@@ -74,6 +82,7 @@ interface State {
   roster: string[];
   checkedIn: Set<string>;
   minutes: Map<string, number>;
+  claimed: Map<string, number>;
   stays: Map<string, Stay>;
   history: DayRecord[];
   adjustments: Adjustment[];
@@ -102,6 +111,7 @@ function fresh(): State {
     roster: [],
     checkedIn: new Set(),
     minutes: new Map(),
+    claimed: new Map(),
     stays: new Map(),
     history: [],
     adjustments: [],
@@ -115,6 +125,7 @@ function clone(s: State): State {
     roster: [...s.roster],
     checkedIn: new Set(s.checkedIn),
     minutes: new Map(s.minutes),
+    claimed: new Map(s.claimed),
     stays: new Map([...s.stays].map(([name, stay]) => [name, { ...stay }])),
     history: [...s.history],
     adjustments: [...s.adjustments],
@@ -129,6 +140,7 @@ function toStored(s: State): PointsData {
     roster: s.roster,
     checkedIn: [...s.checkedIn],
     minutes: [...s.minutes],
+    claimed: [...s.claimed],
     stays: [...s.stays],
     history: s.history,
     adjustments: s.adjustments,
@@ -151,28 +163,29 @@ function pairs<T>(value: unknown, ok: (v: unknown) => v is T, known: (name: stri
   return out;
 }
 
-const isStay = (v: unknown): v is Stay =>
-  typeof v === 'object' && v !== null && isInstant((v as Stay).since) && typeof (v as Stay).verified === 'boolean';
+const isStay = (v: unknown): v is Stay => typeof v === 'object' && v !== null && isInstant((v as Stay).since);
 
 function isLine(v: unknown, known: (name: string) => boolean): v is DayLine {
   const l = v as DayLine;
-  return typeof v === 'object' && v !== null && typeof l.username === 'string' && known(l.username) && isCount(l.earned) && isCount(l.penalty);
+  return typeof v === 'object' && v !== null && typeof l.username === 'string' && known(l.username) && isCount(l.earned) && isCount(l.lost) && isCount(l.penalty);
 }
 
 /** Points data from a file or a backup, or a message saying what is wrong with it. */
 function parse(value: unknown, places: readonly string[], known: (name: string) => boolean): State | string {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'is not valid.';
   const v = value as Record<string, unknown>;
-  // Offices removed from the map since are dropped from the settings, not treated as damage.
-  const rawSettings = typeof v.settings === 'object' && v.settings !== null ? (v.settings as Record<string, unknown>) : null;
+  // Offices removed from the map since are dropped from the settings, not treated as damage, and
+  // settings added since start at their defaults.
+  const rawSettings = typeof v.settings === 'object' && v.settings !== null ? { ...DEFAULT_SETTINGS, ...(v.settings as Record<string, unknown>) } : null;
   const settings = rawSettings
     ? cleanSettings({ ...rawSettings, offices: Array.isArray(rawSettings.offices) ? rawSettings.offices.filter((id) => places.includes(id as string)) : rawSettings.offices }, places)
     : 'Settings are missing.';
   if (typeof settings === 'string') return `has broken settings: ${settings}`;
   const balances = pairs(v.balances, isCount, known);
   const minutes = pairs(v.minutes, isCount, known);
+  const claimed = pairs(v.claimed ?? [], isCount, known);
   const stays = pairs(v.stays, isStay, known);
-  if (!balances || !minutes || !stays) return 'has balances or stays for someone who is not on the team.';
+  if (!balances || !minutes || !claimed || !stays) return 'has balances or stays for someone who is not on the team.';
   if (!isDay(v.day)) return 'has a broken day.';
   const names = (list: unknown) => Array.isArray(list) && list.every((n) => typeof n === 'string' && known(n));
   if (!names(v.roster) || !names(v.checkedIn)) return 'has a day for someone who is not on the team.';
@@ -191,6 +204,7 @@ function parse(value: unknown, places: readonly string[], known: (name: string) 
     roster: [...new Set(v.roster as string[])],
     checkedIn: new Set(v.checkedIn as string[]),
     minutes,
+    claimed,
     stays,
     history: (history as DayRecord[]).slice(0, HISTORY_DAYS),
     adjustments: (adjustments as Adjustment[]).slice(0, MAX_ADJUSTMENTS),
@@ -208,7 +222,7 @@ function settle(s: State, at: Date, timeZone: string | undefined, only?: string)
   for (const [username, stay] of s.stays) {
     if (only !== undefined && username !== only) continue;
     const from = new Date(stay.since);
-    if (stay.verified && from < at) {
+    if (from < at) {
       for (const [day, minutes] of officeMinutes(from, at, s.settings, timeZone)) {
         if (day === s.day) s.minutes.set(username, (s.minutes.get(username) ?? 0) + minutes);
         else {
@@ -223,37 +237,38 @@ function settle(s: State, at: Date, timeZone: string | undefined, only?: string)
   return other;
 }
 
+/** Files a closed day. Claimed points are already in the balances, so only penalties move them. */
 function record(s: State, day: string, lines: DayLine[]): void {
-  for (const line of lines) s.balances.set(line.username, addPoints(s.balances.get(line.username) ?? 0, line.earned - line.penalty));
+  for (const line of lines) if (line.penalty) s.balances.set(line.username, addPoints(s.balances.get(line.username) ?? 0, -line.penalty));
   if (lines.length) s.history = [{ day, lines }, ...s.history.filter((d) => d.day !== day)].slice(0, HISTORY_DAYS);
 }
 
 /**
- * Brings the state up to `at`: closes the open day once a new one starts (with any days nobody
- * looked at in between, which only earn), starts and ends stays from where people are, and
- * notes who checked in today. Pure: it changes and returns a copy.
+ * Brings the state up to `at`: closes the open day once the morning reset passes (with any days
+ * nobody looked at in between, whose points nobody claimed), starts and ends stays from where
+ * people are, and notes who checked in today. Pure: it changes and returns a copy.
  */
 function step(
   prev: State,
   at: Date,
-  team: { members: string[]; places: string[]; whereabouts: ReturnType<Team['whereabouts']> },
-  ipOf: (username: string) => string | undefined,
+  team: { members: string[]; places: string[]; whereabouts: ReturnType<Team['whereabouts']>; resetAt: string },
   timeZone?: string,
 ): State {
   const s = clone(prev);
-  const today = wallClock(at, timeZone).day;
+  const today = pointsDay(at, team.resetAt, timeZone);
   if (s.day !== today) {
     const other = settle(s, at, timeZone);
-    if (s.day) record(s, s.day, closeDay(s.day, s.roster, s.checkedIn, s.minutes, s.settings));
+    if (s.day) record(s, s.day, closeDay(s.day, s.roster, s.checkedIn, s.minutes, s.claimed, s.settings));
     for (const day of [...other.keys()].sort()) {
       if (day === today || (s.day && day <= s.day)) continue;
-      record(s, day, closeDay(day, [], new Set(), other.get(day)!, s.settings));
+      record(s, day, closeDay(day, [], new Set(), other.get(day)!, new Map(), s.settings));
     }
     // The first day after setup has no roster, so nobody loses points for it.
     s.roster = s.day ? [...team.members] : [];
     s.day = today;
     s.checkedIn = new Set();
     s.minutes = other.get(today) ?? new Map();
+    s.claimed = new Map();
   }
 
   const members = new Set(team.members);
@@ -264,13 +279,13 @@ function step(
   for (const { username, place, updatedAt } of team.whereabouts) {
     const inOffice = place !== null && earning.includes(place);
     const stay = s.stays.get(username);
-    if (inOffice && !stay) s.stays.set(username, { since: at.toISOString(), verified: ipAllowed(ipOf(username), s.settings.ips) });
+    if (inOffice && !stay) s.stays.set(username, { since: at.toISOString() });
     if (!inOffice && stay) {
       settle(s, at, timeZone, username);
       s.stays.delete(username);
     }
     // Any place set today counts as a check-in: Work from home, Out of Office and Off too.
-    if (place !== null && updatedAt && wallClock(new Date(updatedAt), timeZone).day === s.day) s.checkedIn.add(username);
+    if (place !== null && updatedAt && pointsDay(new Date(updatedAt), team.resetAt, timeZone) === s.day) s.checkedIn.add(username);
   }
   return s;
 }
@@ -298,11 +313,9 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
   })();
   let writing: Promise<unknown> = Promise.resolve();
   let lastBoard = '';
-  // The last address each person used, kept in memory only: it is only needed when they arrive.
-  const lastIp = new Map<string, string>();
 
   function teamNow() {
-    return { members: team.members(), places: team.places(), whereabouts: team.whereabouts() };
+    return { members: team.members(), places: team.places(), whereabouts: team.whereabouts(), resetAt: team.resetAt() };
   }
 
   function save(): void | Promise<void> {
@@ -311,31 +324,40 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
 
   function view(): PointsView {
     const at = now();
-    const current = step(state, at, teamNow(), (name) => lastIp.get(name), timeZone);
+    const current = step(state, at, teamNow(), timeZone);
     const minutes = minutesNow(current, at, timeZone);
-    const { ips, ...settings } = current.settings;
+    const settings = current.settings;
     const board = team
       .members()
-      .map((username) => ({ username, balance: current.balances.get(username) ?? 0, today: pointsFor(minutes.get(username) ?? 0, settings) }))
-      .sort((a, b) => b.balance + b.today - (a.balance + a.today) || a.username.localeCompare(b.username));
+      .map((username) => ({
+        username,
+        balance: current.balances.get(username) ?? 0,
+        toClaim: unclaimed(minutes.get(username) ?? 0, current.claimed.get(username) ?? 0, settings),
+      }))
+      .sort((a, b) => b.balance - a.balance || b.toClaim - a.toClaim || a.username.localeCompare(b.username));
     return {
-      settings: { ...settings, offices: earningOffices(settings, team.places()), ipCheck: ips.length > 0 },
+      settings: { ...settings, offices: earningOffices(settings, team.places()) },
       day: current.day,
       board,
       history: current.history.slice(0, VIEW_DAYS),
       adjustments: current.adjustments.slice(0, VIEW_ADJUSTMENTS),
+      resetAt: team.resetAt(),
     };
   }
 
   function me(username: string): PointsMe {
     const at = now();
-    const current = step(state, at, teamNow(), (name) => lastIp.get(name), timeZone);
-    const stay = current.stays.get(username);
+    const current = step(state, at, teamNow(), timeZone);
+    const minutesToday = minutesNow(current, at, timeZone).get(username) ?? 0;
+    const toClaim = unclaimed(minutesToday, current.claimed.get(username) ?? 0, current.settings);
+    const { open, window } = claimWindow(at, current.day, current.settings, timeZone);
     return {
-      inOffice: Boolean(stay),
-      verified: Boolean(stay?.verified),
-      minutesToday: minutesNow(current, at, timeZone).get(username) ?? 0,
+      inOffice: current.stays.has(username),
+      minutesToday,
       checkedIn: current.checkedIn.has(username),
+      toClaim,
+      claimOpen: open,
+      window,
     };
   }
 
@@ -357,7 +379,7 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
     const run = writing.then(async () => {
       const before = state;
       try {
-        state = step(state, at, seen, (name) => lastIp.get(name), timeZone);
+        state = step(state, at, seen, timeZone);
         const result = task(state);
         await store(toStored(state));
         announce();
@@ -373,34 +395,13 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
 
   /** Catches up with where people are. Saves only when something changed. Never throws. */
   function observe(): Promise<void> {
-    const next = step(state, now(), teamNow(), (name) => lastIp.get(name), timeZone);
+    const next = step(state, now(), teamNow(), timeZone);
     if (JSON.stringify(toStored(next)) === JSON.stringify(toStored(state))) {
       // Time running in the office still moves the board.
       announce();
       return Promise.resolve();
     }
     return change(() => {}).catch((err) => console.error(err));
-  }
-
-  /** Remembers the address of a logged-in caller. The hosts call it before answering each request. */
-  function notice(req: ApiRequest): void {
-    if (!req.ip || !req.header('authorization')) return;
-    try {
-      lastIp.set(team.player(req).username, req.ip);
-    } catch {
-      // Not logged in: nothing to remember.
-    }
-  }
-
-  /** Counts a stay from now if this request came from the office network. */
-  async function verify(username: string, ip: string | undefined): Promise<boolean> {
-    const stay = state.stays.get(username);
-    if (!stay || stay.verified || !ipAllowed(ip, state.settings.ips)) return false;
-    await change((s) => {
-      const current = s.stays.get(username);
-      if (current && !current.verified) s.stays.set(username, { since: now().toISOString(), verified: true });
-    });
-    return true;
   }
 
   async function route(req: ApiRequest): Promise<ApiResponse> {
@@ -410,44 +411,48 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
 
     if (action === 'GET /api/points/me') {
       const { username } = team.player(req);
-      // Opening the page on the office network is enough to start earning.
-      await verify(username, req.ip);
       return jsonResponse(200, me(username));
     }
 
-    if (action === 'POST /api/points/here') {
+    if (action === 'POST /api/points/claim') {
       const { username } = team.player(req);
-      await observe();
-      const current = me(username);
-      if (!current.inOffice) throw new ApiError(409, 'Check in to an office that earns points first.');
-      if (!current.verified && !(await verify(username, req.ip))) {
-        throw new ApiError(403, 'This device isn’t on the office network. Turn off any VPN, join the office Wi-Fi, and try again.');
-      }
+      await change((s) => {
+        const at = now();
+        settle(s, at, timeZone, username);
+        const amount = unclaimed(s.minutes.get(username) ?? 0, s.claimed.get(username) ?? 0, s.settings);
+        const { open, window } = claimWindow(at, s.day, s.settings, timeZone);
+        if (!open) {
+          throw new ApiError(409, window ? `Claiming opens at ${window.from}.` : 'Claiming is closed for today. Come back tomorrow.');
+        }
+        if (amount <= 0) throw new ApiError(409, 'Nothing to claim yet. Time in the office during office hours earns points.');
+        s.balances.set(username, (s.balances.get(username) ?? 0) + amount);
+        s.claimed.set(username, (s.claimed.get(username) ?? 0) + amount);
+      });
       return jsonResponse(200, me(username));
     }
 
     if (action === 'GET /api/points/admin') {
       team.requireAdmin(req);
-      return jsonResponse(200, { settings: state.settings, ip: req.ip ? plainIp(req.ip) : null });
+      return jsonResponse(200, { settings: state.settings });
     }
 
     if (action === 'PATCH /api/points/admin') {
       team.requireAdmin(req);
       const settings = cleanSettings(await req.readJson(), team.places());
       if (typeof settings === 'string') throw new ApiError(400, settings);
+      // A day runs from one morning reset to the next. Office hours after the reset keep a day's
+      // office time and its claims on the same date.
+      if (minuteOf(settings.start) < minuteOf(team.resetAt())) {
+        throw new ApiError(400, `Office hours must start at or after the morning reset (${team.resetAt()}).`);
+      }
       await change((s) => {
         // Time so far counts under the old rules.
         settle(s, now(), timeZone);
-        const addressesChanged = JSON.stringify(s.settings.ips) !== JSON.stringify(settings.ips);
         s.settings = settings;
-        // Stays already running are checked against the new list too, so adding addresses
-        // mid-day applies to everyone in the office, not only to people who arrive later.
-        // Someone whose address isn't known yet starts earning when they open the points page.
-        if (addressesChanged) for (const [name, stay] of s.stays) stay.verified = ipAllowed(lastIp.get(name), settings.ips);
       });
       // Stays that no longer earn end, and new earning offices start stays.
       await observe();
-      return jsonResponse(200, { settings: state.settings, ip: req.ip ? plainIp(req.ip) : null });
+      return jsonResponse(200, { settings: state.settings });
     }
 
     if (action === 'POST /api/points/admin/adjust') {
@@ -498,6 +503,7 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
         for (const name of gone) {
           s.balances.delete(name);
           s.minutes.delete(name);
+          s.claimed.delete(name);
           s.stays.delete(name);
           s.checkedIn.delete(name);
         }
@@ -509,7 +515,7 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
       }),
   };
 
-  return { handle, save, view, observe, tick: observe, notice, feature };
+  return { handle, save, view, observe, tick: observe, feature };
 }
 
 export type Points = ReturnType<typeof createPoints>;

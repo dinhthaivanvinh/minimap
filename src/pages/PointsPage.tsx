@@ -1,8 +1,9 @@
-// Reward points page (/points): the whole team's board, your own points and stay in the office (with
-// a button to check the office network again), the rules, and the last few days and hand changes.
-import { useCallback, useEffect, useState } from 'react';
+// Reward points page (/points): the whole team's board, your own points and today's earnings with
+// the Claim button (which asks whether you're done for the day), the rules, and the last few days
+// and hand changes.
+import { useCallback, useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
-import { pointsText, workdaysText, type PointsMe, type PointsView } from '../../shared/points.ts';
+import { pointsText, windowsText, workdaysText, type PointsMe, type PointsView } from '../../shared/points.ts';
 import { SheetNav, StatusLine } from '../components/SheetNav.tsx';
 import { api, errorText } from '../lib/api.ts';
 import { useMessage, useTeamState } from '../lib/hooks.ts';
@@ -41,12 +42,76 @@ const Plus = styled.span`
   font-size: 14px;
 `;
 
+const ClaimBox = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: ${theme.dashedLine};
+  border-radius: 12px;
+`;
+
+const Dialog = styled.dialog`
+  width: min(420px, calc(100% - 32px));
+  padding: 18px;
+  border: ${theme.line};
+  border-radius: 22px;
+  background: ${theme.paper};
+  color: ${theme.ink};
+  box-shadow: 0 12px 50px #2a265744;
+
+  h2 { margin: 0 0 8px; font-size: 22px; }
+  p { margin: 0 0 14px; }
+  &::backdrop { background: #2a265777; }
+`;
+
+const Choices = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+`;
+
+/** Asks whether someone is done for the day before claiming: going Off stops their time counting. */
+function ClaimDialog({ amount, more, onChoose, onCancel }: { amount: number; more: string; onChoose: (goOff: boolean) => void; onCancel: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const node = ref.current!;
+    node.showModal();
+    return () => node.close();
+  }, []);
+  return (
+    <Dialog ref={ref} aria-labelledby="claim-title" onCancel={(e) => (e.preventDefault(), onCancel())}>
+      <h2 id="claim-title">Claim {pointsText(amount)}?</h2>
+      <p>Are you done for today? Going Off stops your time counting. If you’re still working, you keep earning and can claim the rest {more}.</p>
+      <Choices>
+        <Button type="button" $primary onClick={() => onChoose(false)}>
+          Claim, still working
+        </Button>
+        <Button type="button" onClick={() => onChoose(true)}>
+          Claim and go Off
+        </Button>
+        <Button type="button" onClick={onCancel}>
+          Cancel
+        </Button>
+      </Choices>
+    </Dialog>
+  );
+}
+
 const List = styled.ul`
   margin: 0;
   padding-left: 18px;
 
   li { margin: 2px 0; }
 `;
+
+/** When the rest can be claimed after this claim: later in this window, or in the next one. */
+function laterText(view: PointsView, me: PointsMe): string {
+  const next = view.settings.claimWindows.find((w) => me.window && w.from > me.window.from);
+  return next ? `from ${next.from} to ${next.to}` : `until ${me.window?.to ?? 'the end of the day'}`;
+}
 
 const dayText = (day: string) =>
   new Date(`${day}T12:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
@@ -57,7 +122,8 @@ export function PointsPage() {
   const [view, setView] = useState<PointsView | null>(null);
   const [me, setMe] = useState<PointsMe | null>(null);
   const [message, showMessage] = useMessage();
-  const [checking, setChecking] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  const [asking, setAsking] = useState(false);
 
   useEffect(() => {
     document.title = 'Reward points';
@@ -85,17 +151,31 @@ export function PointsPage() {
     return () => clearInterval(timer);
   }, [loadMe, live, state]);
 
-  async function checkAgain() {
-    setChecking(true);
+  async function claim(goOff: boolean) {
+    setAsking(false);
+    setClaiming(true);
     try {
-      setMe(await api<PointsMe>('POST', '/api/points/here', {}, headers));
-      showMessage('You’re on the office network. Your time counts from now.');
+      const amount = me?.toClaim ?? 0;
+      setMe(await api<PointsMe>('POST', '/api/points/claim', {}, headers));
+      if (goOff) {
+        try {
+          await api('PATCH', '/api/me', { place: 'off' }, headers);
+        } catch (err) {
+          showMessage(`Claimed ${pointsText(amount)}, but you’re still checked in: ${errorText(err)}`, true);
+          return;
+        }
+        loadMe();
+      }
+      showMessage(goOff ? `Claimed ${pointsText(amount)}. You’re Off now. See you tomorrow!` : `Claimed ${pointsText(amount)}. Keep it up!`);
     } catch (err) {
       showMessage(errorText(err), true);
     } finally {
-      setChecking(false);
+      setClaiming(false);
     }
   }
+
+  // Only someone still earning has a choice to make; anyone else just claims.
+  const startClaim = () => (me?.inOffice ? setAsking(true) : void claim(false));
 
   const nameOf = (name: string) => state?.users.find((u) => u.username === name)?.nickname ?? 'a former member';
   const offices = view && state ? view.settings.offices.map((id) => placeName(state.places, id)) : [];
@@ -119,27 +199,39 @@ export function PointsPage() {
           {username && mine && (
             <>
               <Big>
-                {mine.balance + mine.today}
-                <small>{mine.today > 0 ? `+${mine.today} today so far` : 'points'}</small>
+                {mine.balance}
+                <small>{mine.balance === 1 ? 'point' : 'points'}</small>
               </Big>
+              {me && me.toClaim > 0 && (
+                <ClaimBox>
+                  <PanelHint style={{ margin: 0 }}>
+                    {pointsText(me.toClaim)} earned today, waiting to be claimed.{' '}
+                    {me.claimOpen && me.window && `You can claim until ${me.window.to}.`}
+                    {!me.claimOpen && me.window && `Claiming opens at ${me.window.from}.`}
+                    {!me.window && `Claiming is closed for today, so these are lost at ${view.resetAt}.`}
+                  </PanelHint>
+                  {me.claimOpen && (
+                    <Button type="button" $primary onClick={startClaim} disabled={claiming}>
+                      Claim {pointsText(me.toClaim)}
+                    </Button>
+                  )}
+                  {asking && (
+                    <ClaimDialog
+                      amount={me.toClaim}
+                      more={laterText(view, me)}
+                      onChoose={(goOff) => void claim(goOff)}
+                      onCancel={() => setAsking(false)}
+                    />
+                  )}
+                </ClaimBox>
+              )}
               {me && !me.inOffice && (
                 <PanelHint style={{ margin: '8px 0 0' }}>
                   {me.checkedIn ? `You’re checked in. Move to ${officeText} to earn points.` : `Check in on My status. ${officeText} earns points.`}
                 </PanelHint>
               )}
-              {me?.inOffice && me.verified && (
+              {me?.inOffice && (
                 <PanelHint style={{ margin: '8px 0 0' }}>You’re earning in {officeText} ({me.minutesToday} {me.minutesToday === 1 ? 'minute' : 'minutes'} counted today).</PanelHint>
-              )}
-              {me?.inOffice && !me.verified && (
-                <>
-                  <PanelHint style={{ margin: '8px 0 8px' }}>
-                    You’re checked in to {officeText}, but your device isn’t on the office network, so this time doesn’t earn points yet. Join
-                    the office Wi-Fi and turn off any VPN, then check again.
-                  </PanelHint>
-                  <Button type="button" onClick={() => void checkAgain()} disabled={checking}>
-                    Check again
-                  </Button>
-                </>
               )}
               <StatusLine message={message} />
             </>
@@ -166,8 +258,8 @@ export function PointsPage() {
                   <td>{i + 1}</td>
                   <td>{nameOf(line.username)}</td>
                   <td>
-                    {line.balance + line.today}
-                    {line.today > 0 && <Plus> (+{line.today} today)</Plus>}
+                    {line.balance}
+                    {line.toClaim > 0 && <Plus> (+{line.toClaim} to claim)</Plus>}
                   </td>
                 </tr>
               ))}
@@ -190,8 +282,12 @@ export function PointsPage() {
                 count as checking in. A day when nobody checks in costs nobody anything.
               </li>
             )}
-            <li>Points never go below zero. Today’s points move into your balance when the day ends.</li>
-            {view.settings.ipCheck && <li>Time only counts while you’re on the office network, so a VPN can stop you earning.</li>}
+            <li>
+              Earned points wait for you to claim them on this page, from {windowsText(view.settings.claimWindows)}. Claim as often as you
+              like: each claim takes everything earned so far, and you keep earning after it. Points not claimed by {view.resetAt} the next
+              morning are lost.
+            </li>
+            <li>Points never go below zero.</li>
           </List>
         </Panel>
       )}
@@ -205,9 +301,9 @@ export function PointsPage() {
                 <tr key={d.day}>
                   <td>{dayText(d.day)}</td>
                   <td className="num">
-                    {d.earned > 0 && `+${d.earned}`}
-                    {d.earned > 0 && d.penalty > 0 && ' '}
-                    {d.penalty > 0 && `−${d.penalty} (no check-in)`}
+                    {[d.earned > 0 && `+${d.earned}`, d.lost > 0 && `${d.lost} not claimed`, d.penalty > 0 && `−${d.penalty} (no check-in)`]
+                      .filter(Boolean)
+                      .join(', ')}
                   </td>
                 </tr>
               ))}

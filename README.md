@@ -8,7 +8,7 @@ A cute 2D and 3D map showing where your team is working today. It's a React and 
 | Update status | `/me` | Log in or claim a username, then set place, status and scheduled changes |
 | Account settings | `/account` | Manage nickname, character appearance, fund preferences and logout |
 | Admin | `/admin` | The admin creates usernames, sets the team address, clocks and office location, and links people to the team fund's sheet |
-| Reward points | `/points` | Everyone sees the team's points board, the rules and the admin's changes. Logged-in members see their own points and can ask for the office network to be checked again |
+| Reward points | `/points` | Everyone sees the team's points board, the rules and the admin's changes. Logged-in members see their own points and claim what they earned today |
 | Team votes | `/vote` | Everyone sees open votes and results. Logged-in members start votes and vote. `/vote?id=<id>` opens one vote, and each vote's **Share** button sends or copies that link |
 
 ## Run on your own computer (no Docker)
@@ -206,8 +206,7 @@ Set these in `.env`, then restart.
 | `ADMIN_PASSWORD` | none, required | Password for the Admin page |
 | `PORT` | `8080` | Port to open |
 | `RESET_AT` | `05:00` | Time each day when everyone's place, status and scheduled changes clear |
-| `TZ` | `Asia/Ho_Chi_Minh` in Docker, the computer's own otherwise | Time zone for `RESET_AT` and reward points' office hours |
-| `TRUST_PROXY` | off | Set to `1` when the server sits behind a reverse proxy (nginx, Caddy, Traefik), so reward points see each person's own address in `X-Forwarded-For` instead of the proxy's. Leave it off otherwise: without a proxy, anyone could send that header |
+| `TZ` | `Asia/Ho_Chi_Minh` in Docker, the computer's own otherwise | Time zone for `RESET_AT` and reward points' office hours and claim windows |
 
 Avoid `$` in `ADMIN_PASSWORD` when using Docker, because Docker Compose treats it as a variable.
 
@@ -286,23 +285,19 @@ The API: `GET /api/pet` (anyone: name, today's feeds, good days, quiet days, sta
 
 ## Reward points
 
-People earn points for time spent in an earning office, like pay by the hour. By default the first office on the map (Main Office) earns **10 points an hour** from **08:00 to 18:00, Monday to Friday**, up to **8 hours a day**. Time counts from when someone checks in to that office until they move somewhere else or the morning reset clears their place. Points earned today show at once and move into the balance when the day ends.
+People earn points for time spent in an earning office, like pay by the hour. By default the first office on the map (Main Office) earns **10 points an hour** from **07:00 to 19:00, Monday to Friday**, up to **8 hours a day**. Time counts from when someone checks in to that office until they move somewhere else or the morning reset clears their place.
+
+**Claiming.** Earned points don't reach the balance by themselves: people press **Claim** on `/points`. Claim works from **12:00 to 14:00** and from **17:00 to 23:59**, as often as people like, and takes everything earned so far. Time in the office keeps earning after a claim, so the 8-hour cap still decides the most anyone can get in a day. When someone in the office claims, a box asks whether they're done for today: **Claim and go Off** also sets them to Off, which stops their time counting; **Claim, still working** leaves them where they are. Whatever is still unclaimed at the morning reset (the server's `RESET_AT`, 05:00 by default) is lost, and a new day starts. The board shows each person's balance with what they have waiting to claim.
 
 On a workday, someone who never checks in loses **20 points**. Work from home, Out of Office and Off all count as checking in. Nobody loses points on a day when nobody checks in at all (a holiday, say), or on the day they joined or the day points were turned on. Points never go below zero.
 
-The admin changes all of this under **Reward points** on the Admin page: the rate, the daily cap, the penalty, office hours, workdays and which offices earn (one or more). Setting both the rate and the penalty to 0 turns points off. The admin can also add or take away points by hand, with a reason everyone sees on `/points`.
+The admin changes all of this under **Reward points** on the Admin page: the rate, the daily cap, the penalty, office hours, workdays, which offices earn (one or more) and the claim windows (1 to 4). Office hours must start at or after the morning reset. Setting both the rate and the penalty to 0 turns points off. The admin can also add or take away points by hand, with a reason everyone sees on `/points`.
 
-**Office network check.** List the office's public IP addresses (or IPv4 ranges like `203.0.113.0/24`) to make time count only when someone checks in from the office network. The easy way to add one: open the Admin page in the office on its Wi-Fi with any VPN turned off, select **Add your address**, then save. Leave the list empty to count time from anywhere. Things to know:
+Points trust where people say they are: there is no office network check. On Cloudflare the server only sees each person's public address, and when everyone, in the office or at home, goes out through the company VPN, that address is the same for all of them.
 
-- The check happens when someone arrives in an earning office, from the device they move with. If it fails, `/points` says so and has a **Check again** button. Opening `/points` on the office network also checks again. Time counts from the moment the check passes.
-- Someone in the office with a personal VPN on looks like they are somewhere else, and doesn't earn until they turn it off.
-- Someone at home on a company VPN that goes out through the office's internet looks like they are in the office. If your VPN goes out from a different address than the office Wi-Fi, list only the Wi-Fi's address.
-- On the office server behind a reverse proxy, set `TRUST_PROXY=1` (see [Settings](#settings)). On Cloudflare the address comes from Cloudflare itself and needs nothing.
-- When the server runs inside the office network, people in the office reach it from their private address (like `192.168.1.20`), not the public one, so list the office's private range (like `192.168.1.0/24`). **Add your address** shows which address the server sees. Docker Desktop on Windows or macOS shows every visitor as Docker's own address, so the check can't tell people apart there; Docker on Linux shows real addresses.
+The board's top three (by balance) are on a note on the park's notice board (2D and 3D), which opens `/points`. Points are kept in `data/points.json` on Node.js and under the `points` key on Cloudflare, and go into the admin's backup under `points`. A deleted person's points go with them.
 
-The board's top three are on a note on the park's notice board (2D and 3D), which opens `/points`. Points are kept in `data/points.json` on Node.js and under the `points` key on Cloudflare, and go into the admin's backup under `points`. A deleted person's points go with them.
-
-The API: `GET /api/points` (anyone: the board with today's points so far, the rules without the addresses, the last 7 days and the latest hand changes), `GET /api/points/me` and `POST /api/points/here` (with a login: whether you're in an earning office, whether that time counts, and today's minutes), `GET/PATCH /api/points/admin` (the settings and the caller's own address) and `POST /api/points/admin/adjust` (`username`, `amount`, `reason`), both with `x-admin-password`. Live updates come on `/api/events` as `event: points`.
+The API: `GET /api/points` (anyone: the board with balances and points waiting to be claimed, the rules, the morning reset time, the last 7 days and the latest hand changes), `GET /api/points/me` (with a login: whether you're in an earning office, today's minutes, what you can claim, whether Claim is open, and the open or next claim window), `POST /api/points/claim` (with a login), `GET/PATCH /api/points/admin` and `POST /api/points/admin/adjust` (`username`, `amount`, `reason`), both with `x-admin-password`. Live updates come on `/api/events` as `event: points`.
 
 ## Birthdays and anniversaries
 

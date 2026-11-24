@@ -51,8 +51,6 @@ export interface ApiRequest {
   url: URL;
   header(name: string): string | undefined;
   readJson(maxBytes?: number): Promise<JsonBody>; // maxBytes defaults to MAX_BODY.
-  /** The caller's public address, as the host sees it. Left out where the host can't tell. */
-  ip?: string;
 }
 
 export interface ApiResponse {
@@ -72,6 +70,8 @@ export interface Team {
   requireAdmin(req: ApiRequest): void;
   /** The ids of the offices on the map, the main office first. */
   places(): string[];
+  /** The morning reset, HH:MM on the team's clock (RESET_AT). */
+  resetAt(): string;
   /** Where each person is now, and when they last set their place or status (an ISO instant, or null). */
   whereabouts(): { username: string; place: string | null; updatedAt: string | null }[];
 }
@@ -683,6 +683,7 @@ export function createCore({
     sign: (purpose, text) => crypto.createHmac('sha256', data.secret).update(`${purpose}:${text}`).digest('hex'),
     requireAdmin,
     places: () => data.places.map((p) => p.id),
+    resetAt: () => resetAt,
     whereabouts: () => data.users.map((u) => ({ username: u.username, place: u.place, updatedAt: u.updatedAt })),
   };
 

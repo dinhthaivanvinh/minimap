@@ -28,8 +28,6 @@ export interface AppOptions {
   timeZone?: string;
   now?: () => Date;
   fetchImpl?: typeof fetch;
-  /** Behind a reverse proxy, read the caller's address from the last X-Forwarded-For entry. */
-  trustProxy?: boolean;
 }
 
 const ROOT = path.join(import.meta.dirname, '..');
@@ -58,7 +56,7 @@ function writeFile(file: string, data: unknown): void {
   fs.renameSync(tmp, file);
 }
 
-export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), trustProxy = false, ...options }: AppOptions) {
+export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...options }: AppOptions) {
   const sseClients = new Set<Res>();
   // Each feature keeps its own file next to the team's.
   const basketballFile = path.join(path.dirname(dataFile), 'basketball.json');
@@ -226,14 +224,6 @@ data: ${JSON.stringify(people)}
     req.on('close', () => sseClients.delete(res));
   }
 
-  // Only a trusted proxy's header is believed: anyone can send X-Forwarded-For straight to the server.
-  function clientIp(req: Req): string | undefined {
-    const forwarded = req.headers['x-forwarded-for'];
-    const header = Array.isArray(forwarded) ? forwarded.join(',') : forwarded;
-    if (trustProxy && header) return header.split(',').pop()!.trim() || undefined;
-    return req.socket.remoteAddress;
-  }
-
   async function handleApi(req: Req, res: Res, url: URL): Promise<void> {
     if (req.method === 'GET' && url.pathname === '/api/events') return openEvents(req, res);
     const request: ApiRequest = {
@@ -244,10 +234,7 @@ data: ${JSON.stringify(people)}
         return Array.isArray(value) ? value[0] : value;
       },
       readJson: (maxBytes) => readJson(req, maxBytes),
-      ip: clientIp(req),
     };
-    // Points need the address someone moved from, before the move reaches the core.
-    points.notice(request);
     const { status, body, headers } = await answer(request);
     res.writeHead(status, headers);
     res.end(JSON.stringify(body));
@@ -372,7 +359,6 @@ if (import.meta.main) {
     dataFile: process.env.DATA_FILE || path.join(ROOT, 'data', 'data.json'),
     adminPassword,
     resetAt: process.env.RESET_AT || '05:00',
-    trustProxy: process.env.TRUST_PROXY === '1',
   });
 
   const distIndex = path.join(ROOT, 'dist', 'index.html');

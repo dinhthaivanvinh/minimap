@@ -21,7 +21,7 @@ export interface BoardNote {
   urgent: boolean;
 }
 
-/** Someone on the points note: a short name and their points with today's so far. */
+/** Someone on the points note: a short name and their claimed points. */
 export interface Leader {
   name: string;
   points: number;
@@ -64,7 +64,7 @@ export function topLeaders(view: PointsView | null, users: readonly TeamUser[]):
   if (!view) return null;
   const nickname = new Map(users.map((u) => [u.username, u.nickname]));
   return view.board
-    .map((line) => ({ name: shortName(nickname.get(line.username) ?? line.username), points: line.balance + line.today }))
+    .map((line) => ({ name: shortName(nickname.get(line.username) ?? line.username), points: line.balance }))
     .filter((leader) => leader.points > 0)
     .slice(0, MAX_LEADERS);
 }

@@ -49,7 +49,7 @@ test('the wall TV counts down the vote ending soonest, only in its last hour', (
   assert.equal(countdown([{ ...lunch, voted: lunch.voters }], NOW)?.text, 'Team lunch closes in 42 min, everyone has voted');
 });
 
-test('the points note takes one note’s place, and shows the top 3 with any points by nickname', () => {
+test('the points note takes one note’s place, and shows the top 3 with claimed points by nickname', () => {
   const leaders = [{ name: 'Lan', points: 50 }];
   const board = boardNotes([vote('a', 300), vote('b', 30), vote('c', 61), vote('d', 60)], NOW, leaders);
   assert.equal(board.notes.length, 3);
@@ -59,11 +59,11 @@ test('the points note takes one note’s place, and shows the top 3 with any poi
 
   const view = {
     board: [
-      { username: 'lan', balance: 40, today: 10 },
-      { username: 'mai', balance: 30, today: 0 },
-      { username: 'bob', balance: 0, today: 5 },
-      { username: 'kim', balance: 1, today: 0 },
-      { username: 'zed', balance: 0, today: 0 },
+      { username: 'lan', balance: 50, toClaim: 10 },
+      { username: 'mai', balance: 30, toClaim: 0 },
+      { username: 'bob', balance: 0, toClaim: 5 },
+      { username: 'kim', balance: 1, toClaim: 0 },
+      { username: 'zed', balance: 0, toClaim: 0 },
     ],
   } as PointsView;
   const users = [
@@ -73,7 +73,7 @@ test('the points note takes one note’s place, and shows the top 3 with any poi
   assert.deepEqual(topLeaders(view, users), [
     { name: 'Lan the M…', points: 50 },
     { name: 'Mai', points: 30 },
-    { name: 'bob', points: 5 },
+    { name: 'kim', points: 1 },
   ]);
   assert.equal(topLeaders(null, users), null);
 });

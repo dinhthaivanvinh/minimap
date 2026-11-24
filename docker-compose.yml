@@ -8,7 +8,6 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       RESET_AT: ${RESET_AT:-05:00}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
-      TRUST_PROXY: ${TRUST_PROXY:-}
     volumes:
       - minimap-data:/app/data
 

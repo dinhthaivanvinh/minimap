@@ -1,8 +1,12 @@
 // Reward points: the rules the server and the browser share. People earn points for the time
 // they spend in an earning office (by default the first office on the map) during office hours
-// on workdays, up to a daily cap, like pay by the hour. On a workday, someone who never checks in
-// loses points. A balance never goes below zero. A day when nobody checks in at all costs nobody
-// anything, so holidays and office closures need no setup.
+// on workdays, up to a daily cap, like pay by the hour. Earned points only reach the balance when
+// the person presses Claim, which works during the claim windows (12:00 to 14:00 and 17:00 to
+// 23:59 by default), as often as they like. Points keep coming after a claim while they stay in
+// the office. Points still unclaimed at the morning reset (the server's RESET_AT) are lost, which
+// is what brings people back to the app.
+// On a workday, someone who never checks in loses points. A balance never goes below zero. A day
+// when nobody checks in at all costs nobody anything, so holidays and closures need no setup.
 
 export interface PointsSettings {
   /** Points for each hour in an earning office. */
@@ -18,14 +22,22 @@ export interface PointsSettings {
   workdays: number[];
   /** Ids of the offices that earn. Empty means the first office on the map. */
   offices: string[];
-  /** Public addresses of the office network. Empty means no check. */
-  ips: string[];
+  /** When Claim works, HH:MM to HH:MM on the same day (both minutes included), earliest first. */
+  claimWindows: ClaimWindow[];
+}
+
+export interface ClaimWindow {
+  from: string;
+  to: string;
 }
 
 /** One person's line in a closed day. */
 export interface DayLine {
   username: string;
+  /** Claimed, so already in the balance. */
   earned: number;
+  /** Earned but never claimed, so lost. */
+  lost: number;
   penalty: number;
 }
 
@@ -44,10 +56,12 @@ export interface Adjustment {
 
 /** What everyone may see. */
 export interface PointsView {
-  settings: Omit<PointsSettings, 'ips'> & { ipCheck: boolean; offices: string[] };
+  settings: PointsSettings;
   day: string;
-  /** Everyone's balance with today's points so far, highest first. */
-  board: { username: string; balance: number; today: number }[];
+  /** Everyone's balance, highest first, with the points they have earned today and not claimed yet. */
+  board: { username: string; balance: number; toClaim: number }[];
+  /** The morning reset, when unclaimed points are lost. */
+  resetAt: string;
   history: DayRecord[];
   adjustments: Adjustment[];
 }
@@ -56,27 +70,34 @@ export interface PointsView {
 export interface PointsMe {
   /** In an earning office now. */
   inOffice: boolean;
-  /** That stay earns: the office network was seen, or there is no check. */
-  verified: boolean;
   /** Minutes counted today so far, before the cap. */
   minutesToday: number;
   checkedIn: boolean;
+  /** Earned today and not claimed yet. */
+  toClaim: number;
+  /** A claim window is open now. */
+  claimOpen: boolean;
+  /** The open claim window, or else the next one today, or null after the last one. */
+  window: ClaimWindow | null;
 }
 
 export const DEFAULT_SETTINGS: PointsSettings = {
   perHour: 10,
   dailyCapHours: 8,
   missPenalty: 20,
-  start: '08:00',
-  end: '18:00',
+  start: '07:00',
+  end: '19:00',
   workdays: [1, 2, 3, 4, 5],
   offices: [],
-  ips: [],
+  claimWindows: [
+    { from: '12:00', to: '14:00' },
+    { from: '17:00', to: '23:59' },
+  ],
 };
 
 export const MAX_PER_HOUR = 1000;
 export const MAX_PENALTY = 10_000;
-export const MAX_IPS = 20;
+export const MAX_CLAIM_WINDOWS = 4;
 export const MAX_REASON = 80;
 export const MAX_ADJUST = 100_000;
 /** Closed days kept, and hand changes kept. Old ones are dropped to stay small. */
@@ -106,13 +127,17 @@ export function cleanSettings(value: unknown, places: readonly string[]): Points
   if (!Array.isArray(v.offices) || !v.offices.every((id) => typeof id === 'string' && places.includes(id))) {
     return 'Pick offices that are on the map.';
   }
-  if (!Array.isArray(v.ips) || v.ips.length > MAX_IPS) return `List up to ${MAX_IPS} office addresses.`;
-  const ips: string[] = [];
-  for (const ip of v.ips) {
-    const clean = cleanIp(ip);
-    if (!clean) return `${String(ip).slice(0, 50)} is not an IP address. Use one like 203.0.113.7 or 203.0.113.0/24.`;
-    if (!ips.includes(clean)) ips.push(clean);
+  if (!Array.isArray(v.claimWindows) || !v.claimWindows.length || v.claimWindows.length > MAX_CLAIM_WINDOWS) {
+    return `Set 1 to ${MAX_CLAIM_WINDOWS} claim windows.`;
   }
+  const claimWindows: ClaimWindow[] = [];
+  for (const w of v.claimWindows as unknown[]) {
+    const { from, to } = (typeof w === 'object' && w !== null ? w : {}) as Record<string, unknown>;
+    if (typeof from !== 'string' || !TIME.test(from) || typeof to !== 'string' || !TIME.test(to)) return 'Claim windows must look like 12:00 to 14:00.';
+    if (minuteOf(to) <= minuteOf(from)) return 'A claim window must end after it starts, on the same day.';
+    claimWindows.push({ from, to });
+  }
+  claimWindows.sort((a, b) => minuteOf(a.from) - minuteOf(b.from));
   return {
     perHour: v.perHour,
     dailyCapHours: v.dailyCapHours,
@@ -121,7 +146,7 @@ export function cleanSettings(value: unknown, places: readonly string[]): Points
     end: v.end,
     workdays: [...new Set(v.workdays as number[])].sort(),
     offices: [...new Set(v.offices as string[])],
-    ips,
+    claimWindows,
   };
 }
 
@@ -140,51 +165,6 @@ export function pointsFor(minutes: number, settings: Pick<PointsSettings, 'perHo
 /** A balance after a change, never below zero. */
 export function addPoints(balance: number, change: number): number {
   return Math.max(0, balance + change);
-}
-
-// ---- Addresses ----------------------------------------------------------
-
-function ipv4(text: string): number | null {
-  const parts = text.split('.');
-  if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return null;
-  return parts.reduce((n, p) => n * 256 + Number(p), 0);
-}
-
-/** A plain address the same way every time: IPv4 inside IPv6 (`::ffff:1.2.3.4`) becomes IPv4. */
-export function plainIp(ip: string): string {
-  const text = ip.trim().toLowerCase();
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(text);
-  return mapped ? mapped[1]! : text;
-}
-
-/** An address or IPv4 range for the list, or null when it isn't one. */
-export function cleanIp(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 50) return null;
-  const text = plainIp(value);
-  const [address, bits, extra] = text.split('/');
-  if (extra !== undefined || !address) return null;
-  if (ipv4(address) !== null) {
-    if (bits === undefined) return address;
-    return /^\d{1,2}$/.test(bits) && Number(bits) <= 32 ? `${address}/${Number(bits)}` : null;
-  }
-  // IPv6: only whole addresses, compared as text.
-  return bits === undefined && /^[0-9a-f:]+$/.test(address) && address.includes(':') ? address : null;
-}
-
-/** Whether an address is on the office's list. An empty list lets everyone through. */
-export function ipAllowed(ip: string | undefined, list: readonly string[]): boolean {
-  if (!list.length) return true;
-  if (!ip) return false;
-  const address = plainIp(ip);
-  const n = ipv4(address);
-  return list.some((entry) => {
-    const [base, bits] = entry.split('/');
-    if (bits === undefined) return base === address;
-    const b = ipv4(base!);
-    if (n === null || b === null) return false;
-    const size = 2 ** (32 - Number(bits));
-    return Math.floor(n / size) === Math.floor(b / size);
-  });
 }
 
 // ---- Time ---------------------------------------------------------------
@@ -247,28 +227,67 @@ export function officeMinutes(
   return out;
 }
 
+function previousDay(day: string): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The points day an instant belongs to: the date of the last morning reset (RESET_AT) before it. */
+export function pointsDay(at: Date, resetAt: string, timeZone?: string): string {
+  const { day, minute } = wallClock(at, timeZone);
+  return minute < minuteOf(resetAt) ? previousDay(day) : day;
+}
+
+/**
+ * The claim window for a points day at `at`: the open one, or else the next one that day, or null
+ * once the last has closed (which includes the hours after midnight before the reset).
+ */
+export function claimWindow(
+  at: Date,
+  day: string,
+  settings: Pick<PointsSettings, 'claimWindows'>,
+  timeZone?: string,
+): { open: boolean; window: ClaimWindow | null } {
+  const clock = wallClock(at, timeZone);
+  if (clock.day !== day) return { open: false, window: null };
+  for (const w of settings.claimWindows) {
+    if (clock.minute > minuteOf(w.to)) continue;
+    return { open: clock.minute >= minuteOf(w.from), window: w };
+  }
+  return { open: false, window: null };
+}
+
 export function isWorkday(day: string, settings: Pick<PointsSettings, 'workdays'>): boolean {
   return settings.workdays.includes(new Date(`${day}T12:00:00Z`).getUTCDay());
 }
 
+/** Points earned on a day and not claimed yet. Never below zero, even after the cap is lowered. */
+export function unclaimed(minutes: number, claimed: number, settings: Pick<PointsSettings, 'perHour' | 'dailyCapHours'>): number {
+  return Math.max(0, pointsFor(minutes, settings) - claimed);
+}
+
 /**
- * The points for a closed day, by person. Someone on the day's list who never checked in on a
- * workday loses the penalty, unless nobody checked in at all that day.
+ * A closed day, by person: what they claimed, what they never claimed and so lost, and the
+ * penalty. Someone on the day's list who never checked in on a workday loses the penalty,
+ * unless nobody checked in at all that day.
  */
 export function closeDay(
   day: string,
   roster: readonly string[],
   checkedIn: ReadonlySet<string>,
   minutes: ReadonlyMap<string, number>,
+  claimed: ReadonlyMap<string, number>,
   settings: PointsSettings,
 ): DayLine[] {
   const fines = isWorkday(day, settings) && checkedIn.size > 0 && settings.missPenalty > 0;
-  const names = new Set([...roster, ...minutes.keys()]);
+  const names = new Set([...roster, ...minutes.keys(), ...claimed.keys()]);
   const lines: DayLine[] = [];
   for (const username of names) {
-    const earned = pointsFor(minutes.get(username) ?? 0, settings);
+    const earned = claimed.get(username) ?? 0;
+    const lost = unclaimed(minutes.get(username) ?? 0, earned, settings);
     const penalty = fines && roster.includes(username) && !checkedIn.has(username) ? settings.missPenalty : 0;
-    if (earned || penalty) lines.push({ username, earned, penalty });
+    if (earned || lost || penalty) lines.push({ username, earned, lost, penalty });
   }
   return lines;
 }
@@ -284,6 +303,11 @@ export function workdaysText(days: readonly number[]): string {
   const run = sorted.every((d, i) => i === 0 || d === sorted[i - 1]! + 1);
   if (run && sorted.length > 2) return `${DAY_NAMES[sorted[0]!]} to ${DAY_NAMES[sorted[sorted.length - 1]!]}`;
   return sorted.map((d) => DAY_NAMES[d]).join(', ');
+}
+
+/** Claim windows in words, like "12:00 to 14:00 and 17:00 to 23:59". */
+export function windowsText(windows: readonly ClaimWindow[]): string {
+  return windows.map((w) => `${w.from} to ${w.to}`).join(' and ');
 }
 
 export function pointsText(n: number): string {

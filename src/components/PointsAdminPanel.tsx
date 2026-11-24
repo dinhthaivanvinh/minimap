@@ -1,9 +1,9 @@
 // The admin's "Reward points" panel: the rate, cap, penalty, office hours and workdays, which offices
-// earn, the office network's addresses (with a button that adds the address the admin is using
-// now, for when they are in the office), and changing someone's points by hand with a reason.
+// earn, when Claim works (its windows), and changing someone's points by hand
+// with a reason.
 import { useEffect, useState, type FormEvent } from 'react';
 import styled from 'styled-components';
-import { MAX_IPS, MAX_REASON, type PointsSettings } from '../../shared/points.ts';
+import { MAX_CLAIM_WINDOWS, MAX_REASON, type ClaimWindow, type PointsSettings } from '../../shared/points.ts';
 import type { Place, TeamUser } from '../../shared/types.ts';
 import { useMessage } from '../lib/hooks.ts';
 import { theme } from '../styles/theme.ts';
@@ -13,7 +13,7 @@ import { StatusLine } from './SheetNav.tsx';
 type AdminCall = <T = unknown>(method: string, url: string, body?: unknown) => Promise<T>;
 type ShowMessage = (text: string, isError?: boolean) => void;
 type Runner = (action: () => Promise<unknown>, done: string, show: ShowMessage) => Promise<void>;
-type AdminView = { settings: PointsSettings; ip: string | null };
+type AdminView = { settings: PointsSettings };
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -21,16 +21,6 @@ const Fields = styled.div`
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px;
-`;
-
-const Addresses = styled.textarea`
-  width: 100%;
-  min-height: 80px;
-  padding: 8px 10px;
-  border: ${theme.thinLine};
-  border-radius: 12px;
-  font: 600 15px/1.4 ui-monospace, monospace;
-  resize: vertical;
 `;
 
 const Select = styled.select`
@@ -45,8 +35,6 @@ const toggle = <T,>(list: T[], item: T) => (list.includes(item) ? list.filter((x
 
 export function PointsAdminPanel({ users, places, call, run }: { users: TeamUser[]; places: Place[]; call: AdminCall; run: Runner }) {
   const [settings, setSettings] = useState<PointsSettings | null>(null);
-  const [ipText, setIpText] = useState('');
-  const [myIp, setMyIp] = useState<string | null>(null);
   const [message, showMessage] = useMessage(2500);
   const [adjustMessage, showAdjustMessage] = useMessage(2500);
   const [who, setWho] = useState('');
@@ -55,8 +43,6 @@ export function PointsAdminPanel({ users, places, call, run }: { users: TeamUser
 
   function apply(view: AdminView) {
     setSettings(view.settings);
-    setIpText(view.settings.ips.join('\n'));
-    setMyIp(view.ip);
   }
 
   useEffect(() => {
@@ -65,7 +51,6 @@ export function PointsAdminPanel({ users, places, call, run }: { users: TeamUser
 
   if (!settings) return null;
   const set = (change: Partial<PointsSettings>) => setSettings({ ...settings, ...change });
-  const ips = ipText.split(/[\s,]+/).filter(Boolean);
   const number = (key: 'perHour' | 'dailyCapHours' | 'missPenalty') => ({
     type: 'number' as const,
     min: key === 'dailyCapHours' ? 1 : 0,
@@ -77,7 +62,7 @@ export function PointsAdminPanel({ users, places, call, run }: { users: TeamUser
 
   function save(event: FormEvent) {
     event.preventDefault();
-    void run(() => call<AdminView>('PATCH', '/api/points/admin', { ...settings, ips }).then(apply), 'Points settings saved', showMessage);
+    void run(() => call<AdminView>('PATCH', '/api/points/admin', settings).then(apply), 'Points settings saved', showMessage);
   }
 
   function adjust(event: FormEvent) {
@@ -145,27 +130,40 @@ export function PointsAdminPanel({ users, places, call, run }: { users: TeamUser
           })}
         </Chips>
 
-        <Field>
-          <FieldLabel>Office network addresses (one a line, up to {MAX_IPS})</FieldLabel>
-          <Addresses
-            value={ipText}
-            spellCheck={false}
-            placeholder="Empty: time counts from anywhere"
-            onChange={(e) => setIpText(e.target.value)}
-          />
-        </Field>
-        <PanelHint style={{ margin: 0 }}>
-          With addresses here, time only counts when someone checks in from the office network. To add it, open this page on the office
-          Wi-Fi with any VPN turned off, press the button, then save. Someone at home on a company VPN that goes through the office looks
-          the same as someone in the office. Ranges like 203.0.113.0/24 work too. Saving a new list checks everyone already in the office
-          again; anyone not seen on the network yet starts earning when they open Reward points.
-        </PanelHint>
-        <Row style={{ flexWrap: 'wrap' }}>
-          {myIp && (
-            <Button type="button" disabled={ips.includes(myIp)} onClick={() => setIpText([...ips, myIp].join('\n'))}>
-              {ips.includes(myIp) ? `Your address ${myIp} is on the list` : `Add your address (${myIp})`}
+        <FieldLabel id="points-claims">Claim works from … to …</FieldLabel>
+        <Row role="group" aria-labelledby="points-claims" style={{ flexWrap: 'wrap' }}>
+          {settings.claimWindows.map((w, i) => {
+            const edit = (change: Partial<ClaimWindow>) =>
+              set({ claimWindows: settings.claimWindows.map((x, j) => (j === i ? { ...x, ...change } : x)) });
+            return (
+              <Row key={i} style={{ gap: 4 }}>
+                <Input type="time" required aria-label={`Claim window ${i + 1} starts`} value={w.from} onChange={(e) => edit({ from: e.target.value })} />
+                <span>to</span>
+                <Input type="time" required aria-label={`Claim window ${i + 1} ends`} value={w.to} onChange={(e) => edit({ to: e.target.value })} />
+                {settings.claimWindows.length > 1 && (
+                  <Button
+                    type="button"
+                    aria-label={`Remove claim window ${w.from} to ${w.to}`}
+                    onClick={() => set({ claimWindows: settings.claimWindows.filter((_, j) => j !== i) })}
+                  >
+                    ×
+                  </Button>
+                )}
+              </Row>
+            );
+          })}
+          {settings.claimWindows.length < MAX_CLAIM_WINDOWS && (
+            <Button type="button" onClick={() => set({ claimWindows: [...settings.claimWindows, { from: settings.end, to: '23:59' }] })}>
+              Add a window
             </Button>
           )}
+        </Row>
+        <PanelHint style={{ margin: 0 }}>
+          Earned points reach someone’s balance only when they press Claim on Reward points, which works during these windows, as often as
+          they like. Time in the office keeps earning after a claim. Whatever is still unclaimed at the morning reset (the server’s
+          RESET_AT) is lost, and a new day starts.
+        </PanelHint>
+        <Row style={{ flexWrap: 'wrap' }}>
           <Button type="submit" $primary>
             Save points settings
           </Button>
