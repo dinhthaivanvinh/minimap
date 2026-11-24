@@ -149,6 +149,27 @@ test('with office addresses set, only a stay seen on the office network earns', 
   assert.equal((await api('POST', '/api/points/here', {}, as('lan'))).status, 409);
 });
 
+test('changing the office addresses checks the stays already running again', async (t) => {
+  const { api, join, go, total, mine, later } = await setup(t);
+  await join('lan');
+  await go('lan', 'main'); // No list yet: the stay earns.
+  later(HOUR);
+  assert.deepEqual(await total('lan'), { balance: 0, today: 10 });
+
+  // An office address that isn't this computer's stops the stay that was already running.
+  const { settings } = (await api('GET', '/api/points/admin', undefined, ADMIN)).json;
+  assert.equal((await api('PATCH', '/api/points/admin', { ...settings, ips: ['203.0.113.7'] }, ADMIN)).status, 200);
+  assert.equal((await mine('lan')).verified, false);
+  later(HOUR);
+  assert.deepEqual(await total('lan'), { balance: 0, today: 10 });
+
+  // Adding this computer's range starts it again from now, without pressing Check again.
+  // Only the board is read here: opening "my points" would check the network by itself.
+  await api('PATCH', '/api/points/admin', { ...settings, ips: ['127.0.0.0/8'] }, ADMIN);
+  later(HOUR);
+  assert.deepEqual(await total('lan'), { balance: 0, today: 20 });
+});
+
 test('the admin picks which offices earn, and changes balances by hand with a reason', async (t) => {
   const { api, join, go, total, later, view } = await setup(t);
   await join('lan');

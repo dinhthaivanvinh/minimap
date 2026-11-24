@@ -1,7 +1,7 @@
 // The park's notice board in 3D: a wooden board on two posts, with the open votes drawn
 // as paper notes on a canvas texture (lib/noticeBoard.ts, the same notes as 2D, with the
 // reward points leaders on one). Clicks
-// are picked by raycast; an HTML link anchored to it serves keyboards and screen readers.
+// are picked by raycast; HTML links anchored to it (Map3D.tsx) serve keyboards and screen readers.
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { Board, Leader } from '../lib/noticeBoard.ts';

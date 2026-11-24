@@ -438,7 +438,12 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
       await change((s) => {
         // Time so far counts under the old rules.
         settle(s, now(), timeZone);
+        const addressesChanged = JSON.stringify(s.settings.ips) !== JSON.stringify(settings.ips);
         s.settings = settings;
+        // Stays already running are checked against the new list too, so adding addresses
+        // mid-day applies to everyone in the office, not only to people who arrive later.
+        // Someone whose address isn't known yet starts earning when they open the points page.
+        if (addressesChanged) for (const [name, stay] of s.stays) stay.verified = ipAllowed(lastIp.get(name), settings.ips);
       });
       // Stays that no longer earn end, and new earning offices start stays.
       await observe();

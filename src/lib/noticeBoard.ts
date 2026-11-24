@@ -69,6 +69,11 @@ export function topLeaders(view: PointsView | null, users: readonly TeamUser[]):
     .slice(0, MAX_LEADERS);
 }
 
+/** What the points note says to screen readers, the same on both maps. */
+export function leadersLabel(leaders: readonly Leader[]): string {
+  return leaders.length ? `Top points: ${leaders.map((l) => `${l.name} ${l.points}`).join(', ')}` : 'Reward points: nobody has points yet';
+}
+
 /** Where a note links to. The board itself links to /vote. */
 export function voteLink(id: string): string {
   return `/vote?id=${encodeURIComponent(id)}`;

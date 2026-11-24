@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import type { PointsView } from '../../shared/points.ts';
 import type { TeamUser } from '../../shared/types.ts';
 import type { VoteView } from '../../shared/vote.ts';
-import { boardNotes, countdown, shortTitle, topLeaders, voteLink } from './noticeBoard.ts';
+import { boardNotes, countdown, leadersLabel, shortTitle, topLeaders, voteLink } from './noticeBoard.ts';
 
 const NOW = new Date('2026-11-06T12:00:00Z');
 const vote = (id: string, minutes: number, title = id): VoteView => ({
@@ -76,4 +76,9 @@ test('the points note takes one note’s place, and shows the top 3 with any poi
     { name: 'bob', points: 5 },
   ]);
   assert.equal(topLeaders(null, users), null);
+});
+
+test('the points note reads its leaders out, or says nobody has points yet', () => {
+  assert.equal(leadersLabel([{ name: 'Mai', points: 30 }, { name: 'bob', points: 5 }]), 'Top points: Mai 30, bob 5');
+  assert.equal(leadersLabel([]), 'Reward points: nobody has points yet');
 });

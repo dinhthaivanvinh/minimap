@@ -128,7 +128,7 @@ export function PointsPage() {
                 </PanelHint>
               )}
               {me?.inOffice && me.verified && (
-                <PanelHint style={{ margin: '8px 0 0' }}>You’re earning in {officeText} ({me.minutesToday} minutes counted today).</PanelHint>
+                <PanelHint style={{ margin: '8px 0 0' }}>You’re earning in {officeText} ({me.minutesToday} {me.minutesToday === 1 ? 'minute' : 'minutes'} counted today).</PanelHint>
               )}
               {me?.inOffice && !me.verified && (
                 <>

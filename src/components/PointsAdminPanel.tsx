@@ -157,7 +157,8 @@ export function PointsAdminPanel({ users, places, call, run }: { users: TeamUser
         <PanelHint style={{ margin: 0 }}>
           With addresses here, time only counts when someone checks in from the office network. To add it, open this page on the office
           Wi-Fi with any VPN turned off, press the button, then save. Someone at home on a company VPN that goes through the office looks
-          the same as someone in the office. Ranges like 203.0.113.0/24 work too.
+          the same as someone in the office. Ranges like 203.0.113.0/24 work too. Saving a new list checks everyone already in the office
+          again; anyone not seen on the network yet starts earning when they open Reward points.
         </PanelHint>
         <Row style={{ flexWrap: 'wrap' }}>
           {myIp && (

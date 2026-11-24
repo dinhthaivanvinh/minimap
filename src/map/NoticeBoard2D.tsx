@@ -6,7 +6,7 @@ import styled, { css, keyframes } from 'styled-components';
 import type { VoteView } from '../../shared/vote.ts';
 import { useNow } from '../lib/hooks.ts';
 import type { Rect } from '../lib/layout.ts';
-import { boardNotes, voteLink, type Leader } from '../lib/noticeBoard.ts';
+import { boardNotes, leadersLabel, voteLink, type Leader } from '../lib/noticeBoard.ts';
 import { media, theme } from '../styles/theme.ts';
 
 const NOTE_COLOURS = ['#fff4b8', '#c9f2dc', '#ffd6e6', '#ffffff'];
@@ -215,7 +215,7 @@ export function NoticeBoard2D({ spot, width, height, votes, leaders }: { spot: R
             <Note
               href="/points"
               $urgent={false}
-              aria-label={leaders.length ? `Top points: ${leaders.map((l) => `${l.name} ${l.points}`).join(', ')}` : 'Reward points: nobody has points yet'}
+              aria-label={leadersLabel(leaders)}
               style={{ background: NOTE_COLOURS[1], '--tilt': '2deg' } as CSSProperties}
             >
               <NoteTitle style={{ WebkitLineClamp: 1 }}>Top points</NoteTitle>
