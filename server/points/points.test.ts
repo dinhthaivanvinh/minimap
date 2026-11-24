@@ -181,6 +181,10 @@ test('the admin picks which offices earn and the claim windows, and changes bala
   const early = await api('PATCH', '/api/points/admin', { ...settings, start: '04:00' }, ADMIN);
   assert.equal(early.status, 400);
   assert.match(early.json.error, /morning reset \(05:00\)/);
+  // A window before the reset falls on the next date, so it could never open.
+  const night = await api('PATCH', '/api/points/admin', { ...settings, claimWindows: [{ from: '01:00', to: '04:00' }] }, ADMIN);
+  assert.equal(night.status, 400);
+  assert.match(night.json.error, /Claim windows must start at or after the morning reset \(05:00\)/);
   assert.equal((await api('PATCH', '/api/points/admin', settings)).status, 401);
 
   await go('lan', 'main');

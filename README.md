@@ -291,7 +291,7 @@ People earn points for time spent in an earning office, like pay by the hour. By
 
 On a workday, someone who never checks in loses **20 points**. Work from home, Out of Office and Off all count as checking in. Nobody loses points on a day when nobody checks in at all (a holiday, say), or on the day they joined or the day points were turned on. Points never go below zero.
 
-The admin changes all of this under **Reward points** on the Admin page: the rate, the daily cap, the penalty, office hours, workdays, which offices earn (one or more) and the claim windows (1 to 4). Office hours must start at or after the morning reset. Setting both the rate and the penalty to 0 turns points off. The admin can also add or take away points by hand, with a reason everyone sees on `/points`.
+The admin changes all of this under **Reward points** on the Admin page: the rate, the daily cap, the penalty, office hours, workdays, which offices earn (one or more) and the claim windows (1 to 4). Office hours and claim windows must start at or after the morning reset. Setting both the rate and the penalty to 0 turns points off. The admin can also add or take away points by hand, with a reason everyone sees on `/points`.
 
 Points trust where people say they are: there is no office network check. On Cloudflare the server only sees each person's public address, and when everyone, in the office or at home, goes out through the company VPN, that address is the same for all of them.
 

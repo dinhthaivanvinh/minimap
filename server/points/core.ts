@@ -440,10 +440,15 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
       team.requireAdmin(req);
       const settings = cleanSettings(await req.readJson(), team.places());
       if (typeof settings === 'string') throw new ApiError(400, settings);
-      // A day runs from one morning reset to the next. Office hours after the reset keep a day's
-      // office time and its claims on the same date.
-      if (minuteOf(settings.start) < minuteOf(team.resetAt())) {
+      // A day runs from one morning reset to the next. Office hours and claim windows after the
+      // reset keep a day's office time and its claims on the same date; a window before it would
+      // fall on the next date and never open.
+      const resetAt = minuteOf(team.resetAt());
+      if (minuteOf(settings.start) < resetAt) {
         throw new ApiError(400, `Office hours must start at or after the morning reset (${team.resetAt()}).`);
+      }
+      if (settings.claimWindows.some((w) => minuteOf(w.from) < resetAt)) {
+        throw new ApiError(400, `Claim windows must start at or after the morning reset (${team.resetAt()}).`);
       }
       await change((s) => {
         // Time so far counts under the old rules.

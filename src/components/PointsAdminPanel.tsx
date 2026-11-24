@@ -161,7 +161,7 @@ export function PointsAdminPanel({ users, places, call, run }: { users: TeamUser
         <PanelHint style={{ margin: 0 }}>
           Earned points reach someone’s balance only when they press Claim on Reward points, which works during these windows, as often as
           they like. Time in the office keeps earning after a claim. Whatever is still unclaimed at the morning reset (the server’s
-          RESET_AT) is lost, and a new day starts.
+          RESET_AT) is lost, and a new day starts, so windows must start at or after the reset.
         </PanelHint>
         <Row style={{ flexWrap: 'wrap' }}>
           <Button type="submit" $primary>
