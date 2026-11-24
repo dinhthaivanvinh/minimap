@@ -689,7 +689,7 @@ function isPlain(look: Ambience): boolean {
   return look.daylight === 1 && look.warmth === 0 && look.weather.gloom === 0;
 }
 
-export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, onPet, pet, onAssemble, onPicker, look, votes, voteMarks, reactions, mover, onMove }: MapProps) {
+export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, onPet, pet, onAssemble, onPicker, look, votes, leaders, voteMarks, reactions, mover, onMove }: MapProps) {
   const attendance = officeAssembly(state);
   const fillRef = useRef<HTMLDivElement>(null);
   const planRef = useRef<HTMLDivElement>(null);
@@ -808,7 +808,7 @@ export default function Map2D({ state, isDimmed, selected, onSelect, onArcade, o
           {pet && catSpot && (
             <OfficeCat2D pet={pet} x={percent(catSpot.x, layout.width)} y={percent(catSpot.y, layout.height)} width={catSpot.size * scale} onOpen={onPet} />
           )}
-          {board && <NoticeBoard2D spot={board} width={layout.width} height={layout.height} votes={votes} />}
+          {board && <NoticeBoard2D spot={board} width={layout.width} height={layout.height} votes={votes} leaders={leaders} />}
           {hasWeather(look) && <WeatherOverlay look={look} reduced={reduced} />}
           {street && <Traffic2D street={street} scale={scale} plan={planRef} daylight={look.daylight} reduced={reduced} />}
           {street && voteMarks?.result && <ResultBanner2D result={voteMarks.result} street={street} width={layout.width} height={layout.height} />}

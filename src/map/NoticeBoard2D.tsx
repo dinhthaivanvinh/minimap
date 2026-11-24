@@ -1,11 +1,12 @@
 // The park's notice board on the 2D map: a cork board with a paper note for each open
-// vote (lib/noticeBoard.ts). A note opens its vote, and the board opens the /vote page.
+// vote (lib/noticeBoard.ts), and one with the reward points leaders. A note opens its vote or
+// the /points page, and the board opens the /vote page.
 import type { CSSProperties } from 'react';
 import styled, { css, keyframes } from 'styled-components';
 import type { VoteView } from '../../shared/vote.ts';
 import { useNow } from '../lib/hooks.ts';
 import type { Rect } from '../lib/layout.ts';
-import { boardNotes, voteLink } from '../lib/noticeBoard.ts';
+import { boardNotes, voteLink, type Leader } from '../lib/noticeBoard.ts';
 import { media, theme } from '../styles/theme.ts';
 
 const NOTE_COLOURS = ['#fff4b8', '#c9f2dc', '#ffd6e6', '#ffffff'];
@@ -144,6 +145,17 @@ const NoteTime = styled.span`
   font-weight: 700;
 `;
 
+const Leaders = styled.ol`
+  margin: 1.5cqw 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 6cqw;
+  font-weight: 700;
+
+  li { display: flex; justify-content: space-between; gap: 2cqw; white-space: nowrap; }
+  span { overflow: hidden; text-overflow: ellipsis; }
+`;
+
 const More = styled.span`
   position: absolute;
   right: 4%;
@@ -156,9 +168,9 @@ const More = styled.span`
   pointer-events: none;
 `;
 
-export function NoticeBoard2D({ spot, width, height, votes }: { spot: Rect; width: number; height: number; votes: VoteView[] }) {
+export function NoticeBoard2D({ spot, width, height, votes, leaders }: { spot: Rect; width: number; height: number; votes: VoteView[]; leaders: Leader[] | null }) {
   const now = useNow(30_000, votes);
-  const { notes, more } = boardNotes(votes, now);
+  const { notes, more } = boardNotes(votes, now, leaders);
   const style: CSSProperties = {
     left: `${(spot.x / width) * 100}%`,
     top: `${(spot.y / height) * 100}%`,
@@ -191,10 +203,34 @@ export function NoticeBoard2D({ spot, width, height, votes }: { spot: Rect; widt
           </li>
         ))}
         {!notes.length && (
-          <li style={{ gridColumn: '1 / -1' }}>
+          <li style={leaders ? undefined : { gridColumn: '1 / -1' }}>
             <Note href="/vote" $urgent={false} style={{ background: NOTE_COLOURS[3] }}>
               <NoteTitle>No open votes.</NoteTitle>
               <NoteTime>Start one</NoteTime>
+            </Note>
+          </li>
+        )}
+        {leaders && (
+          <li>
+            <Note
+              href="/points"
+              $urgent={false}
+              aria-label={leaders.length ? `Top points: ${leaders.map((l) => `${l.name} ${l.points}`).join(', ')}` : 'Reward points: nobody has points yet'}
+              style={{ background: NOTE_COLOURS[1], '--tilt': '2deg' } as CSSProperties}
+            >
+              <NoteTitle style={{ WebkitLineClamp: 1 }}>Top points</NoteTitle>
+              {leaders.length ? (
+                <Leaders>
+                  {leaders.map((leader, i) => (
+                    <li key={i}>
+                      <span>{leader.name}</span>
+                      <b>{leader.points}</b>
+                    </li>
+                  ))}
+                </Leaders>
+              ) : (
+                <NoteTime>None yet</NoteTime>
+              )}
             </Note>
           </li>
         )}

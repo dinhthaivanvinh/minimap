@@ -208,6 +208,7 @@ export default function Map3D({
   onAssemble,
   look,
   votes,
+  leaders,
   voteMarks,
   reactions,
   mover,
@@ -291,6 +292,10 @@ export default function Map3D({
   useEffect(() => {
     sceneRef.current?.setVotes(votes);
   }, [votes]);
+
+  useEffect(() => {
+    sceneRef.current?.setLeaders(leaders);
+  }, [leaders]);
 
   useEffect(() => {
     sceneRef.current?.setVoteMarks(voteMarks);

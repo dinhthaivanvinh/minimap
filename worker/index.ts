@@ -1,7 +1,7 @@
 // Team Minimap on Cloudflare Workers.
 //
 // Cloudflare serves the built pages in dist/ by itself. Everything else comes here:
-// /me, /admin and /vote get the same page as /, and /api/ goes to one Durable Object that holds
+// /me, /admin, /vote and /points get the same page as /, and /api/ goes to one Durable Object that holds
 // the whole team. It runs the same API as the Node.js server (server/core.ts and each
 // feature's folder), keeps the data in its own storage (one key for the team and one for
 // each feature), and sends live updates to every open map.
@@ -12,6 +12,7 @@ import { createVote, type Votes } from '../server/vote/core.ts';
 import { createFund, type Fund } from '../server/fund/core.ts';
 import { createPet, type Pet } from '../server/pet/core.ts';
 import { createCelebrate, type Celebrate } from '../server/celebrate/core.ts';
+import { createPoints, type Points } from '../server/points/core.ts';
 import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type Core, type JsonBody } from '../server/core.ts';
 
 interface Env {
@@ -23,7 +24,7 @@ interface Env {
 }
 
 // React decides which page to show, so these serve the same file as /.
-const PAGES = new Set(['/me', '/account', '/admin', '/vote']);
+const PAGES = new Set(['/me', '/account', '/admin', '/vote', '/points']);
 const PING_MS = 25 * 1000;
 const encoder = new TextEncoder();
 
@@ -46,6 +47,11 @@ function petEvent(view: unknown): string {
 data: ${JSON.stringify(view)}
 
 `;
+}
+
+// Reward points too.
+function pointsEvent(view: unknown): string {
+  return `event: points\ndata: ${JSON.stringify(view)}\n\n`;
 }
 
 // Birthdays and anniversaries too.
@@ -95,6 +101,8 @@ export class Minimap extends DurableObject<Env> {
   private fund!: Fund;
   private pet!: Pet;
   private celebrate!: Celebrate;
+  // Missing until the constructor creates it, after the core.
+  private points: Points | undefined;
   private clients = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private ticker: ReturnType<typeof setInterval> | undefined;
   private weatherAt = 0;
@@ -112,6 +120,8 @@ export class Minimap extends DurableObject<Env> {
         onChange: (state) => {
           this.sendAll(`data: ${JSON.stringify(state)}\n\n`);
           this.syncAlarm();
+          // Points start and end stays when people move.
+          if (this.points) this.ctx.waitUntil(this.points.observe());
         },
         adminPassword: env.ADMIN_PASSWORD ?? '',
         resetAt: env.RESET_AT || '05:00',
@@ -172,6 +182,17 @@ export class Minimap extends DurableObject<Env> {
       });
       this.core.attach(this.celebrate.feature);
 
+      const pointsSaved = await ctx.storage.get<string>('points');
+      this.points = createPoints({
+        saved: pointsSaved ? JSON.parse(pointsSaved) : null,
+        // Awaited, so a reply only says a change is stored once it is.
+        save: (data) => ctx.storage.put('points', JSON.stringify(data)),
+        team: this.core.team,
+        onChange: (view) => this.sendAll(pointsEvent(view)),
+        timeZone: env.TZ || 'UTC',
+      });
+      this.core.attach(this.points.feature);
+
       this.runTimedChanges();
       this.core.save();
       this.syncAlarm();
@@ -193,6 +214,8 @@ export class Minimap extends DurableObject<Env> {
     this.core.runScheduledIfDue();
     this.celebrate.tick();
     this.ctx.waitUntil(this.pet.tick());
+    // Points need no alarm either: time in the office is worked out from when a stay began.
+    if (this.points) this.ctx.waitUntil(this.points.tick());
   }
 
   private syncAlarm(): void {
@@ -214,10 +237,14 @@ export class Minimap extends DurableObject<Env> {
       url,
       header: (name) => request.headers.get(name) ?? undefined,
       readJson: (maxBytes) => readJson(request, maxBytes),
+      // Set by Cloudflare itself, so a caller can't fake it.
+      ip: request.headers.get('cf-connecting-ip') ?? undefined,
     };
+    // Points need the address someone moved from, before the move reaches the core.
+    this.points!.notice(req);
     const { status, body, headers } =
       (await this.basketball.handle(req)) ?? (await this.votes.handle(req)) ?? (await this.fund.handle(req)) ?? (await this.celebrate.handle(req))
-      ?? (await this.pet.handle(req)) ?? (await this.core.handle(req));
+      ?? (await this.pet.handle(req)) ?? (await this.points!.handle(req)) ?? (await this.core.handle(req));
     return new Response(JSON.stringify(body), { status, headers });
   }
 
@@ -241,6 +268,7 @@ export class Minimap extends DurableObject<Env> {
     this.send(writer, fundEvent(this.fund.people()));
     this.send(writer, celebrateEvent(this.celebrate.view()));
     this.send(writer, petEvent(this.pet.view()));
+    this.send(writer, pointsEvent(this.points!.view()));
     // While a map is open, keep the connection alive and the reset and weather on time.
     this.ticker ??= setInterval(() => {
       this.sendAll(': ping\n\n');

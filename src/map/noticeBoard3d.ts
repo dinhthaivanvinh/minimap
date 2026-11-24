@@ -1,9 +1,10 @@
 // The park's notice board in 3D: a wooden board on two posts, with the open votes drawn
-// as paper notes on a canvas texture (lib/noticeBoard.ts, the same notes as 2D). Clicks
+// as paper notes on a canvas texture (lib/noticeBoard.ts, the same notes as 2D, with the
+// reward points leaders on one). Clicks
 // are picked by raycast; an HTML link anchored to it serves keyboards and screen readers.
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import type { Board } from '../lib/noticeBoard.ts';
+import type { Board, Leader } from '../lib/noticeBoard.ts';
 
 const CANVAS_W = 528;
 const CANVAS_H = 360;
@@ -116,9 +117,12 @@ export function createNoticeBoard(): NoticeBoard3D {
     ctx.lineWidth = 6;
     ctx.strokeRect(3, 3, CANVAS_W - 6, CANVAS_H - 6);
 
-    const notes = board.notes.length
+    const notes: { title: string; left: string; urgent: boolean; link: string; leaders?: Leader[] }[] = board.notes.length
       ? board.notes.map((n) => ({ title: n.title, left: n.left, urgent: n.urgent, link: `/vote?id=${encodeURIComponent(n.id)}` }))
       : [{ title: 'No open votes.', left: 'Start one', urgent: false, link: '/vote' }];
+    if (board.leaders) {
+      notes.push({ title: 'Top points', left: board.leaders.length ? '' : 'None yet', urgent: false, link: '/points', leaders: board.leaders });
+    }
     const placed = noteRects(notes.length);
     rects = [];
     notes.forEach((note, i) => {
@@ -145,6 +149,23 @@ export function createNoticeBoard(): NoticeBoard3D {
       const size = Math.round(Math.min(rect.h * 0.27, 42));
       ctx.font = `800 ${size}px 'Baloo 2', 'Segoe UI', sans-serif`;
       ctx.textBaseline = 'top';
+      if (note.leaders?.length) {
+        // The points note: its title, then a line for each leader with their points on the right.
+        ctx.fillText(note.title, -rect.w / 2 + 10, -rect.h / 2 + 24, rect.w - 20);
+        const small = Math.round(size * 0.78);
+        ctx.font = `700 ${small}px 'Nunito', 'Segoe UI', sans-serif`;
+        note.leaders.forEach((leader, n) => {
+          const y = -rect.h / 2 + 24 + size * 1.1 + n * small * 1.15;
+          const points = String(leader.points);
+          const pointsWidth = ctx.measureText(points).width;
+          ctx.textAlign = 'right';
+          ctx.fillText(points, rect.w / 2 - 10, y);
+          ctx.textAlign = 'left';
+          ctx.fillText(leader.name, -rect.w / 2 + 10, y, rect.w - 30 - pointsWidth);
+        });
+        ctx.restore();
+        return;
+      }
       lines(ctx, note.title, rect.w - 20).forEach((line, n) => ctx.fillText(line, -rect.w / 2 + 10, -rect.h / 2 + 24 + n * size * 1.02, rect.w - 20));
       ctx.font = `700 ${Math.round(size * 0.85)}px 'Nunito', 'Segoe UI', sans-serif`;
       ctx.textBaseline = 'bottom';

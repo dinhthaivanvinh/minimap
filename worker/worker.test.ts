@@ -109,7 +109,7 @@ async function openEvents(signal: AbortSignal, url: URL) {
 
 test('every page serves the React app, built files come from the assets, and the rest is 404', async (t) => {
   const { api } = await setup(t);
-  for (const page of ['/', '/me', '/account', '/admin', '/vote']) {
+  for (const page of ['/', '/me', '/account', '/admin', '/vote', '/points']) {
     const res = await api('GET', page);
     assert.equal(res.status, 200, page);
     assert.equal(res.text, PAGE, page);
@@ -319,6 +319,28 @@ test('the office cat survives Durable Object eviction, and open maps get it as i
   assert.equal(backup.pet.name, 'Tofu');
   const live = await events();
   assert.equal((await live.nextEvent('pet')).name, 'Tofu');
+});
+
+test('reward points and stays survive Durable Object eviction, the caller’s address comes from Cloudflare, and maps get a points event', async (t) => {
+  const { api, join, me, evict, events } = await setup(t);
+  const lan = await join('lan');
+  const admin = (await api('GET', '/api/points/admin', undefined, ADMIN)).json;
+  // workerd sets CF-Connecting-IP for local requests too.
+  assert.equal(typeof admin.ip, 'string');
+  assert.equal((await api('PATCH', '/api/points/admin', { ...admin.settings, ips: [admin.ip] }, ADMIN)).status, 200);
+  assert.equal((await api('POST', '/api/points/admin/adjust', { username: 'lan', amount: 25, reason: 'Welcome' }, ADMIN)).status, 200);
+  assert.equal((await me(lan, { place: 'main' })).status, 200);
+  await evict();
+
+  const mine = (await api('GET', '/api/points/me', undefined, { Authorization: `Bearer ${lan}` })).json;
+  assert.deepEqual([mine.inOffice, mine.verified], [true, true]);
+  const view = (await api('GET', '/api/points')).json;
+  assert.equal(view.board[0].balance, 25);
+  assert.equal(view.settings.ipCheck, true);
+  const backup = (await api('GET', '/api/admin/data', undefined, ADMIN)).json;
+  assert.deepEqual(backup.points.settings.ips, [admin.ip]);
+  const live = await events();
+  assert.equal((await live.nextEvent('points')).board[0].username, 'lan');
 });
 
 test('birthdays and wishes survive Durable Object eviction, and open maps get them as their own event', async (t) => {

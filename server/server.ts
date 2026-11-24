@@ -9,6 +9,7 @@ import { createBasketball, takeOldBasketball } from './basketball/core.ts';
 import { createCelebrate } from './celebrate/core.ts';
 import { createFund } from './fund/core.ts';
 import { createPet } from './pet/core.ts';
+import { createPoints } from './points/core.ts';
 import { FUND_EVERY_MS } from '../shared/fund.ts';
 import { createVote } from './vote/core.ts';
 import { ApiError, createCore, MAX_BODY, WEATHER_EVERY_MS, type ApiRequest, type JsonBody } from './core.ts';
@@ -23,8 +24,12 @@ export interface AppOptions {
   publicDir?: string;
   adminPassword: string;
   resetAt?: string;
+  /** The team's time zone. Left out, the computer's own (the TZ variable) is used. */
+  timeZone?: string;
   now?: () => Date;
   fetchImpl?: typeof fetch;
+  /** Behind a reverse proxy, read the caller's address from the last X-Forwarded-For entry. */
+  trustProxy?: boolean;
 }
 
 const ROOT = path.join(import.meta.dirname, '..');
@@ -39,7 +44,7 @@ const MIME: Record<string, string> = {
 };
 
 // React decides which page to show, so these all serve the same file.
-const PAGES = new Set(['/', '/me', '/account', '/admin', '/vote']);
+const PAGES = new Set(['/', '/me', '/account', '/admin', '/vote', '/points']);
 
 function readFile(file: string): any {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
@@ -53,7 +58,7 @@ function writeFile(file: string, data: unknown): void {
   fs.renameSync(tmp, file);
 }
 
-export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...options }: AppOptions) {
+export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), trustProxy = false, ...options }: AppOptions) {
   const sseClients = new Set<Res>();
   // Each feature keeps its own file next to the team's.
   const basketballFile = path.join(path.dirname(dataFile), 'basketball.json');
@@ -61,14 +66,21 @@ export function createApp({ dataFile, publicDir = path.join(ROOT, 'dist'), ...op
   const fundFile = path.join(path.dirname(dataFile), 'fund.json');
   const petFile = path.join(path.dirname(dataFile), 'pet.json');
   const celebrateFile = path.join(path.dirname(dataFile), 'celebrate.json');
+  const pointsFile = path.join(path.dirname(dataFile), 'points.json');
 
+  // Points start and end stays when people move. They are created after the core, so this
+  // does nothing until then.
+  let teamChanged = () => {};
   const teamSaved = readFile(dataFile);
   const oldBasketball = takeOldBasketball(teamSaved);
   const core = createCore({
     ...options,
     saved: teamSaved,
     save: (data) => writeFile(dataFile, data),
-    onChange: (state) => sendAll(`data: ${JSON.stringify(state)}\n\n`),
+    onChange: (state) => {
+      sendAll(`data: ${JSON.stringify(state)}\n\n`);
+      teamChanged();
+    },
   });
 
   const basketballSaved = readFile(basketballFile);
@@ -127,6 +139,22 @@ data: ${JSON.stringify(view)}
   });
   core.attach(celebrate.feature);
 
+  // Reward points keep their own file and event name too.
+  const points = createPoints({
+    saved: readFile(pointsFile),
+    save: (data) => writeFile(pointsFile, data),
+    team: core.team,
+    onChange: (view) => sendAll(pointsEvent(view)),
+    now: options.now,
+    timeZone: options.timeZone,
+  });
+  core.attach(points.feature);
+  teamChanged = () => void points.observe();
+
+  function pointsEvent(view: unknown): string {
+    return `event: points\ndata: ${JSON.stringify(view)}\n\n`;
+  }
+
   function celebrateEvent(view: unknown): string {
     return `event: celebrate
 data: ${JSON.stringify(view)}
@@ -152,7 +180,7 @@ data: ${JSON.stringify(people)}
 
   async function answer(req: ApiRequest) {
     return (await basketball.handle(req)) ?? (await votes.handle(req)) ?? (await fund.handle(req)) ?? (await celebrate.handle(req))
-      ?? (await pet.handle(req)) ?? (await core.handle(req));
+      ?? (await pet.handle(req)) ?? (await points.handle(req)) ?? (await core.handle(req));
   }
 
   function readJson(req: Req, maxBytes = MAX_BODY): Promise<JsonBody> {
@@ -193,13 +221,22 @@ data: ${JSON.stringify(people)}
     res.write(fundEvent(fund.people()));
     res.write(celebrateEvent(celebrate.view()));
     res.write(petEvent(pet.view()));
+    res.write(pointsEvent(points.view()));
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
   }
 
+  // Only a trusted proxy's header is believed: anyone can send X-Forwarded-For straight to the server.
+  function clientIp(req: Req): string | undefined {
+    const forwarded = req.headers['x-forwarded-for'];
+    const header = Array.isArray(forwarded) ? forwarded.join(',') : forwarded;
+    if (trustProxy && header) return header.split(',').pop()!.trim() || undefined;
+    return req.socket.remoteAddress;
+  }
+
   async function handleApi(req: Req, res: Res, url: URL): Promise<void> {
     if (req.method === 'GET' && url.pathname === '/api/events') return openEvents(req, res);
-    const { status, body, headers } = await answer({
+    const request: ApiRequest = {
       method: req.method ?? 'GET',
       url,
       header: (name) => {
@@ -207,7 +244,11 @@ data: ${JSON.stringify(people)}
         return Array.isArray(value) ? value[0] : value;
       },
       readJson: (maxBytes) => readJson(req, maxBytes),
-    });
+      ip: clientIp(req),
+    };
+    // Points need the address someone moved from, before the move reaches the core.
+    points.notice(request);
+    const { status, body, headers } = await answer(request);
     res.writeHead(status, headers);
     res.end(JSON.stringify(body));
   }
@@ -276,6 +317,7 @@ data: ${JSON.stringify(people)}
     core.runScheduledIfDue();
     celebrate.tick();
     void pet.tick();
+    void points.tick();
   }
 
   function start(port: number): Promise<number> {
@@ -330,6 +372,7 @@ if (import.meta.main) {
     dataFile: process.env.DATA_FILE || path.join(ROOT, 'data', 'data.json'),
     adminPassword,
     resetAt: process.env.RESET_AT || '05:00',
+    trustProxy: process.env.TRUST_PROXY === '1',
   });
 
   const distIndex = path.join(ROOT, 'dist', 'index.html');

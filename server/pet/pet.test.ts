@@ -128,6 +128,8 @@ test('two feeds from one person queued behind a slow save count once', async () 
       members: () => ['lan'],
       sign: () => '',
       requireAdmin: () => {},
+      places: () => [],
+      whereabouts: () => [],
     },
     now: () => new Date('2026-11-10T12:00:00Z'),
     timeZone: 'UTC',

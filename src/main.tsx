@@ -7,6 +7,9 @@ import { GlobalStyle } from './styles/GlobalStyle.ts';
 // Voting is its own page, so the map doesn't download it.
 const VotePage = lazy(() => import('./pages/VotePage.tsx').then((m) => ({ default: m.VotePage })));
 
+// Reward points too.
+const PointsPage = lazy(() => import('./pages/PointsPage.tsx').then((m) => ({ default: m.PointsPage })));
+
 const MePage = lazy(() => import('./pages/MePage.tsx').then(m => ({default:m.MePage})));
 const AccountPage = lazy(() => import('./pages/AccountPage.tsx').then(m => ({ default: m.AccountPage })));
 
@@ -18,6 +21,12 @@ function Page() {
       return <Suspense fallback={null}><MePage /></Suspense>;
     case '/admin':
       return <AdminPage />;
+    case '/points':
+      return (
+        <Suspense fallback={null}>
+          <PointsPage />
+        </Suspense>
+      );
     case '/vote':
       return (
         <Suspense fallback={null}>
