@@ -35,6 +35,7 @@ import {
   type Adjustment,
   type DayLine,
   type DayRecord,
+  type PointsClaim,
   type PointsMe,
   type PointsSettings,
   type PointsView,
@@ -416,7 +417,7 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
 
     if (action === 'POST /api/points/claim') {
       const { username } = team.player(req);
-      await change((s) => {
+      const claimed = await change((s) => {
         const at = now();
         settle(s, at, timeZone, username);
         const amount = unclaimed(s.minutes.get(username) ?? 0, s.claimed.get(username) ?? 0, s.settings);
@@ -427,8 +428,9 @@ export function createPoints({ saved, save: store, team, onChange = () => {}, no
         if (amount <= 0) throw new ApiError(409, 'Nothing to claim yet. Time in the office during office hours earns points.');
         s.balances.set(username, (s.balances.get(username) ?? 0) + amount);
         s.claimed.set(username, (s.claimed.get(username) ?? 0) + amount);
+        return amount;
       });
-      return jsonResponse(200, me(username));
+      return jsonResponse(200, { ...me(username), claimed } satisfies PointsClaim);
     }
 
     if (action === 'GET /api/points/admin') {

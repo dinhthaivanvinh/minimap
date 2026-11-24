@@ -126,7 +126,7 @@ Paths are from the project root. Function names are given instead of line number
 | 3D characters (map, claw machine, arcade) | `src/map/character3d.ts` |
 | 3D wandering | `src/lib/wander.ts` |
 | Street traffic, right-side lanes, spawning, yielding, pedestrian escape strips and daylight head/rear lights | `src/lib/traffic.ts`, `traffic.test.ts`; 2D `src/map/Traffic2D.tsx` and `Map2D.tsx`; 3D `src/map/traffic3d.ts` and `scene3d.ts` (`dodgeTraffic`); reduced-motion cars use `parkedTraffic` |
-| Person badge and detail card | `src/components/Badge.tsx`, `src/components/DetailCard.tsx` |
+| Person badge and detail card (with `CardParty` and `CardPoints`) | `src/components/Badge.tsx`, `src/components/DetailCard.tsx` |
 | Map props and focus requests (and the votes, vote marks, reactions and the mover the maps get) | `src/map/types.ts` |
 | Drag yourself to another room (the logged-in person only): which room is under a point, the place to send, the move shown before the server agrees | `src/lib/dragMove.ts` (`zoneAt`, `dropPlace`, `moverFor`, `withMove`, `createPress`: a press becomes a drag); `MonitorPage.tsx` (`moveMe` sends `PATCH /api/me`, pending move, `MoveNote`); 2D: `Map2D.tsx` (`useDrag`, which listens on the window so a quick flick isn't lost, the room's `$dropTarget`); 3D: `scene3d.ts` section "Dragging yourself to another room" (`setMover`, `onHoldStart`, `letGo`), `Map3D.tsx` (`[data-drop-target]`, `[data-mover]`) |
 | Side panel: clocks, weather, QR code, a vote's last-hour countdown | `src/components/InfoPanel.tsx` (`VoteCountdown`) |
@@ -240,9 +240,11 @@ Paths are from the project root. Function names are given instead of line number
 | Backup part, deleted people | `server/points/core.ts`: `feature` (`parse`, `forget`) |
 | Live updates | `onChange` → `event: points` on `/api/events`, also sent when a stream opens and whenever the board moves (on each tick); `useTeamState` gives it as `points` |
 | Page `/points`: your points, Claim (with `ClaimDialog`: go Off or keep working), board, rules, your days, hand changes | `src/pages/PointsPage.tsx` (lazy in `main.tsx`) |
+| Claiming in the browser (the claim, then Off when asked; the words for when Claim works), shared by the page and the card | `src/lib/pointsClaim.ts` (`claimPoints`, `claimWindowText`); `POST /api/points/claim` answers with `claimed` (`PointsClaim`) |
+| Points on a person's card: balance and points to claim for everyone, Claim on your own card | `src/components/CardPoints.tsx` (on `DetailCard.tsx`, given `points` from `MonitorPage.tsx`) |
 | Notice board note | `topLeaders` in `src/lib/noticeBoard.ts`, built in `MonitorPage.tsx` and passed as `leaders` in `MapProps`; 2D `NoticeBoard2D.tsx`; 3D `noticeBoard3d.ts` and `scene3d.ts` `setLeaders` |
 | Admin panel | `src/components/PointsAdminPanel.tsx` (on `AdminPage.tsx`) |
-| Tests | `shared/points.test.ts`, `server/points/points.test.ts`, the points note in `src/lib/noticeBoard.test.ts`, the points test in `worker/worker.test.ts` |
+| Tests | `shared/points.test.ts`, `server/points/points.test.ts`, `src/lib/pointsClaim.test.ts`, the points note in `src/lib/noticeBoard.test.ts`, the points test in `worker/worker.test.ts` |
 
 ### Birthdays and anniversaries
 | Feature | Code |

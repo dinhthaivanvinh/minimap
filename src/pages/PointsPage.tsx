@@ -5,9 +5,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
 import { pointsText, windowsText, workdaysText, type PointsMe, type PointsView } from '../../shared/points.ts';
 import { SheetNav, StatusLine } from '../components/SheetNav.tsx';
-import { api, errorText } from '../lib/api.ts';
+import { api } from '../lib/api.ts';
 import { useMessage, useTeamState } from '../lib/hooks.ts';
 import { placeName } from '../lib/layout.ts';
+import { claimPoints, claimWindowText } from '../lib/pointsClaim.ts';
 import { savedLogin } from '../lib/savedLogin.ts';
 import { theme } from '../styles/theme.ts';
 import { Button, Panel, PanelHint } from '../styles/ui.ts';
@@ -135,7 +136,6 @@ export function PointsPage() {
 
   // The username is only trusted while it is still on the team.
   const username = auth && state?.users.some((u) => u.username === auth.username) ? auth.username : null;
-  const headers = auth ? { Authorization: `Bearer ${auth.token}` } : undefined;
 
   const loadMe = useCallback(() => {
     if (!auth) return;
@@ -152,26 +152,13 @@ export function PointsPage() {
   }, [loadMe, live, state]);
 
   async function claim(goOff: boolean) {
+    if (!auth) return;
     setAsking(false);
     setClaiming(true);
-    try {
-      const amount = me?.toClaim ?? 0;
-      setMe(await api<PointsMe>('POST', '/api/points/claim', {}, headers));
-      if (goOff) {
-        try {
-          await api('PATCH', '/api/me', { place: 'off' }, headers);
-        } catch (err) {
-          showMessage(`Claimed ${pointsText(amount)}, but you’re still checked in: ${errorText(err)}`, true);
-          return;
-        }
-        loadMe();
-      }
-      showMessage(goOff ? `Claimed ${pointsText(amount)}. You’re Off now. See you tomorrow!` : `Claimed ${pointsText(amount)}. Keep it up!`);
-    } catch (err) {
-      showMessage(errorText(err), true);
-    } finally {
-      setClaiming(false);
-    }
+    const result = await claimPoints(auth.token, goOff);
+    if (result.me) setMe(result.me);
+    showMessage(result.text, result.problem);
+    setClaiming(false);
   }
 
   // Only someone still earning has a choice to make; anyone else just claims.
@@ -205,10 +192,7 @@ export function PointsPage() {
               {me && me.toClaim > 0 && (
                 <ClaimBox>
                   <PanelHint style={{ margin: 0 }}>
-                    {pointsText(me.toClaim)} earned today, waiting to be claimed.{' '}
-                    {me.claimOpen && me.window && `You can claim until ${me.window.to}.`}
-                    {!me.claimOpen && me.window && `Claiming opens at ${me.window.from}.`}
-                    {!me.window && `Claiming is closed for today, so these are lost at ${view.resetAt}.`}
+                    {pointsText(me.toClaim)} earned today, waiting to be claimed. {claimWindowText(me, view.resetAt)}
                   </PanelHint>
                   {me.claimOpen && (
                     <Button type="button" $primary onClick={startClaim} disabled={claiming}>

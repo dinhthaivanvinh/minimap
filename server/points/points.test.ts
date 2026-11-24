@@ -103,7 +103,10 @@ test('Claim works in its windows, as often as people like, points keep coming af
     claimOpen: true,
     window: { from: '12:00', to: '14:00' },
   });
-  assert.equal((await claim('lan')).status, 200);
+  const first = await claim('lan');
+  assert.equal(first.status, 200);
+  assert.equal(first.json.claimed, 30); // The reply says how many points the claim added.
+  assert.equal(first.json.toClaim, 0);
   assert.deepEqual(await total('lan'), { balance: 30, toClaim: 0 });
   later(HOUR); // 13:00: still earning, and claiming again in the same window is fine.
   assert.deepEqual(await total('lan'), { balance: 30, toClaim: 10 });

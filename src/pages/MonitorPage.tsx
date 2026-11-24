@@ -802,6 +802,7 @@ export function MonitorPage() {
           votes={allVotes}
           users={state.users}
           celebrate={celebrate}
+          points={points}
           login={login ?? null}
           anchor={selection.anchor}
           onClose={closeCard}

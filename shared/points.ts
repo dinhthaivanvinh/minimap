@@ -81,6 +81,11 @@ export interface PointsMe {
   window: ClaimWindow | null;
 }
 
+/** The answer to a claim: your day after it, and how many points it just added. */
+export interface PointsClaim extends PointsMe {
+  claimed: number;
+}
+
 export const DEFAULT_SETTINGS: PointsSettings = {
   perHour: 10,
   dailyCapHours: 8,

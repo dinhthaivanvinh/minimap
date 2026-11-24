@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import styled from 'styled-components';
 import type { CelebrateView } from '../../shared/celebrate.ts';
+import type { PointsView } from '../../shared/points.ts';
 import type { AuthResult, Place, TeamUser } from '../../shared/types.ts';
 import { waitingVotes, type VoteView } from '../../shared/vote.ts';
 import { placeName } from '../lib/layout.ts';
@@ -9,6 +10,7 @@ import { voteLink } from '../lib/noticeBoard.ts';
 import { scheduledText } from '../lib/status.ts';
 import { theme } from '../styles/theme.ts';
 import { CardParty } from './CardParty.tsx';
+import { CardPoints } from './CardPoints.tsx';
 import { Mochi } from './Mochi.tsx';
 
 const GAP = 10;
@@ -112,13 +114,14 @@ interface DetailCardProps {
   /** Everyone, for the names of people who sent wishes. */
   users: TeamUser[];
   celebrate: CelebrateView | null;
-  /** The person logged in on this browser, who may send wishes. */
+  points: PointsView | null;
+  /** The person logged in on this browser, who may send wishes and claim their own points. */
   login: AuthResult | null;
   anchor: HTMLElement;
   onClose: () => void;
 }
 
-export function DetailCard({ user, places, votes, users, celebrate, login, anchor, onClose }: DetailCardProps) {
+export function DetailCard({ user, places, votes, users, celebrate, points, login, anchor, onClose }: DetailCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const pending = waitingVotes(votes, user.username, new Date());
 
@@ -166,6 +169,7 @@ export function DetailCard({ user, places, votes, users, celebrate, login, ancho
       </CardHead>
       <CardRow>{placeName(places, user.place)}</CardRow>
       <CardParty user={user} users={users} celebrate={celebrate} login={login} />
+      <CardPoints user={user} points={points} login={login} />
       {user.fund && <CardFund $ahead={user.fund.months > 0} title="Title on the team fund">💰 {user.fund.title}</CardFund>}
       {user.status && <CardStatus>{user.status}</CardStatus>}
       {user.scheduled && <CardStatus>{scheduledText(user)}</CardStatus>}
